@@ -24,9 +24,12 @@ JV_RT_DATABASE_ERROR = -201  # データベースエラー
 JV_RT_FILE_ERROR = -202  # ファイルエラー
 JV_RT_OTHER_ERROR = -203  # その他エラー
 
-# Download Status Codes
-JV_RT_DOWNLOADING = -301  # ダウンロード中
-JV_RT_DOWNLOAD_WAITING = -302  # ダウンロード待ち
+# Authentication / License Error Codes (JVOpen 戻り値)
+# NOTE: -301/-302 are FATAL errors, not download states. They were previously
+# mislabeled as "ダウンロード中/待ち", which caused authentication failures to be
+# misdiagnosed. Source: JRA-VAN DataLab JV-Link interface spec return-code table.
+JV_RT_AUTH_ERROR = -301  # 認証エラー（利用キーが正しくない、または複数マシンで同一利用キーを使用）
+JV_RT_LICENSE_EXPIRED = -302  # 利用キーの有効期限切れ
 
 # Internal Error Codes
 JV_RT_INTERNAL_ERROR = -401  # 内部エラー
@@ -495,9 +498,9 @@ ERROR_MESSAGES = {
     -201: "データベースエラーが発生しました",
     -202: "ファイルエラーが発生しました",
     -203: "その他のエラーが発生しました",
-    # Download Status
-    -301: "ダウンロード中です",
-    -302: "ダウンロード待ちです",
+    # Authentication / License Errors (JVOpen)
+    -301: "認証エラー（利用キーが正しくない、または複数マシンで同一利用キーを使用）",
+    -302: "利用キーの有効期限切れ",
     # Internal Errors
     -401: "内部エラーが発生しました",
     # Resource Errors
