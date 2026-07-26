@@ -141,7 +141,9 @@ class HistoricalFetcher(BaseFetcher):
                 ),
             )
 
-            result, read_count, download_count, last_file_timestamp = self.jvlink.jv_open(
+            # Open the stream, self-repairing corrupt-cache (-402/-403) errors
+            # by purging 0-byte .jvd files and retrying (bounded).
+            result, read_count, download_count, last_file_timestamp = self._open_with_self_repair(
                 data_spec,
                 fromtime,
                 option,
