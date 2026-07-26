@@ -41,6 +41,10 @@ databases:
     password: "${POSTGRES_PASSWORD}"
     pool_size: 5
     max_overflow: 10
+    # SSL mode: disable, allow, prefer (default), require, verify-ca, verify-full
+    sslmode: "prefer"
+    # Connection timeout in seconds
+    connect_timeout: 10
 
 # Data Fetch Settings
 data_fetch:
