@@ -43,6 +43,7 @@ class BaseFetcher(ABC):
         sid: str = "UNKNOWN",
         service_key: Optional[str] = None,
         show_progress: bool = True,
+        jvlink_cache_dir: Optional[str] = None,
     ):
         """Initialize base fetcher.
 
@@ -53,6 +54,9 @@ class BaseFetcher(ABC):
                         If not provided, the service key must be configured in
                         JRA-VAN DataLab application or registry.
             show_progress: Show stylish progress display (default: True)
+            jvlink_cache_dir: Optional path to JV-Link's download cache. Used to
+                        self-repair corrupt (0-byte) ``.jvd`` files that cause
+                        ``-402`` errors. If None, a platform default is used.
         """
         # Prefer C# JVLinkBridge over Python win32com for JRA operations.
         # Eliminates 32-bit Python requirement and COM instability.
@@ -73,12 +77,18 @@ class BaseFetcher(ABC):
         self._files_processed = 0
         self._total_files = 0
         self._service_key = service_key
+        self._jvlink_cache_dir = jvlink_cache_dir
         self.show_progress = show_progress
         self.progress_display: Optional[JVLinkProgressDisplay] = None
         self._start_time = None
 
         logger.info(f"{self.__class__.__name__} initialized", sid=sid,
                    has_service_key=service_key is not None)
+
+    # Bounded number of self-repair retries for corrupt-cache (-402/-403)
+    # errors: purge 0-byte .jvd files, then re-open. Kept small so a genuinely
+    # persistent failure surfaces quickly instead of looping.
+    JVD_SELF_REPAIR_MAX_RETRIES = 2
 
     @abstractmethod
     def fetch(self, **kwargs) -> Iterator[dict]:
@@ -94,6 +104,67 @@ class BaseFetcher(ABC):
             FetcherError: If fetching fails
         """
         pass
+
+    def _resolve_jvlink_cache_dir(self):
+        """Resolve the JV-Link download cache root (config value or default)."""
+        from pathlib import Path
+        from src.jvlink.wrapper import DEFAULT_JVLINK_CACHE_DIR
+
+        return Path(self._jvlink_cache_dir or DEFAULT_JVLINK_CACHE_DIR)
+
+    def _open_with_self_repair(self, data_spec: str, fromtime: str, option: int):
+        """Call ``jv_open`` with bounded self-repair for corrupt-cache errors.
+
+        A 0-byte ``.jvd`` left in JV-Link's cache makes ``JVOpen`` fail with
+        ``-402`` (or ``-403``) and halts the fetch. Instead of requiring a
+        manual cache cleanup, detect those codes, purge the empty ``.jvd``
+        files, and retry up to :attr:`JVD_SELF_REPAIR_MAX_RETRIES` times.
+
+        Raises:
+            FetcherError: If the error persists after purging/retrying, or if
+                no 0-byte ``.jvd`` file exists to explain the failure. The
+                message lists the files that were deleted.
+        """
+        from src.jvlink.wrapper import purge_zero_byte_jvd
+
+        attempts = 0
+        deleted_all: list = []
+        while True:
+            try:
+                return self.jvlink.jv_open(data_spec, fromtime, option)
+            except Exception as e:
+                code = getattr(e, "error_code", None)
+                if code not in (-402, -403):
+                    raise  # Not a corrupt-cache error; let the caller handle it.
+
+                if attempts >= self.JVD_SELF_REPAIR_MAX_RETRIES:
+                    raise FetcherError(
+                        f"JVOpen failed with {code} after {attempts} self-repair "
+                        f"retr(ies); deleted zero-byte .jvd files: "
+                        f"{deleted_all or 'none'}"
+                    )
+
+                cache_root = self._resolve_jvlink_cache_dir()
+                deleted = purge_zero_byte_jvd(cache_root)
+                attempts += 1
+                deleted_all.extend(deleted)
+
+                if not deleted:
+                    # Nothing was corrupt in the cache, so retrying JVOpen would
+                    # just reproduce the same error. Fail with a clear message.
+                    raise FetcherError(
+                        f"JVOpen failed with {code} but no zero-byte .jvd files "
+                        f"were found under {cache_root}; cannot self-repair"
+                    )
+
+                logger.warning(
+                    "JVOpen returned corrupt-cache error; purged zero-byte .jvd "
+                    "and retrying",
+                    error_code=code,
+                    deleted_count=len(deleted),
+                    attempt=attempts,
+                    cache_root=str(cache_root),
+                )
 
     def _fetch_and_parse(self, task_id: Optional[int] = None, to_date: Optional[str] = None) -> Iterator[dict]:
         """Internal method to fetch and parse records.
