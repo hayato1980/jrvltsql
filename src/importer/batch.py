@@ -47,6 +47,7 @@ class BatchProcessor:
         service_key: Optional[str] = None,
         show_progress: bool = True,
         cache_manager=None,
+        jvlink_cache_dir: Optional[str] = None,
     ):
         """Initialize batch processor.
 
@@ -58,11 +59,14 @@ class BatchProcessor:
                         programmatically without requiring registry configuration.
             show_progress: Show stylish progress display (default: True)
             cache_manager: Optional CacheManager for local file cache read/write
+            jvlink_cache_dir: Optional path to JV-Link's download cache, used to
+                        self-repair corrupt (0-byte) ``.jvd`` files (-402).
         """
         self.fetcher = HistoricalFetcher(
             sid,
             service_key=service_key,
             show_progress=show_progress,
+            jvlink_cache_dir=jvlink_cache_dir,
         )
         self.importer = DataImporter(database, batch_size)
         self.database = database

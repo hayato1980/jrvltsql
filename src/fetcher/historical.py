@@ -44,8 +44,10 @@ class HistoricalFetcher(BaseFetcher):
         ...     print(record['headRecordSpec'])
     """
 
-    def __init__(self, sid: str = "UNKNOWN", service_key: Optional[str] = None, show_progress: bool = True):
-        super().__init__(sid, service_key=service_key, show_progress=show_progress)
+    def __init__(self, sid: str = "UNKNOWN", service_key: Optional[str] = None, show_progress: bool = True,
+                 jvlink_cache_dir: Optional[str] = None):
+        super().__init__(sid, service_key=service_key, show_progress=show_progress,
+                         jvlink_cache_dir=jvlink_cache_dir)
         self.cache_manager = None
 
     def fetch(
