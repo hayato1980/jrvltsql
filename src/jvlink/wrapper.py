@@ -4,7 +4,8 @@ This module provides a Python wrapper for the JV-Link COM API,
 which is used to access JRA-VAN DataLab horse racing data.
 """
 
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import List, Optional, Tuple, Union
 
 from src.jvlink.constants import (
     BUFFER_SIZE_JVREAD,
@@ -19,6 +20,65 @@ from src.jvlink.constants import (
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Default JV-Link (JRA-VAN DataLab) download cache root on Windows. The actual
+# location depends on the DataLab installation, so callers can override it via
+# config (``jvlink.cache_dir``); this is only the fallback default.
+DEFAULT_JVLINK_CACHE_DIR = r"C:\ProgramData\JRA-VAN\Data Lab\cache"
+
+
+def purge_zero_byte_jvd(cache_root: Union[str, Path]) -> List[str]:
+    """Delete 0-byte ``.jvd`` files left in the JV-Link download cache.
+
+    A download that is interrupted or fails can leave an empty ``.jvd`` file in
+    JV-Link's cache. JV-Link then returns ``-402`` on subsequent
+    ``JVOpen``/``JVRead`` calls until the corrupt file is removed. This helper
+    performs the "detect corrupt cache, delete it" step that previously had to
+    be done by hand.
+
+    Args:
+        cache_root: Root directory of the JV-Link download cache.
+
+    Returns:
+        Sorted list of the deleted file paths (empty if none were found). The
+        caller uses this both to decide whether a retry is worthwhile and to
+        report exactly what was removed if the failure persists.
+    """
+    root = Path(cache_root)
+    deleted: List[str] = []
+
+    if not root.exists():
+        logger.warning(
+            "JV-Link cache dir not found; nothing to purge",
+            cache_root=str(root),
+        )
+        return deleted
+
+    for path in root.rglob("*.jvd"):
+        try:
+            if path.is_file() and path.stat().st_size == 0:
+                path.unlink()
+                deleted.append(str(path))
+        except OSError as e:
+            logger.warning(
+                "Failed to delete zero-byte .jvd file",
+                path=str(path),
+                error=str(e),
+            )
+
+    deleted.sort()
+    if deleted:
+        logger.info(
+            "Purged zero-byte .jvd files from JV-Link cache",
+            count=len(deleted),
+            cache_root=str(root),
+        )
+    else:
+        logger.info(
+            "No zero-byte .jvd files found in JV-Link cache",
+            cache_root=str(root),
+        )
+    return deleted
 
 # CP1252 to byte mapping for 0x80-0x9F range
 # Moved to module level for performance (避けたい: ホットループ内での辞書再作成)
