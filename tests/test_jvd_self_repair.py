@@ -30,14 +30,14 @@ def _fetcher():
     fetcher._jvd_self_repair_attempts = 0
     fetcher._jvd_replay_records_remaining = 0
     fetcher._jv_open_context = ("RACE", "20260101000000", 1)
+    fetcher._fetch_task_id = None
     return fetcher
 
 
-@pytest.mark.parametrize("error_code", [-402, -403])
-def test_read_error_deletes_exact_file_then_closes_and_reopens(error_code):
+def test_zero_byte_read_error_deletes_exact_file_then_closes_and_reopens():
     fetcher = _fetcher()
     fetcher.jvlink.jv_read.side_effect = [
-        (error_code, None, "corrupt/RACE.jvd"),
+        (-402, None, "corrupt/RACE.jvd"),
         (0, None, None),
     ]
     calls = []
@@ -64,6 +64,24 @@ def test_read_error_deletes_exact_file_then_closes_and_reopens(error_code):
     assert fetcher.get_statistics()["recoverable_read_errors"] == 1
 
 
+def test_invalid_content_error_fails_closed_without_deleting_or_reopening():
+    fetcher = _fetcher()
+    fetcher.jvlink.jv_read.side_effect = [
+        (-403, None, "corrupt/RACE.jvd"),
+    ]
+
+    with pytest.raises(FetcherError, match="automatic replay is limited"):
+        list(
+            fetcher._fetch_and_parse(
+                recover_file_error=fetcher._recover_historical_read_error,
+            )
+        )
+
+    fetcher.jvlink.jv_file_delete.assert_not_called()
+    fetcher.jvlink.jv_close.assert_not_called()
+    fetcher.jvlink.jv_open.assert_not_called()
+
+
 def test_read_recovery_waits_for_redownload():
     fetcher = _fetcher()
     fetcher.jvlink.jv_open.return_value = (0, 3, 2, "ts")
@@ -72,6 +90,22 @@ def test_read_recovery_waits_for_redownload():
     fetcher._recover_historical_read_error(-402, "corrupt/RACE.jvd")
 
     fetcher._wait_for_download.assert_called_once_with(download_count=2)
+
+
+def test_read_recovery_resets_reopened_progress_total():
+    fetcher = _fetcher()
+    fetcher.progress_display = MagicMock()
+    fetcher._fetch_task_id = 17
+    fetcher.jvlink.jv_open.return_value = (0, 8, 0, "ts")
+
+    fetcher._recover_historical_read_error(-402, "corrupt/RACE.jvd")
+
+    fetcher.progress_display.update.assert_called_once_with(
+        17,
+        completed=0,
+        total=8,
+        status="再取得 0/8",
+    )
 
 
 def test_read_recovery_rejects_empty_reopened_stream():
@@ -209,10 +243,11 @@ def test_read_recovery_rejects_nonzero_delete_result():
     fetcher.jvlink.jv_close.assert_not_called()
 
 
-def test_non_file_recoverable_error_does_not_restart_stream():
+@pytest.mark.parametrize("error_code", [-203, -502, -503])
+def test_other_recoverable_error_uses_legacy_delete_without_stream_restart(error_code):
     fetcher = _fetcher()
     fetcher.jvlink.jv_read.side_effect = [
-        (-201, None, "busy.jvd"),
+        (error_code, None, "other.jvd"),
         (0, None, None),
     ]
 
@@ -222,7 +257,7 @@ def test_non_file_recoverable_error_does_not_restart_stream():
         )
     ) == []
 
-    fetcher.jvlink.jv_file_delete.assert_not_called()
+    fetcher.jvlink.jv_file_delete.assert_called_once_with("other.jvd")
     fetcher.jvlink.jv_close.assert_not_called()
     fetcher.jvlink.jv_open.assert_not_called()
 

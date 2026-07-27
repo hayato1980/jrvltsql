@@ -509,7 +509,7 @@ class JVLinkWrapper:
 
             elif result in (-402, -403):
                 # Preserve the filename returned by JVRead so the fetcher can
-                # use JVFiledelete and reopen the historical stream.
+                # apply its recovery policy without inspecting cache paths.
                 logger.warning(
                     "JVRead returned recoverable file error",
                     error_code=result,

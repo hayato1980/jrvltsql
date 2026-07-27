@@ -52,6 +52,7 @@ class HistoricalFetcher(BaseFetcher):
         self._jvd_self_repair_attempts = 0
         self._jvd_replay_records_remaining = 0
         self._jv_open_context: Optional[tuple[str, str, int]] = None
+        self._fetch_task_id: Optional[int] = None
 
     def _consume_replayed_record(self) -> bool:
         """Skip records already emitted before a close/reopen recovery.
@@ -68,6 +69,11 @@ class HistoricalFetcher(BaseFetcher):
 
     def _recover_historical_read_error(self, error_code: int, filename: str) -> None:
         """Delete the exact corrupt file and reopen the historical stream."""
+        if error_code != -402:
+            raise FetcherError(
+                f"JVRead returned {error_code} for {filename or 'an unknown file'}; "
+                "automatic replay is limited to zero-byte files (-402)"
+            )
         if not filename:
             raise FetcherError(
                 f"JVRead returned {error_code} without a filename; cannot self-repair safely"
@@ -120,6 +126,13 @@ class HistoricalFetcher(BaseFetcher):
         self._jvd_self_repair_attempts += 1
         self._files_processed = 0
         self._total_files = read_count
+        if self.progress_display is not None and self._fetch_task_id is not None:
+            self.progress_display.update(
+                self._fetch_task_id,
+                completed=0,
+                total=read_count,
+                status=f"再取得 0/{read_count}",
+            )
         logger.warning(
             "Recovered historical JVRead file error by targeted delete and reopen",
             error_code=error_code,
@@ -276,6 +289,7 @@ class HistoricalFetcher(BaseFetcher):
                     f"{data_spec} レコード取得",
                     total=read_count,
                 )
+                self._fetch_task_id = fetch_task_id
 
             # Fetch and parse records (with optional cache write-through)
             for data in self._fetch_and_parse(
@@ -327,6 +341,7 @@ class HistoricalFetcher(BaseFetcher):
 
         finally:
             self._jv_open_context = None
+            self._fetch_task_id = None
             # Close stream (JVClose) — releases the current open session so
             # the next jv_init()/jv_open() call in a subsequent chunk works.
             try:

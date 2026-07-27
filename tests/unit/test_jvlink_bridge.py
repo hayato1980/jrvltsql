@@ -124,6 +124,20 @@ class TestJVLinkBridgeAPI:
         code, buff, fname = bridge.jv_read()
         assert code == -502
 
+    @pytest.mark.parametrize("error_code", [-402, -403])
+    def test_jv_read_corrupt_file_preserves_filename(self, bridge, error_code):
+        bridge._is_open = True
+        _patch_responses(
+            bridge,
+            {
+                "status": "ok",
+                "code": error_code,
+                "filename": "corrupt/RACE.jvd",
+            },
+        )
+
+        assert bridge.jv_read() == (error_code, None, "corrupt/RACE.jvd")
+
     def test_jv_gets_delegates_to_read(self, bridge):
         """jv_gets should delegate to jv_read."""
         bridge._is_open = True
