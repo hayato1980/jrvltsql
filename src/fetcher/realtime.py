@@ -79,6 +79,7 @@ class RealtimeFetcher(BaseFetcher):
 
     def _recover_file_error(self, error_code: int, filename: str) -> None:
         """Keep realtime snapshots fail-fast on corrupt JV-Link files."""
+        self._delete_corrupt_file_best_effort(error_code, filename)
         raise FetcherError(
             f"Realtime JVRead returned {error_code} for "
             f"{filename or 'an unknown file'}"

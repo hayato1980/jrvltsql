@@ -67,32 +67,6 @@ class HistoricalFetcher(BaseFetcher):
         self._jvd_replay_records_remaining -= 1
         return True
 
-    def _delete_corrupt_file_best_effort(self, error_code: int, filename: str) -> None:
-        """Remove a known corrupt file for the next run without masking failure."""
-        if not filename:
-            logger.warning(
-                "Cannot delete corrupt JV-Link file without a filename",
-                error_code=error_code,
-            )
-            return
-        try:
-            result = self.jvlink.jv_file_delete(filename)
-        except Exception as exc:
-            logger.warning(
-                "Best-effort JVFiledelete failed",
-                error_code=error_code,
-                filename=filename,
-                error=str(exc),
-            )
-            return
-        if result not in (None, 0):
-            logger.warning(
-                "Best-effort JVFiledelete returned an error",
-                error_code=error_code,
-                filename=filename,
-                result=result,
-            )
-
     def _recover_historical_read_error(self, error_code: int, filename: str) -> None:
         """Delete the exact corrupt file and reopen the historical stream."""
         if error_code != -402:
@@ -130,6 +104,7 @@ class HistoricalFetcher(BaseFetcher):
         # Remember the successfully emitted prefix so _fetch_and_parse can
         # drain it without parsing, yielding, or appending it to raw cache.
         self._jvd_replay_records_remaining = self._records_fetched
+        expected_read_count = self._total_files
         try:
             self.jvlink.jv_close()
             data_spec, fromtime, option = self._jv_open_context
@@ -142,6 +117,14 @@ class HistoricalFetcher(BaseFetcher):
                 raise FetcherError(
                     "JVOpen returned no data while recovering "
                     f"{filename} after JVRead {error_code}"
+                )
+            if download_count == 0 or (
+                expected_read_count > 0 and read_count < expected_read_count
+            ):
+                raise FetcherError(
+                    f"JVOpen did not restore {filename} after JVRead {error_code}: "
+                    f"read_count={read_count}, expected_at_least={expected_read_count}, "
+                    f"download_count={download_count}"
                 )
             if download_count > 0:
                 self._wait_for_download(download_count=download_count)

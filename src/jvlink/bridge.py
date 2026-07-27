@@ -310,6 +310,9 @@ class JVLinkBridge:
                 response.get("error", f"JVFiledelete failed for {filename}"),
                 error_code=code,
             )
+        # The production jrvltsql-wine-runtime bridge serializes the COM
+        # JVFiledelete return value as ``code``. A missing value is a protocol
+        # violation, not an implicit success.
         if "code" not in response:
             raise JVLinkBridgeError(
                 f"JVFiledelete response has no result code for {filename}"

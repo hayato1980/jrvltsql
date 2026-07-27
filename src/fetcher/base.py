@@ -318,6 +318,32 @@ class BaseFetcher(ABC):
                 logger.error("Error during fetch", error=str(e))
                 raise FetcherError(f"Failed to fetch data: {e}") from e
 
+    def _delete_corrupt_file_best_effort(self, error_code: int, filename: str) -> None:
+        """Remove a corrupt JV-Link file for the next run without masking failure."""
+        if not filename:
+            logger.warning(
+                "Cannot delete corrupt JV-Link file without a filename",
+                error_code=error_code,
+            )
+            return
+        try:
+            result = self.jvlink.jv_file_delete(filename)
+        except Exception as exc:
+            logger.warning(
+                "Best-effort JVFiledelete failed",
+                error_code=error_code,
+                filename=filename,
+                error=str(exc),
+            )
+            return
+        if result not in (None, 0):
+            logger.warning(
+                "Best-effort JVFiledelete returned an error",
+                error_code=error_code,
+                filename=filename,
+                result=result,
+            )
+
     def get_statistics(self) -> dict:
         """Get fetching statistics.
 

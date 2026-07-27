@@ -19,7 +19,7 @@ def _fetcher():
     fetcher.jvlink = MagicMock()
     fetcher.jvlink.jv_file_delete.return_value = 0
     fetcher.jvlink.jv_close.return_value = 0
-    fetcher.jvlink.jv_open.return_value = (0, 3, 0, "ts")
+    fetcher.jvlink.jv_open.return_value = (0, 3, 1, "ts")
     fetcher.parser_factory = MagicMock()
     fetcher.progress_display = None
     fetcher._records_fetched = 0
@@ -33,6 +33,7 @@ def _fetcher():
     fetcher._jvd_replay_records_remaining = 0
     fetcher._jv_open_context = ("RACE", "20260101000000", 1)
     fetcher._fetch_task_id = None
+    fetcher._wait_for_download = MagicMock()
     return fetcher
 
 
@@ -48,7 +49,7 @@ def test_zero_byte_read_error_deletes_exact_file_then_closes_and_reopens():
     )
     fetcher.jvlink.jv_close.side_effect = lambda: calls.append(("close", None)) or 0
     fetcher.jvlink.jv_open.side_effect = lambda *args: (
-        calls.append(("open", args)) or (0, 3, 0, "ts")
+        calls.append(("open", args)) or (0, 3, 1, "ts")
     )
 
     assert list(
@@ -99,7 +100,7 @@ def test_read_recovery_resets_reopened_progress_total():
     fetcher = _fetcher()
     fetcher.progress_display = MagicMock()
     fetcher._fetch_task_id = 17
-    fetcher.jvlink.jv_open.return_value = (0, 8, 0, "ts")
+    fetcher.jvlink.jv_open.return_value = (0, 8, 1, "ts")
 
     fetcher._recover_historical_read_error(-402, "corrupt/RACE.jvd")
 
@@ -122,6 +123,30 @@ def test_read_recovery_rejects_empty_reopened_stream():
     assert isinstance(exc_info.value.__cause__, FetcherError)
     assert "returned no data" in str(exc_info.value.__cause__)
     assert fetcher._jvd_replay_records_remaining == 2
+
+
+def test_read_recovery_rejects_reopen_without_redownload():
+    fetcher = _fetcher()
+    fetcher.jvlink.jv_open.return_value = (0, 3, 0, "ts")
+
+    with pytest.raises(FetcherError, match="Failed to reopen") as exc_info:
+        fetcher._recover_historical_read_error(-402, "corrupt/RACE.jvd")
+
+    assert isinstance(exc_info.value.__cause__, FetcherError)
+    assert "did not restore" in str(exc_info.value.__cause__)
+    assert "download_count=0" in str(exc_info.value.__cause__)
+
+
+def test_read_recovery_rejects_shorter_reopened_stream():
+    fetcher = _fetcher()
+    fetcher.jvlink.jv_open.return_value = (0, 2, 1, "ts")
+
+    with pytest.raises(FetcherError, match="Failed to reopen") as exc_info:
+        fetcher._recover_historical_read_error(-402, "corrupt/RACE.jvd")
+
+    assert isinstance(exc_info.value.__cause__, FetcherError)
+    assert "did not restore" in str(exc_info.value.__cause__)
+    assert "read_count=2, expected_at_least=3" in str(exc_info.value.__cause__)
 
 
 def test_reopen_does_not_emit_already_processed_records_twice():
@@ -185,7 +210,10 @@ def test_recovery_write_through_cache_contains_no_replayed_duplicate(tmp_path):
     fetcher._service_key = None
     fetcher.cache_manager = CacheManager(tmp_path / "cache")
     fetcher.jvlink.jv_init.return_value = 0
-    fetcher.jvlink.jv_open.return_value = (0, 2, 0, "ts")
+    fetcher.jvlink.jv_open.side_effect = [
+        (0, 2, 0, "ts"),
+        (0, 2, 1, "ts"),
+    ]
     fetcher.jvlink.jv_read.side_effect = [
         (1, b"A", "first.jvd"),
         (-402, None, "corrupt.jvd"),

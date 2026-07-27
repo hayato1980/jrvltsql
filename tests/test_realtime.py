@@ -249,7 +249,7 @@ def test_realtime_fetch_fails_fast_on_corrupt_file(error_code):
     with pytest.raises(FetcherError, match="Realtime JVRead returned"):
         list(fetcher.fetch("0B31", key="202601010101"))
 
-    fetcher.jvlink.jv_file_delete.assert_not_called()
+    fetcher.jvlink.jv_file_delete.assert_called_once_with("corrupt.jvd")
     fetcher.jvlink.jv_close.assert_called_once_with()
 
 
