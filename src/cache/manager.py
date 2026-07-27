@@ -66,8 +66,8 @@ class CacheManager:
                 prefix=f".{path.name}.",
                 delete=False,
             ) as temp_file:
-                json.dump(index, temp_file, ensure_ascii=False, indent=2)
                 temp_path = Path(temp_file.name)
+                json.dump(index, temp_file, ensure_ascii=False, indent=2)
             temp_path.replace(path)
         finally:
             if temp_path is not None and temp_path.exists():

@@ -161,6 +161,28 @@ class TestNlIndex:
         assert index_path.read_bytes() == original_index
         assert list(index_path.parent.glob(f".{index_path.name}.*")) == []
 
+    def test_mark_nl_range_complete_removes_temp_file_if_dump_fails(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        cm = _make_cache(tmp_path)
+        cm.mark_nl_complete("RACE", "20260401")
+        index_path = cm._index_path("RACE")
+        original_index = index_path.read_bytes()
+
+        def fail_dump(_index, temp_file, **_kwargs):
+            temp_file.write("{")
+            raise OSError("simulated json dump failure")
+
+        monkeypatch.setattr("src.cache.manager.json.dump", fail_dump)
+
+        with pytest.raises(OSError, match="simulated json dump failure"):
+            cm.mark_nl_range_complete("RACE", ["20260402", "20260403"])
+
+        assert index_path.read_bytes() == original_index
+        assert list(index_path.parent.glob(f".{index_path.name}.*")) == []
+
     def test_has_nl_range_all_complete(self, tmp_path):
         cm = _make_cache(tmp_path)
         for d in ("20260401", "20260402", "20260403"):

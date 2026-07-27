@@ -304,7 +304,7 @@ def test_incomplete_replay_does_not_mark_raw_cache_complete():
     with pytest.raises(FetcherError, match="recovery replay caught up"):
         list(fetcher.fetch("RACE", "20260101", "20260103"))
 
-    fetcher.cache_manager.mark_nl_complete.assert_not_called()
+    fetcher.cache_manager.mark_nl_range_complete.assert_not_called()
 
 
 def test_read_recovery_is_bounded():
