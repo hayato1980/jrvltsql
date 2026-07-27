@@ -44,11 +44,87 @@ class HistoricalFetcher(BaseFetcher):
         ...     print(record['headRecordSpec'])
     """
 
-    def __init__(self, sid: str = "UNKNOWN", service_key: Optional[str] = None, show_progress: bool = True,
-                 jvlink_cache_dir: Optional[str] = None):
-        super().__init__(sid, service_key=service_key, show_progress=show_progress,
-                         jvlink_cache_dir=jvlink_cache_dir)
+    JVD_SELF_REPAIR_MAX_RETRIES = 2
+
+    def __init__(self, sid: str = "UNKNOWN", service_key: Optional[str] = None, show_progress: bool = True):
+        super().__init__(sid, service_key=service_key, show_progress=show_progress)
         self.cache_manager = None
+        self._jvd_self_repair_attempts = 0
+        self._jvd_replay_records_remaining = 0
+        self._jv_open_context: Optional[tuple[str, str, int]] = None
+
+    def _consume_replayed_record(self) -> bool:
+        """Skip records already emitted before a close/reopen recovery.
+
+        Reopening with the identical JVOpen context replays the stream from its
+        beginning. Historical cache output is append-only, so emitting that
+        prefix again would duplicate raw records as well as caller-visible
+        records.
+        """
+        if self._jvd_replay_records_remaining <= 0:
+            return False
+        self._jvd_replay_records_remaining -= 1
+        return True
+
+    def _recover_historical_read_error(self, error_code: int, filename: str) -> None:
+        """Delete the exact corrupt file and reopen the historical stream."""
+        if not filename:
+            raise FetcherError(
+                f"JVRead returned {error_code} without a filename; cannot self-repair safely"
+            )
+        if self._jv_open_context is None:
+            raise FetcherError("JVRead self-repair has no JVOpen context")
+        if self._jvd_self_repair_attempts >= self.JVD_SELF_REPAIR_MAX_RETRIES:
+            raise FetcherError(
+                f"JVRead returned {error_code} for {filename} after "
+                f"{self._jvd_self_repair_attempts} self-repair retries"
+            )
+
+        try:
+            delete_result = self.jvlink.jv_file_delete(filename)
+        except Exception as exc:
+            raise FetcherError(
+                f"JVFiledelete failed for {filename} after JVRead {error_code}"
+            ) from exc
+        if delete_result not in (None, 0):
+            raise FetcherError(
+                f"JVFiledelete returned {delete_result} for {filename} "
+                f"after JVRead {error_code}"
+            )
+
+        # The same JVOpen context restarts at the beginning of the stream.
+        # Remember the successfully emitted prefix so _fetch_and_parse can
+        # drain it without parsing, yielding, or appending it to raw cache.
+        self._jvd_replay_records_remaining = self._records_fetched
+        try:
+            self.jvlink.jv_close()
+            data_spec, fromtime, option = self._jv_open_context
+            result, read_count, download_count, last_file_timestamp = self.jvlink.jv_open(
+                data_spec,
+                fromtime,
+                option,
+            )
+            if download_count > 0:
+                self._wait_for_download(download_count=download_count)
+        except Exception as exc:
+            raise FetcherError(
+                f"Failed to reopen JVOpen after deleting {filename} "
+                f"for JVRead {error_code}"
+            ) from exc
+
+        self._jvd_self_repair_attempts += 1
+        self._files_processed = 0
+        self._total_files = read_count
+        logger.warning(
+            "Recovered historical JVRead file error by targeted delete and reopen",
+            error_code=error_code,
+            filename=filename,
+            attempt=self._jvd_self_repair_attempts,
+            result_code=result,
+            read_count=read_count,
+            download_count=download_count,
+            last_file_timestamp=last_file_timestamp,
+        )
 
     def fetch(
         self,
@@ -127,6 +203,9 @@ class HistoricalFetcher(BaseFetcher):
             # JV-Link retrieves data from this timestamp onwards
             # Option meanings: 1=通常データ, 2=今週データ, 3/4=セットアップ
             fromtime = f"{from_date}000000"
+            self._jvd_self_repair_attempts = 0
+            self._jvd_replay_records_remaining = 0
+            self._jv_open_context = (data_spec, fromtime, option)
 
             # Open data stream
             logger.info(
@@ -143,9 +222,7 @@ class HistoricalFetcher(BaseFetcher):
                 ),
             )
 
-            # Open the stream, self-repairing corrupt-cache (-402/-403) errors
-            # by purging 0-byte .jvd files and retrying (bounded).
-            result, read_count, download_count, last_file_timestamp = self._open_with_self_repair(
+            result, read_count, download_count, last_file_timestamp = self.jvlink.jv_open(
                 data_spec,
                 fromtime,
                 option,
@@ -196,7 +273,12 @@ class HistoricalFetcher(BaseFetcher):
                 )
 
             # Fetch and parse records (with optional cache write-through)
-            for data in self._fetch_and_parse(fetch_task_id, to_date=to_date):
+            for data in self._fetch_and_parse(
+                fetch_task_id,
+                to_date=to_date,
+                recover_file_error=self._recover_historical_read_error,
+                consume_replayed_record=self._consume_replayed_record,
+            ):
                 if self.cache_manager and "_raw" in data:
                     rec_date = _extract_record_date(data)
                     if rec_date:
@@ -230,9 +312,10 @@ class HistoricalFetcher(BaseFetcher):
             logger.error("Failed to fetch historical data", error=str(e))
             if self.progress_display:
                 self.progress_display.print_error(f"エラー: {str(e)}")
-            raise FetcherError(f"Historical fetch failed: {e}")
+            raise FetcherError(f"Historical fetch failed: {e}") from e
 
         finally:
+            self._jv_open_context = None
             # Close stream (JVClose) — releases the current open session so
             # the next jv_init()/jv_open() call in a subsequent chunk works.
             try:

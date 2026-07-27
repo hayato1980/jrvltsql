@@ -387,7 +387,6 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
 
             sid = config.get("jvlink.sid", "JLTSQL") if config else "JLTSQL"
             service_key = config.get("jvlink.service_key") if config else None
-            jvlink_cache_dir = config.get("jvlink.cache_dir") if config else None
 
             cache_mgr = None
             if use_cache:
@@ -402,7 +401,6 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
                 service_key=service_key,
                 show_progress=progress,
                 cache_manager=cache_mgr,
-                jvlink_cache_dir=jvlink_cache_dir,
             )
 
             if not progress:
@@ -514,7 +512,6 @@ def cache_build(ctx, data_spec, date_from, date_to, jv_option, also_import, db, 
 
     config = ctx.obj.get("config", {}) if ctx.obj else {}
     service_key = config.get("jvlink", {}).get("service_key") or os.environ.get("JVLINK_SERVICE_KEY")
-    jvlink_cache_dir = config.get("jvlink", {}).get("cache_dir") if config else None
 
     mgr = CacheManager(Path(cache_dir))
 
@@ -526,8 +523,7 @@ def cache_build(ctx, data_spec, date_from, date_to, jv_option, also_import, db, 
 
     click.echo(f"Building cache: {data_spec} {date_from}..{date_to} (option={jv_option})")
 
-    fetcher = HistoricalFetcher(sid="UNKNOWN", service_key=service_key, show_progress=True,
-                                jvlink_cache_dir=jvlink_cache_dir)
+    fetcher = HistoricalFetcher(sid="UNKNOWN", service_key=service_key, show_progress=True)
     fetcher.cache_manager = mgr
 
     if also_import:
@@ -552,7 +548,6 @@ def cache_build(ctx, data_spec, date_from, date_to, jv_option, also_import, db, 
                 service_key=service_key,
                 show_progress=True,
                 cache_manager=mgr,
-                jvlink_cache_dir=jvlink_cache_dir,
             )
             stats = processor.process_date_range(data_spec, date_from, date_to, jv_option)
             click.echo(f"\nImported: {stats.get('records_imported', 0):,} records")
