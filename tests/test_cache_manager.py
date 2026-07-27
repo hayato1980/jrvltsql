@@ -140,6 +140,25 @@ class TestNlIndex:
         assert index["20260402"]["complete"] is True
         assert index["20260402"]["count"] == 1
 
+    def test_mark_nl_range_complete_preserves_existing_index_mode(self, tmp_path):
+        cm = _make_cache(tmp_path)
+        cm.mark_nl_complete("RACE", "20260401")
+        index_path = cm._index_path("RACE")
+        index_path.chmod(0o664)
+
+        cm.mark_nl_range_complete("RACE", ["20260402", "20260403"])
+
+        assert index_path.stat().st_mode & 0o777 == 0o664
+
+    def test_mark_nl_range_complete_uses_parent_sharing_for_new_index(self, tmp_path):
+        cm = _make_cache(tmp_path)
+        index_path = cm._index_path("RACE")
+        index_path.parent.chmod(0o775)
+
+        cm.mark_nl_range_complete("RACE", ["20260401"])
+
+        assert index_path.stat().st_mode & 0o777 == 0o664
+
     def test_mark_nl_range_complete_preserves_old_index_if_replace_fails(
         self,
         tmp_path,

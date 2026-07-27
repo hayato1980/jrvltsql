@@ -1,6 +1,8 @@
 """Local file cache manager for JV-Data raw records."""
 
 import json
+import os
+import stat
 import struct
 import tempfile
 import threading
@@ -68,6 +70,13 @@ class CacheManager:
             ) as temp_file:
                 temp_path = Path(temp_file.name)
                 json.dump(index, temp_file, ensure_ascii=False, indent=2)
+            if path.exists():
+                index_mode = stat.S_IMODE(path.stat().st_mode)
+            else:
+                # Match a normal cache file's read/write sharing to the
+                # containing directory without copying execute bits.
+                index_mode = stat.S_IMODE(path.parent.stat().st_mode) & 0o666
+            os.chmod(temp_path, index_mode)
             temp_path.replace(path)
         finally:
             if temp_path is not None and temp_path.exists():
