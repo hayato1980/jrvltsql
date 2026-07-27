@@ -43,6 +43,7 @@ def test_historical_no_data_resets_statistics_from_previous_spec():
         "records_parsed": 0,
         "records_failed": 0,
         "recoverable_read_errors": 0,
+        "repaired_read_errors": 0,
     }
 
 

@@ -74,6 +74,27 @@ class TestNlWriteRead:
         records = list(cm.read_nl("RACE", "20260401", "20260401"))
         assert records == [_raw("lower")]
 
+    def test_checkpoint_restore_truncates_appended_records(self, tmp_path):
+        cm = _make_cache(tmp_path)
+        cm.write_nl_record("RACE", "20260401", _raw("before"))
+        checkpoint = cm.checkpoint_nl("RACE", "20260401")
+        cm.write_nl_record("RACE", "20260401", _raw("after"))
+
+        cm.restore_nl("RACE", "20260401", checkpoint)
+
+        assert list(cm.read_nl("RACE", "20260401", "20260401")) == [
+            _raw("before")
+        ]
+
+    def test_checkpoint_restore_removes_new_file(self, tmp_path):
+        cm = _make_cache(tmp_path)
+        checkpoint = cm.checkpoint_nl("RACE", "20260401")
+        cm.write_nl_record("RACE", "20260401", _raw("temporary"))
+
+        cm.restore_nl("RACE", "20260401", checkpoint)
+
+        assert list(cm.read_nl("RACE", "20260401", "20260401")) == []
+
 
 # ---------------------------------------------------------------------------
 # NL_ index: has_nl / has_nl_range / mark_nl_complete

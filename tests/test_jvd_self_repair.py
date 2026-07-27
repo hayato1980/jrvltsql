@@ -10,6 +10,7 @@ import pytest
 
 from src.fetcher.base import FetcherError
 from src.fetcher.historical import HistoricalFetcher
+from src.cache.manager import CacheManager
 from src.jvlink.wrapper import JVLinkError, JVLinkWrapper
 
 
@@ -25,6 +26,7 @@ def _fetcher():
     fetcher._records_parsed = 0
     fetcher._records_failed = 0
     fetcher._recoverable_read_errors = 0
+    fetcher._repaired_read_errors = 0
     fetcher._files_processed = 0
     fetcher._total_files = 3
     fetcher._jvd_self_repair_attempts = 0
@@ -61,10 +63,11 @@ def test_zero_byte_read_error_deletes_exact_file_then_closes_and_reopens():
         ("open", ("RACE", "20260101000000", 1)),
     ]
     assert fetcher._jvd_self_repair_attempts == 1
-    assert fetcher.get_statistics()["recoverable_read_errors"] == 1
+    assert fetcher.get_statistics()["recoverable_read_errors"] == 0
+    assert fetcher.get_statistics()["repaired_read_errors"] == 1
 
 
-def test_invalid_content_error_fails_closed_without_deleting_or_reopening():
+def test_invalid_content_error_deletes_for_next_run_then_fails_closed():
     fetcher = _fetcher()
     fetcher.jvlink.jv_read.side_effect = [
         (-403, None, "corrupt/RACE.jvd"),
@@ -77,7 +80,7 @@ def test_invalid_content_error_fails_closed_without_deleting_or_reopening():
             )
         )
 
-    fetcher.jvlink.jv_file_delete.assert_not_called()
+    fetcher.jvlink.jv_file_delete.assert_called_once_with("corrupt/RACE.jvd")
     fetcher.jvlink.jv_close.assert_not_called()
     fetcher.jvlink.jv_open.assert_not_called()
 
@@ -147,6 +150,92 @@ def test_reopen_does_not_emit_already_processed_records_twice():
     assert fetcher.parser_factory.parse.call_count == 2
 
 
+def test_second_zero_byte_error_during_replay_restarts_same_prefix():
+    fetcher = _fetcher()
+    fetcher.jvlink.jv_read.side_effect = [
+        (1, b"A", "first.jvd"),
+        (-402, None, "corrupt-1.jvd"),
+        (1, b"A", "first.jvd"),
+        (-402, None, "corrupt-2.jvd"),
+        (1, b"A", "first.jvd"),
+        (1, b"B", "second.jvd"),
+        (0, None, None),
+    ]
+    fetcher.parser_factory.parse.side_effect = lambda raw: {
+        "RecordSpec": "RA",
+        "value": raw,
+    }
+
+    records = list(
+        fetcher._fetch_and_parse(
+            recover_file_error=fetcher._recover_historical_read_error,
+            consume_replayed_record=fetcher._consume_replayed_record,
+        )
+    )
+
+    assert [record["value"] for record in records] == [b"A", b"B"]
+    assert fetcher._records_fetched == 2
+    assert fetcher.parser_factory.parse.call_count == 2
+    assert fetcher._jvd_self_repair_attempts == 2
+
+
+def test_recovery_write_through_cache_contains_no_replayed_duplicate(tmp_path):
+    fetcher = _fetcher()
+    fetcher.show_progress = False
+    fetcher._service_key = None
+    fetcher.cache_manager = CacheManager(tmp_path / "cache")
+    fetcher.jvlink.jv_init.return_value = 0
+    fetcher.jvlink.jv_open.return_value = (0, 2, 0, "ts")
+    fetcher.jvlink.jv_read.side_effect = [
+        (1, b"A", "first.jvd"),
+        (-402, None, "corrupt.jvd"),
+        (1, b"A", "first.jvd"),
+        (1, b"B", "second.jvd"),
+        (0, None, None),
+    ]
+    fetcher.parser_factory.parse.side_effect = lambda raw: {
+        "RecordSpec": "RA",
+        "Year": "2026",
+        "MonthDay": "0101",
+        "value": raw,
+    }
+
+    records = list(fetcher.fetch("RACE", "20260101", "20260101"))
+
+    assert [record["value"] for record in records] == [b"A", b"B"]
+    assert list(
+        fetcher.cache_manager.read_nl("RACE", "20260101", "20260101")
+    ) == [b"A", b"B"]
+
+
+def test_failed_fetch_rolls_back_raw_cache_append(tmp_path):
+    fetcher = _fetcher()
+    fetcher.show_progress = False
+    fetcher._service_key = None
+    fetcher.cache_manager = CacheManager(tmp_path / "cache")
+    fetcher.cache_manager.write_nl_record("RACE", "20260101", b"existing")
+    fetcher.jvlink.jv_init.return_value = 0
+    fetcher.jvlink.jv_open.return_value = (0, 2, 0, "ts")
+    fetcher.jvlink.jv_read.side_effect = [
+        (1, b"A", "first.jvd"),
+        (-403, None, "corrupt.jvd"),
+    ]
+    fetcher.parser_factory.parse.side_effect = lambda raw: {
+        "RecordSpec": "RA",
+        "Year": "2026",
+        "MonthDay": "0101",
+        "value": raw,
+    }
+
+    with pytest.raises(FetcherError, match="automatic replay is limited"):
+        list(fetcher.fetch("RACE", "20260101", "20260101"))
+
+    assert list(
+        fetcher.cache_manager.read_nl("RACE", "20260101", "20260101")
+    ) == [b"existing"]
+    assert not fetcher.cache_manager.has_nl("RACE", "20260101")
+
+
 def test_replay_skip_still_runs_periodic_com_buffer_gc():
     fetcher = _fetcher()
     fetcher._jvd_replay_records_remaining = 1
@@ -198,7 +287,7 @@ def test_read_recovery_is_bounded():
     with pytest.raises(FetcherError, match="after 2 self-repair retries"):
         fetcher._recover_historical_read_error(-402, "third.jvd")
 
-    assert fetcher.jvlink.jv_file_delete.call_count == 2
+    assert fetcher.jvlink.jv_file_delete.call_count == 3
     assert fetcher.jvlink.jv_close.call_count == 2
     assert fetcher.jvlink.jv_open.call_count == 2
 

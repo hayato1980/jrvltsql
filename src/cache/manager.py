@@ -81,6 +81,31 @@ class CacheManager:
                 f.write(self.HEADER.pack(len(raw)))
                 f.write(raw)
 
+    def checkpoint_nl(self, spec: str, date_str: str) -> Optional[int]:
+        """Return the current byte length for rollback, or None if absent."""
+        path = self._nl_path(spec, date_str)
+        with self._lock_for(f"nl:{spec}:{date_str}"):
+            return path.stat().st_size if path.exists() else None
+
+    def restore_nl(self, spec: str, date_str: str, checkpoint: Optional[int]) -> None:
+        """Restore one NL cache file to a checkpoint made before appending."""
+        path = self._nl_path(spec, date_str)
+        with self._lock_for(f"nl:{spec}:{date_str}"):
+            if checkpoint is None:
+                if path.exists():
+                    path.unlink()
+                return
+            if not path.exists():
+                raise FileNotFoundError(
+                    f"NL cache disappeared before rollback: {path}"
+                )
+            if path.stat().st_size < checkpoint:
+                raise OSError(
+                    f"NL cache is shorter than rollback checkpoint: {path}"
+                )
+            with open(path, "r+b") as f:
+                f.truncate(checkpoint)
+
     def mark_nl_complete(self, spec: str, date_str: str):
         """Mark date as fully cached in NL index."""
         idx_path = self._index_path(spec)

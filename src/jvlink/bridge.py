@@ -304,7 +304,17 @@ class JVLinkBridge:
             {"cmd": "filedelete", "filename": filename},
             timeout=10.0,
         )
-        return response.get("code", 0)
+        if response.get("status") == "error":
+            code = response.get("code", -1)
+            raise JVLinkBridgeError(
+                response.get("error", f"JVFiledelete failed for {filename}"),
+                error_code=code,
+            )
+        if "code" not in response:
+            raise JVLinkBridgeError(
+                f"JVFiledelete response has no result code for {filename}"
+            )
+        return response["code"]
 
     def wait_for_download(self, timeout: float = 300.0, poll_interval: float = 0.5) -> bool:
         start = time.time()

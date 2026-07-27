@@ -67,9 +67,36 @@ class HistoricalFetcher(BaseFetcher):
         self._jvd_replay_records_remaining -= 1
         return True
 
+    def _delete_corrupt_file_best_effort(self, error_code: int, filename: str) -> None:
+        """Remove a known corrupt file for the next run without masking failure."""
+        if not filename:
+            logger.warning(
+                "Cannot delete corrupt JV-Link file without a filename",
+                error_code=error_code,
+            )
+            return
+        try:
+            result = self.jvlink.jv_file_delete(filename)
+        except Exception as exc:
+            logger.warning(
+                "Best-effort JVFiledelete failed",
+                error_code=error_code,
+                filename=filename,
+                error=str(exc),
+            )
+            return
+        if result not in (None, 0):
+            logger.warning(
+                "Best-effort JVFiledelete returned an error",
+                error_code=error_code,
+                filename=filename,
+                result=result,
+            )
+
     def _recover_historical_read_error(self, error_code: int, filename: str) -> None:
         """Delete the exact corrupt file and reopen the historical stream."""
         if error_code != -402:
+            self._delete_corrupt_file_best_effort(error_code, filename)
             raise FetcherError(
                 f"JVRead returned {error_code} for {filename or 'an unknown file'}; "
                 "automatic replay is limited to zero-byte files (-402)"
@@ -81,6 +108,7 @@ class HistoricalFetcher(BaseFetcher):
         if self._jv_open_context is None:
             raise FetcherError("JVRead self-repair has no JVOpen context")
         if self._jvd_self_repair_attempts >= self.JVD_SELF_REPAIR_MAX_RETRIES:
+            self._delete_corrupt_file_best_effort(error_code, filename)
             raise FetcherError(
                 f"JVRead returned {error_code} for {filename} after "
                 f"{self._jvd_self_repair_attempts} self-repair retries"
@@ -197,6 +225,9 @@ class HistoricalFetcher(BaseFetcher):
 
         download_task_id = None
         fetch_task_id = None
+        active_cache_manager = self.cache_manager
+        cache_checkpoints: dict[str, Optional[int]] = {}
+        cache_write_committed = active_cache_manager is None
 
         try:
             # Info for setup mode (option 3 or 4) - ログのみ、画面表示はしない
@@ -298,10 +329,15 @@ class HistoricalFetcher(BaseFetcher):
                 recover_file_error=self._recover_historical_read_error,
                 consume_replayed_record=self._consume_replayed_record,
             ):
-                if self.cache_manager and "_raw" in data:
+                if active_cache_manager and "_raw" in data:
                     rec_date = _extract_record_date(data)
                     if rec_date:
-                        self.cache_manager.write_nl_record(data_spec, rec_date, data["_raw"])
+                        if rec_date not in cache_checkpoints:
+                            cache_checkpoints[rec_date] = active_cache_manager.checkpoint_nl(
+                                data_spec,
+                                rec_date,
+                            )
+                        active_cache_manager.write_nl_record(data_spec, rec_date, data["_raw"])
                 yield data
 
             if self._jvd_replay_records_remaining > 0:
@@ -311,13 +347,14 @@ class HistoricalFetcher(BaseFetcher):
                 )
 
             # Mark cached dates as complete
-            if self.cache_manager:
+            if active_cache_manager:
                 from datetime import timedelta
                 d = datetime.strptime(from_date, "%Y%m%d").date()
                 end = datetime.strptime(to_date, "%Y%m%d").date()
                 while d <= end:
-                    self.cache_manager.mark_nl_complete(data_spec, d.strftime("%Y%m%d"))
+                    active_cache_manager.mark_nl_complete(data_spec, d.strftime("%Y%m%d"))
                     d += timedelta(days=1)
+                cache_write_committed = True
 
             # Log summary
             stats = self.get_statistics()
@@ -340,6 +377,21 @@ class HistoricalFetcher(BaseFetcher):
             raise FetcherError(f"Historical fetch failed: {e}") from e
 
         finally:
+            if not cache_write_committed and active_cache_manager:
+                for rec_date, checkpoint in cache_checkpoints.items():
+                    try:
+                        active_cache_manager.restore_nl(
+                            data_spec,
+                            rec_date,
+                            checkpoint,
+                        )
+                    except Exception as rollback_error:
+                        logger.error(
+                            "Failed to roll back incomplete NL cache append",
+                            data_spec=data_spec,
+                            record_date=rec_date,
+                            error=str(rollback_error),
+                        )
             self._jv_open_context = None
             self._fetch_task_id = None
             # Close stream (JVClose) — releases the current open session so
@@ -447,8 +499,10 @@ class HistoricalFetcher(BaseFetcher):
         else:
             # Cache miss: fetch from JV-Link, write to cache
             self.cache_manager = cache_manager
-            yield from self.fetch(data_spec, from_date, to_date, option)
-            self.cache_manager = None
+            try:
+                yield from self.fetch(data_spec, from_date, to_date, option)
+            finally:
+                self.cache_manager = None
 
     def _wait_for_download(
         self,

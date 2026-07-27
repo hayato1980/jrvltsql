@@ -77,6 +77,13 @@ class RealtimeFetcher(BaseFetcher):
         self.last_open_result: Optional[int] = None
         self.last_open_key: Optional[str] = None
 
+    def _recover_file_error(self, error_code: int, filename: str) -> None:
+        """Keep realtime snapshots fail-fast on corrupt JV-Link files."""
+        raise FetcherError(
+            f"Realtime JVRead returned {error_code} for "
+            f"{filename or 'an unknown file'}"
+        )
+
     def fetch(
         self,
         data_spec: str = "0B12",

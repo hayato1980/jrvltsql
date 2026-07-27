@@ -70,6 +70,7 @@ class BaseFetcher(ABC):
         self._records_parsed = 0
         self._records_failed = 0
         self._recoverable_read_errors = 0
+        self._repaired_read_errors = 0
         self._files_processed = 0
         self._total_files = 0
         self._service_key = service_key
@@ -115,6 +116,9 @@ class BaseFetcher(ABC):
         Yields:
             Dictionary of parsed record data
         """
+        if recover_file_error is None:
+            recover_file_error = getattr(self, "_recover_file_error", None)
+
         self._start_time = time.time()
         last_update_time = self._start_time
         update_interval = 2.0  # Update progress every 2 seconds
@@ -281,20 +285,23 @@ class BaseFetcher(ABC):
                         filename=filename,
                         recommended_action="Deleting corrupted file and continuing",
                     )
-                    # Continuing lets non-snapshot imports drain later files,
-                    # but the current response is no longer complete. Snapshot
-                    # callers use this counter to reject destructive replacement.
-                    self._recoverable_read_errors += 1
-
                     if ret_code in (-203, -402, -403, -502, -503):
                         if recover_file_error is not None and ret_code in (-402, -403):
                             recover_file_error(ret_code, filename or "")
+                            self._repaired_read_errors += 1
                         elif filename and hasattr(self.jvlink, 'jv_file_delete'):
+                            # Continuing lets non-snapshot imports drain later
+                            # files, but this response is no longer complete.
+                            self._recoverable_read_errors += 1
                             try:
                                 self.jvlink.jv_file_delete(filename)
                                 logger.info(f"Deleted corrupted file: {filename}")
                             except Exception as e:
                                 logger.warning(f"Failed to delete file {filename}: {e}")
+                        else:
+                            self._recoverable_read_errors += 1
+                    else:
+                        self._recoverable_read_errors += 1
                     continue
 
                 else:
@@ -322,6 +329,7 @@ class BaseFetcher(ABC):
             "records_parsed": self._records_parsed,
             "records_failed": self._records_failed,
             "recoverable_read_errors": self._recoverable_read_errors,
+            "repaired_read_errors": self._repaired_read_errors,
         }
 
     def reset_statistics(self):
@@ -330,6 +338,7 @@ class BaseFetcher(ABC):
         self._records_parsed = 0
         self._records_failed = 0
         self._recoverable_read_errors = 0
+        self._repaired_read_errors = 0
 
     def _is_within_date_range(self, data: dict, to_date: str) -> bool:
         """Check if a record's date is within the specified range (up to to_date).
