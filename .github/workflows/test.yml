@@ -26,7 +26,19 @@ jobs:
 
     - name: Run tests
       run: |
-        pytest tests/test_parsers.py tests/test_parser.py tests/test_comprehensive_integration.py tests/test_realtime.py tests/test_error_scenarios.py -v --cov=src --cov-report=xml --cov-report=term
+        pytest \
+          tests/test_parsers.py \
+          tests/test_parser.py \
+          tests/test_comprehensive_integration.py \
+          tests/test_realtime.py \
+          tests/test_error_scenarios.py \
+          tests/test_jvd_self_repair.py \
+          tests/test_cache_manager.py \
+          tests/test_historical_cache_failures.py \
+          tests/test_batch_processor.py \
+          tests/test_time_series.py \
+          tests/unit/test_jvlink_bridge.py \
+          -v --cov=src --cov-report=xml --cov-report=term
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4

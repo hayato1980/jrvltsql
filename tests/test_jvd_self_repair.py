@@ -290,6 +290,67 @@ def test_failed_fetch_rolls_back_raw_cache_append(tmp_path):
     assert not fetcher.cache_manager.has_nl("RACE", "20260101")
 
 
+def test_abandoned_fetch_rolls_back_raw_cache_append(tmp_path):
+    fetcher = _fetcher()
+    fetcher.show_progress = False
+    fetcher._service_key = None
+    fetcher.cache_manager = CacheManager(tmp_path / "cache")
+    fetcher.cache_manager.write_nl_record("RACE", "20260101", b"existing")
+    fetcher.jvlink.jv_init.return_value = 0
+    fetcher.jvlink.jv_open.return_value = (0, 2, 0, "ts")
+    fetcher.jvlink.jv_read.side_effect = [
+        (1, b"A", "first.jvd"),
+        (1, b"B", "second.jvd"),
+    ]
+    fetcher.parser_factory.parse.side_effect = lambda raw: {
+        "RecordSpec": "RA",
+        "Year": "2026",
+        "MonthDay": "0101",
+        "value": raw,
+    }
+
+    records = fetcher.fetch("RACE", "20260101", "20260101")
+    assert next(records)["value"] == b"A"
+    records.close()
+
+    assert list(
+        fetcher.cache_manager.read_nl("RACE", "20260101", "20260101")
+    ) == [b"existing"]
+    assert not fetcher.cache_manager.has_nl("RACE", "20260101")
+
+
+def test_abandoned_fetch_with_cache_clears_attached_manager(tmp_path):
+    fetcher = _fetcher()
+    fetcher.show_progress = False
+    fetcher._service_key = None
+    cache_manager = CacheManager(tmp_path / "cache")
+    fetcher.jvlink.jv_init.return_value = 0
+    fetcher.jvlink.jv_open.return_value = (0, 2, 0, "ts")
+    fetcher.jvlink.jv_read.side_effect = [
+        (1, b"A", "first.jvd"),
+        (1, b"B", "second.jvd"),
+    ]
+    fetcher.parser_factory.parse.side_effect = lambda raw: {
+        "RecordSpec": "RA",
+        "Year": "2026",
+        "MonthDay": "0101",
+        "value": raw,
+    }
+
+    records = fetcher.fetch_with_cache(
+        cache_manager,
+        "RACE",
+        "20260101",
+        "20260101",
+    )
+    assert next(records)["value"] == b"A"
+    records.close()
+
+    assert fetcher.cache_manager is None
+    assert list(cache_manager.read_nl("RACE", "20260101", "20260101")) == []
+    assert not cache_manager.has_nl("RACE", "20260101")
+
+
 def test_replay_skip_still_runs_periodic_com_buffer_gc():
     fetcher = _fetcher()
     fetcher._jvd_replay_records_remaining = 1
