@@ -102,6 +102,7 @@ class BaseFetcher(ABC):
         to_date: Optional[str] = None,
         recover_file_error: Optional[Callable[[int, str], None]] = None,
         consume_replayed_record: Optional[Callable[[], bool]] = None,
+        replay_pending: Optional[Callable[[], bool]] = None,
     ) -> Iterator[dict]:
         """Internal method to fetch and parse records.
 
@@ -112,6 +113,8 @@ class BaseFetcher(ABC):
                 corrupt downloaded files (-402/-403).
             consume_replayed_record: Optional callback that returns True when a
                 record replayed after recovery must be skipped.
+            replay_pending: Optional callback that returns True while a
+                historical recovery is still replaying an emitted prefix.
 
         Yields:
             Dictionary of parsed record data
@@ -274,6 +277,16 @@ class BaseFetcher(ABC):
                     # the same code again. They remain in this recoverable set
                     # unchanged pending a decision on whether that's still the
                     # right classification; see the PR description.
+                    if (
+                        ret_code not in (-402, -403)
+                        and replay_pending is not None
+                        and replay_pending()
+                    ):
+                        raise FetcherError(
+                            "JVRead returned legacy recoverable error "
+                            f"{ret_code} while historical recovery replay was pending; "
+                            "cannot preserve stream position safely"
+                        )
 
                     # Error-specific guidance
                     error_messages = {

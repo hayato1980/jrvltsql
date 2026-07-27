@@ -118,9 +118,7 @@ class HistoricalFetcher(BaseFetcher):
                     "JVOpen returned no data while recovering "
                     f"{filename} after JVRead {error_code}"
                 )
-            if download_count == 0 or (
-                expected_read_count > 0 and read_count != expected_read_count
-            ):
+            if download_count == 0 or read_count != expected_read_count:
                 raise FetcherError(
                     f"JVOpen did not restore {filename} after JVRead {error_code}: "
                     f"read_count={read_count}, expected_exactly={expected_read_count}, "
@@ -312,6 +310,7 @@ class HistoricalFetcher(BaseFetcher):
                 to_date=to_date,
                 recover_file_error=self._recover_historical_read_error,
                 consume_replayed_record=self._consume_replayed_record,
+                replay_pending=lambda: self._jvd_replay_records_remaining > 0,
             ):
                 if active_cache_manager and "_raw" in data:
                     rec_date = _extract_record_date(data)
@@ -328,6 +327,12 @@ class HistoricalFetcher(BaseFetcher):
                 raise FetcherError(
                     "Historical stream ended before recovery replay caught up; "
                     f"{self._jvd_replay_records_remaining} record(s) remain"
+                )
+            if self._recoverable_read_errors > 0:
+                raise FetcherError(
+                    "Historical stream completed with "
+                    f"{self._recoverable_read_errors} unrepaired JVRead error(s); "
+                    "refusing to commit incomplete output"
                 )
 
             # Mark cached dates as complete

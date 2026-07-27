@@ -162,6 +162,19 @@ def test_read_recovery_rejects_longer_reopened_stream():
     assert "read_count=4, expected_exactly=3" in str(exc_info.value.__cause__)
 
 
+def test_read_recovery_checks_count_when_original_stream_reported_zero():
+    fetcher = _fetcher()
+    fetcher._total_files = 0
+    fetcher.jvlink.jv_open.return_value = (0, 1, 1, "ts")
+
+    with pytest.raises(FetcherError, match="Failed to reopen") as exc_info:
+        fetcher._recover_historical_read_error(-402, "corrupt/RACE.jvd")
+
+    assert isinstance(exc_info.value.__cause__, FetcherError)
+    assert "did not restore" in str(exc_info.value.__cause__)
+    assert "read_count=1, expected_exactly=0" in str(exc_info.value.__cause__)
+
+
 def test_reopen_does_not_emit_already_processed_records_twice():
     fetcher = _fetcher()
     fetcher.jvlink.jv_read.side_effect = [
@@ -306,6 +319,25 @@ def test_replay_skip_still_runs_periodic_com_buffer_gc():
     )
 
 
+def test_legacy_read_error_during_replay_fails_closed():
+    fetcher = _fetcher()
+    fetcher._jvd_replay_records_remaining = 1
+    fetcher.jvlink.jv_read.side_effect = [
+        (-503, None, "missing.jvd"),
+    ]
+
+    with pytest.raises(FetcherError, match="while historical recovery replay was pending"):
+        list(
+            fetcher._fetch_and_parse(
+                consume_replayed_record=fetcher._consume_replayed_record,
+                replay_pending=lambda: fetcher._jvd_replay_records_remaining > 0,
+            )
+        )
+
+    fetcher.jvlink.jv_file_delete.assert_not_called()
+    assert fetcher._jvd_replay_records_remaining == 1
+
+
 def test_incomplete_replay_does_not_mark_raw_cache_complete():
     fetcher = _fetcher()
     fetcher.show_progress = False
@@ -322,6 +354,27 @@ def test_incomplete_replay_does_not_mark_raw_cache_complete():
     fetcher._fetch_and_parse = incomplete_stream
 
     with pytest.raises(FetcherError, match="recovery replay caught up"):
+        list(fetcher.fetch("RACE", "20260101", "20260103"))
+
+    fetcher.cache_manager.mark_nl_range_complete.assert_not_called()
+
+
+def test_unrepaired_read_error_does_not_mark_raw_cache_complete():
+    fetcher = _fetcher()
+    fetcher.show_progress = False
+    fetcher._service_key = None
+    fetcher.cache_manager = MagicMock()
+    fetcher.jvlink.jv_init.return_value = 0
+    fetcher.jvlink.jv_open.return_value = (0, 3, 0, "ts")
+
+    def incomplete_stream(*args, **kwargs):
+        fetcher._recoverable_read_errors = 1
+        if False:
+            yield None
+
+    fetcher._fetch_and_parse = incomplete_stream
+
+    with pytest.raises(FetcherError, match="unrepaired JVRead error"):
         list(fetcher.fetch("RACE", "20260101", "20260103"))
 
     fetcher.cache_manager.mark_nl_range_complete.assert_not_called()
