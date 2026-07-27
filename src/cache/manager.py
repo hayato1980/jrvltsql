@@ -1,11 +1,15 @@
 """Local file cache manager for JV-Data raw records."""
 
 import json
+import os
+import stat
 import struct
+import tempfile
 import threading
+from collections.abc import Iterable, Iterator
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Optional
 
 
 class CacheManager:
@@ -55,7 +59,28 @@ class CacheManager:
         return {}
 
     def _save_index(self, path: Path, index: dict):
-        path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                delete=False,
+            ) as temp_file:
+                temp_path = Path(temp_file.name)
+                json.dump(index, temp_file, ensure_ascii=False, indent=2)
+            if path.exists():
+                index_mode = stat.S_IMODE(path.stat().st_mode)
+            else:
+                # Match a normal cache file's read/write sharing to the
+                # containing directory without copying execute bits.
+                index_mode = stat.S_IMODE(path.parent.stat().st_mode) & 0o666
+            os.chmod(temp_path, index_mode)
+            temp_path.replace(path)
+        finally:
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink()
 
     # --- NL_ public API ---
     def has_nl(self, spec: str, date_str: str) -> bool:
@@ -81,20 +106,50 @@ class CacheManager:
                 f.write(self.HEADER.pack(len(raw)))
                 f.write(raw)
 
+    def checkpoint_nl(self, spec: str, date_str: str) -> Optional[int]:
+        """Return the current byte length for rollback, or None if absent."""
+        path = self._nl_path(spec, date_str)
+        with self._lock_for(f"nl:{spec}:{date_str}"):
+            return path.stat().st_size if path.exists() else None
+
+    def restore_nl(self, spec: str, date_str: str, checkpoint: Optional[int]) -> None:
+        """Restore one NL cache file to a checkpoint made before appending."""
+        path = self._nl_path(spec, date_str)
+        with self._lock_for(f"nl:{spec}:{date_str}"):
+            if checkpoint is None:
+                if path.exists():
+                    path.unlink()
+                return
+            if not path.exists():
+                raise FileNotFoundError(
+                    f"NL cache disappeared before rollback: {path}"
+                )
+            if path.stat().st_size < checkpoint:
+                raise OSError(
+                    f"NL cache is shorter than rollback checkpoint: {path}"
+                )
+            with open(path, "r+b") as f:
+                f.truncate(checkpoint)
+
     def mark_nl_complete(self, spec: str, date_str: str):
         """Mark date as fully cached in NL index."""
+        self.mark_nl_range_complete(spec, [date_str])
+
+    def mark_nl_range_complete(self, spec: str, date_strs: Iterable[str]) -> None:
+        """Atomically mark every date in one completed fetch range."""
         idx_path = self._index_path(spec)
         with self._lock_for(f"idx:{spec}"):
             index = self._load_index(idx_path)
-            bin_path = self._nl_path(spec, date_str)
-            size = bin_path.stat().st_size if bin_path.exists() else 0
-            count = self._count_records(bin_path) if bin_path.exists() else 0
-            index[date_str] = {
-                "complete": True,
-                "count": count,
-                "size": size,
-                "mtime": _now_iso(),
-            }
+            for date_str in date_strs:
+                bin_path = self._nl_path(spec, date_str)
+                size = bin_path.stat().st_size if bin_path.exists() else 0
+                count = self._count_records(bin_path) if bin_path.exists() else 0
+                index[date_str] = {
+                    "complete": True,
+                    "count": count,
+                    "size": size,
+                    "mtime": _now_iso(),
+                }
             self._save_index(idx_path, index)
 
     def read_nl(self, spec: str, from_date: str, to_date: str) -> Iterator[bytes]:

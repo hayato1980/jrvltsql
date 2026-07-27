@@ -6,7 +6,7 @@ This module provides the base class for fetching JV-Data from JV-Link.
 import gc
 import time
 from abc import ABC, abstractmethod
-from typing import Iterator, Optional
+from typing import Callable, Iterator, Optional
 
 from src.jvlink.constants import JV_READ_NO_MORE_DATA, JV_READ_SUCCESS
 from src.jvlink.wrapper import JVLinkWrapper
@@ -70,6 +70,7 @@ class BaseFetcher(ABC):
         self._records_parsed = 0
         self._records_failed = 0
         self._recoverable_read_errors = 0
+        self._repaired_read_errors = 0
         self._files_processed = 0
         self._total_files = 0
         self._service_key = service_key
@@ -95,16 +96,32 @@ class BaseFetcher(ABC):
         """
         pass
 
-    def _fetch_and_parse(self, task_id: Optional[int] = None, to_date: Optional[str] = None) -> Iterator[dict]:
+    def _fetch_and_parse(
+        self,
+        task_id: Optional[int] = None,
+        to_date: Optional[str] = None,
+        recover_file_error: Optional[Callable[[int, str], None]] = None,
+        consume_replayed_record: Optional[Callable[[], bool]] = None,
+        replay_pending: Optional[Callable[[], bool]] = None,
+    ) -> Iterator[dict]:
         """Internal method to fetch and parse records.
 
         Args:
             task_id: Progress task ID (optional)
             to_date: End date in YYYYMMDD format (optional, for filtering records)
+            recover_file_error: Optional historical-stream recovery callback for
+                corrupt downloaded files (-402/-403).
+            consume_replayed_record: Optional callback that returns True when a
+                record replayed after recovery must be skipped.
+            replay_pending: Optional callback that returns True while a
+                historical recovery is still replaying an emitted prefix.
 
         Yields:
             Dictionary of parsed record data
         """
+        if recover_file_error is None:
+            recover_file_error = getattr(self, "_recover_file_error", None)
+
         self._start_time = time.time()
         last_update_time = self._start_time
         update_interval = 2.0  # Update progress every 2 seconds
@@ -156,6 +173,24 @@ class BaseFetcher(ABC):
 
                 elif ret_code > 0:
                     # Success with data (ret_code is data length)
+                    # Replayed records still hold COM buffers. Run the normal
+                    # periodic collection before a replay skip so a long setup
+                    # import cannot bypass the E_UNEXPECTED mitigation.
+                    current_time = time.time()
+                    if (current_time - last_gc_time) >= 10.0:
+                        gc.collect()
+                        last_gc_time = current_time
+
+                    if consume_replayed_record is not None and consume_replayed_record():
+                        if (current_time - last_update_time) >= update_interval:
+                            logger.info(
+                                "Replaying records after historical recovery",
+                                records_previously_emitted=self._records_fetched,
+                                files_processed=self._files_processed,
+                                total_files=self._total_files,
+                            )
+                            last_update_time = current_time
+                        continue
                     self._records_fetched += 1
 
                     # Parse record
@@ -197,12 +232,8 @@ class BaseFetcher(ABC):
                     # Periodic GC to free COM buffer references (every 10s).
                     # kmy-keiba frees COM buffers with Array.Resize(ref buff, 0) after each read.
                     # In Python, COM BSTR data may accumulate and cause E_UNEXPECTED.
-                    current_time = time.time()
-                    if (current_time - last_gc_time) >= 10.0:
-                        gc.collect()
-                        last_gc_time = current_time
-
                     # Update progress display (stats only - progress updated on file switch)
+                    current_time = time.time()
                     if (current_time - last_update_time) >= update_interval:
                         elapsed = current_time - self._start_time
                         speed = self._records_fetched / elapsed if elapsed > 0 else 0
@@ -246,6 +277,16 @@ class BaseFetcher(ABC):
                     # the same code again. They remain in this recoverable set
                     # unchanged pending a decision on whether that's still the
                     # right classification; see the PR description.
+                    if (
+                        ret_code not in (-402, -403)
+                        and replay_pending is not None
+                        and replay_pending()
+                    ):
+                        raise FetcherError(
+                            "JVRead returned legacy recoverable error "
+                            f"{ret_code} while historical recovery replay was pending; "
+                            "cannot preserve stream position safely"
+                        )
 
                     # Error-specific guidance
                     error_messages = {
@@ -265,18 +306,23 @@ class BaseFetcher(ABC):
                         filename=filename,
                         recommended_action="Deleting corrupted file and continuing",
                     )
-                    # Continuing lets non-snapshot imports drain later files,
-                    # but the current response is no longer complete. Snapshot
-                    # callers use this counter to reject destructive replacement.
-                    self._recoverable_read_errors += 1
-
-                    # Delete corrupted file for file-related errors
-                    if ret_code in (-203, -402, -403, -502, -503) and filename and hasattr(self.jvlink, 'jv_file_delete'):
-                        try:
-                            self.jvlink.jv_file_delete(filename)
-                            logger.info(f"Deleted corrupted file: {filename}")
-                        except Exception as e:
-                            logger.warning(f"Failed to delete file {filename}: {e}")
+                    if ret_code in (-203, -402, -403, -502, -503):
+                        if recover_file_error is not None and ret_code in (-402, -403):
+                            recover_file_error(ret_code, filename or "")
+                            self._repaired_read_errors += 1
+                        elif filename and hasattr(self.jvlink, 'jv_file_delete'):
+                            # Continuing lets non-snapshot imports drain later
+                            # files, but this response is no longer complete.
+                            self._recoverable_read_errors += 1
+                            try:
+                                self.jvlink.jv_file_delete(filename)
+                                logger.info(f"Deleted corrupted file: {filename}")
+                            except Exception as e:
+                                logger.warning(f"Failed to delete file {filename}: {e}")
+                        else:
+                            self._recoverable_read_errors += 1
+                    else:
+                        self._recoverable_read_errors += 1
                     continue
 
                 else:
@@ -291,7 +337,33 @@ class BaseFetcher(ABC):
                 raise
             except Exception as e:
                 logger.error("Error during fetch", error=str(e))
-                raise FetcherError(f"Failed to fetch data: {e}")
+                raise FetcherError(f"Failed to fetch data: {e}") from e
+
+    def _delete_corrupt_file_best_effort(self, error_code: int, filename: str) -> None:
+        """Remove a corrupt JV-Link file for the next run without masking failure."""
+        if not filename:
+            logger.warning(
+                "Cannot delete corrupt JV-Link file without a filename",
+                error_code=error_code,
+            )
+            return
+        try:
+            result = self.jvlink.jv_file_delete(filename)
+        except Exception as exc:
+            logger.warning(
+                "Best-effort JVFiledelete failed",
+                error_code=error_code,
+                filename=filename,
+                error=str(exc),
+            )
+            return
+        if result not in (None, 0):
+            logger.warning(
+                "Best-effort JVFiledelete returned an error",
+                error_code=error_code,
+                filename=filename,
+                result=result,
+            )
 
     def get_statistics(self) -> dict:
         """Get fetching statistics.
@@ -304,6 +376,7 @@ class BaseFetcher(ABC):
             "records_parsed": self._records_parsed,
             "records_failed": self._records_failed,
             "recoverable_read_errors": self._recoverable_read_errors,
+            "repaired_read_errors": self._repaired_read_errors,
         }
 
     def reset_statistics(self):
@@ -312,6 +385,7 @@ class BaseFetcher(ABC):
         self._records_parsed = 0
         self._records_failed = 0
         self._recoverable_read_errors = 0
+        self._repaired_read_errors = 0
 
     def _is_within_date_range(self, data: dict, to_date: str) -> bool:
         """Check if a record's date is within the specified range (up to to_date).

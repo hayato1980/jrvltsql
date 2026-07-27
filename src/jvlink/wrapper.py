@@ -507,6 +507,16 @@ class JVLinkWrapper:
                 # Note: Debug log removed - this is very frequent during data fetching
                 return result, None, None
 
+            elif result in (-402, -403):
+                # Preserve the filename returned by JVRead so the fetcher can
+                # apply its recovery policy without inspecting cache paths.
+                logger.warning(
+                    "JVRead returned recoverable file error",
+                    error_code=result,
+                    filename=filename_str,
+                )
+                return result, None, filename_str
+
             else:
                 # Error (< -1)
                 logger.error("JVRead failed", error_code=result)

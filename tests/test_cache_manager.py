@@ -74,6 +74,27 @@ class TestNlWriteRead:
         records = list(cm.read_nl("RACE", "20260401", "20260401"))
         assert records == [_raw("lower")]
 
+    def test_checkpoint_restore_truncates_appended_records(self, tmp_path):
+        cm = _make_cache(tmp_path)
+        cm.write_nl_record("RACE", "20260401", _raw("before"))
+        checkpoint = cm.checkpoint_nl("RACE", "20260401")
+        cm.write_nl_record("RACE", "20260401", _raw("after"))
+
+        cm.restore_nl("RACE", "20260401", checkpoint)
+
+        assert list(cm.read_nl("RACE", "20260401", "20260401")) == [
+            _raw("before")
+        ]
+
+    def test_checkpoint_restore_removes_new_file(self, tmp_path):
+        cm = _make_cache(tmp_path)
+        checkpoint = cm.checkpoint_nl("RACE", "20260401")
+        cm.write_nl_record("RACE", "20260401", _raw("temporary"))
+
+        cm.restore_nl("RACE", "20260401", checkpoint)
+
+        assert list(cm.read_nl("RACE", "20260401", "20260401")) == []
+
 
 # ---------------------------------------------------------------------------
 # NL_ index: has_nl / has_nl_range / mark_nl_complete
@@ -104,6 +125,82 @@ class TestNlIndex:
         cm = _make_cache(tmp_path)
         cm.mark_nl_complete("RACE", "20260402")
         assert cm.has_nl("RACE", "20260402") is True
+
+    def test_mark_nl_range_complete_updates_all_dates(self, tmp_path):
+        cm = _make_cache(tmp_path)
+        cm.write_nl_record("RACE", "20260401", _raw("day1"))
+        cm.write_nl_record("RACE", "20260402", _raw("day2"))
+
+        cm.mark_nl_range_complete("RACE", ["20260401", "20260402"])
+
+        index = cm._load_index(cm._index_path("RACE"))
+        assert set(index) == {"20260401", "20260402"}
+        assert index["20260401"]["complete"] is True
+        assert index["20260401"]["count"] == 1
+        assert index["20260402"]["complete"] is True
+        assert index["20260402"]["count"] == 1
+
+    def test_mark_nl_range_complete_preserves_existing_index_mode(self, tmp_path):
+        cm = _make_cache(tmp_path)
+        cm.mark_nl_complete("RACE", "20260401")
+        index_path = cm._index_path("RACE")
+        index_path.chmod(0o664)
+
+        cm.mark_nl_range_complete("RACE", ["20260402", "20260403"])
+
+        assert index_path.stat().st_mode & 0o777 == 0o664
+
+    def test_mark_nl_range_complete_uses_parent_sharing_for_new_index(self, tmp_path):
+        cm = _make_cache(tmp_path)
+        index_path = cm._index_path("RACE")
+        index_path.parent.chmod(0o775)
+
+        cm.mark_nl_range_complete("RACE", ["20260401"])
+
+        assert index_path.stat().st_mode & 0o777 == 0o664
+
+    def test_mark_nl_range_complete_preserves_old_index_if_replace_fails(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        cm = _make_cache(tmp_path)
+        cm.mark_nl_complete("RACE", "20260401")
+        index_path = cm._index_path("RACE")
+        original_index = index_path.read_bytes()
+
+        def fail_replace(_self, _target):
+            raise OSError("simulated atomic replace failure")
+
+        monkeypatch.setattr(Path, "replace", fail_replace)
+
+        with pytest.raises(OSError, match="simulated atomic replace failure"):
+            cm.mark_nl_range_complete("RACE", ["20260402", "20260403"])
+
+        assert index_path.read_bytes() == original_index
+        assert list(index_path.parent.glob(f".{index_path.name}.*")) == []
+
+    def test_mark_nl_range_complete_removes_temp_file_if_dump_fails(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        cm = _make_cache(tmp_path)
+        cm.mark_nl_complete("RACE", "20260401")
+        index_path = cm._index_path("RACE")
+        original_index = index_path.read_bytes()
+
+        def fail_dump(_index, temp_file, **_kwargs):
+            temp_file.write("{")
+            raise OSError("simulated json dump failure")
+
+        monkeypatch.setattr("src.cache.manager.json.dump", fail_dump)
+
+        with pytest.raises(OSError, match="simulated json dump failure"):
+            cm.mark_nl_range_complete("RACE", ["20260402", "20260403"])
+
+        assert index_path.read_bytes() == original_index
+        assert list(index_path.parent.glob(f".{index_path.name}.*")) == []
 
     def test_has_nl_range_all_complete(self, tmp_path):
         cm = _make_cache(tmp_path)

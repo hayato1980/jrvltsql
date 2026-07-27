@@ -199,6 +199,110 @@ def test_fetch_time_series_batch_from_db_closes_no_data_stream():
         assert progress[-1]["no_data_keys"] == 1
 
 
+def test_fetch_time_series_batch_from_db_discards_partial_key():
+    """後続JVRead失敗時に同一レースの途中レコードを外へ流さない。"""
+    from contextlib import closing
+    from pathlib import Path
+    import sqlite3
+    import tempfile
+    import types
+
+    from src.fetcher.realtime import RealtimeFetcher
+
+    with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+        db_path = Path(temp_dir) / "keiba.db"
+        with closing(sqlite3.connect(db_path)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE NL_RA (
+                    Year INTEGER,
+                    MonthDay INTEGER,
+                    JyoCD TEXT,
+                    Kaiji INTEGER,
+                    Nichiji INTEGER,
+                    RaceNum INTEGER
+                )
+                """
+            )
+            conn.execute("INSERT INTO NL_RA VALUES (2025, 1201, '05', 5, 8, 11)")
+            conn.commit()
+
+        class FakeJVLink:
+            def jv_init(self):
+                return 0
+
+            def jv_rt_open(self, data_spec, key):
+                return 0, 2
+
+            def jv_close(self):
+                pass
+
+        fetcher = object.__new__(RealtimeFetcher)
+        fetcher.jvlink = FakeJVLink()
+
+        def partial_then_error(self):
+            yield {"RecordSpec": "O1", "_raw": b"partial"}
+            raise RuntimeError("later JVRead failed")
+
+        fetcher._fetch_and_parse = types.MethodType(partial_then_error, fetcher)
+        progress = []
+
+        records = list(
+            fetcher.fetch_time_series_batch_from_db(
+                data_spec="0B30",
+                db_path=str(db_path),
+                from_date="20251201",
+                to_date="20251201",
+                progress_callback=progress.append,
+            )
+        )
+
+        assert records == []
+        assert progress[-1]["status"] == "exception"
+        assert progress[-1]["success_keys"] == 0
+        assert progress[-1]["error_keys"] == 1
+        assert progress[-1]["records_for_key"] == 0
+        assert progress[-1]["total_records"] == 0
+
+
+def test_fetch_time_series_batch_discards_partial_key():
+    """全場走査経路でも途中レコードを外へ流さない。"""
+    import types
+
+    from src.fetcher.realtime import RealtimeFetcher
+
+    class FakeJVLink:
+        def jv_init(self):
+            return 0
+
+        def jv_rt_open(self, data_spec, key):
+            return 0, 2
+
+        def jv_close(self):
+            pass
+
+    fetcher = object.__new__(RealtimeFetcher)
+    fetcher.jvlink = FakeJVLink()
+
+    def partial_then_error(self):
+        yield {"RecordSpec": "O1", "_raw": b"partial"}
+        raise RuntimeError("later JVRead failed")
+
+    fetcher._fetch_and_parse = types.MethodType(partial_then_error, fetcher)
+
+    records = list(
+        fetcher.fetch_time_series_batch(
+            data_spec="0B30",
+            from_date="20251201",
+            to_date="20251201",
+            jyo_codes=["05"],
+            race_nums=[11],
+        )
+    )
+
+    assert records == []
+
+
 def test_fetch_time_series_batch_from_postgres_uses_pg_race_keys(monkeypatch):
     """PostgreSQL保存のNL_RAから時系列取得キーを作れることを確認する。"""
     import types
