@@ -119,11 +119,11 @@ class HistoricalFetcher(BaseFetcher):
                     f"{filename} after JVRead {error_code}"
                 )
             if download_count == 0 or (
-                expected_read_count > 0 and read_count < expected_read_count
+                expected_read_count > 0 and read_count != expected_read_count
             ):
                 raise FetcherError(
                     f"JVOpen did not restore {filename} after JVRead {error_code}: "
-                    f"read_count={read_count}, expected_at_least={expected_read_count}, "
+                    f"read_count={read_count}, expected_exactly={expected_read_count}, "
                     f"download_count={download_count}"
                 )
             if download_count > 0:
@@ -152,6 +152,7 @@ class HistoricalFetcher(BaseFetcher):
             result_code=result,
             read_count=read_count,
             download_count=download_count,
+            replay_records=self._jvd_replay_records_remaining,
             last_file_timestamp=last_file_timestamp,
         )
 

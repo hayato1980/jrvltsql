@@ -100,6 +100,7 @@ def test_read_recovery_resets_reopened_progress_total():
     fetcher = _fetcher()
     fetcher.progress_display = MagicMock()
     fetcher._fetch_task_id = 17
+    fetcher._total_files = 8
     fetcher.jvlink.jv_open.return_value = (0, 8, 1, "ts")
 
     fetcher._recover_historical_read_error(-402, "corrupt/RACE.jvd")
@@ -146,7 +147,19 @@ def test_read_recovery_rejects_shorter_reopened_stream():
 
     assert isinstance(exc_info.value.__cause__, FetcherError)
     assert "did not restore" in str(exc_info.value.__cause__)
-    assert "read_count=2, expected_at_least=3" in str(exc_info.value.__cause__)
+    assert "read_count=2, expected_exactly=3" in str(exc_info.value.__cause__)
+
+
+def test_read_recovery_rejects_longer_reopened_stream():
+    fetcher = _fetcher()
+    fetcher.jvlink.jv_open.return_value = (0, 4, 1, "ts")
+
+    with pytest.raises(FetcherError, match="Failed to reopen") as exc_info:
+        fetcher._recover_historical_read_error(-402, "corrupt/RACE.jvd")
+
+    assert isinstance(exc_info.value.__cause__, FetcherError)
+    assert "did not restore" in str(exc_info.value.__cause__)
+    assert "read_count=4, expected_exactly=3" in str(exc_info.value.__cause__)
 
 
 def test_reopen_does_not_emit_already_processed_records_twice():
@@ -275,6 +288,7 @@ def test_replay_skip_still_runs_periodic_com_buffer_gc():
     with (
         patch("src.fetcher.base.time") as fetcher_time,
         patch("src.fetcher.base.gc.collect") as collect,
+        patch("src.fetcher.base.logger.info") as info,
     ):
         fetcher_time.time.side_effect = [0.0, 11.0]
         assert list(
@@ -284,6 +298,12 @@ def test_replay_skip_still_runs_periodic_com_buffer_gc():
         ) == []
 
     collect.assert_called_once_with()
+    info.assert_any_call(
+        "Replaying records after historical recovery",
+        records_previously_emitted=0,
+        files_processed=0,
+        total_files=3,
+    )
 
 
 def test_incomplete_replay_does_not_mark_raw_cache_complete():

@@ -179,6 +179,14 @@ class BaseFetcher(ABC):
                         last_gc_time = current_time
 
                     if consume_replayed_record is not None and consume_replayed_record():
+                        if (current_time - last_update_time) >= update_interval:
+                            logger.info(
+                                "Replaying records after historical recovery",
+                                records_previously_emitted=self._records_fetched,
+                                files_processed=self._files_processed,
+                                total_files=self._total_files,
+                            )
+                            last_update_time = current_time
                         continue
                     self._records_fetched += 1
 
