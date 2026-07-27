@@ -4,7 +4,7 @@ Recovery uses the exact filename returned by JVRead and JVFiledelete. It does
 not inspect or unlink Wine cache paths directly.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -74,6 +74,19 @@ def test_read_recovery_waits_for_redownload():
     fetcher._wait_for_download.assert_called_once_with(download_count=2)
 
 
+def test_read_recovery_rejects_empty_reopened_stream():
+    fetcher = _fetcher()
+    fetcher._records_fetched = 2
+    fetcher.jvlink.jv_open.return_value = (-1, 0, 0, "")
+
+    with pytest.raises(FetcherError, match="Failed to reopen JVOpen") as exc_info:
+        fetcher._recover_historical_read_error(-402, "corrupt/RACE.jvd")
+
+    assert isinstance(exc_info.value.__cause__, FetcherError)
+    assert "returned no data" in str(exc_info.value.__cause__)
+    assert fetcher._jvd_replay_records_remaining == 2
+
+
 def test_reopen_does_not_emit_already_processed_records_twice():
     fetcher = _fetcher()
     fetcher.jvlink.jv_read.side_effect = [
@@ -98,6 +111,49 @@ def test_reopen_does_not_emit_already_processed_records_twice():
     assert [record["value"] for record in records] == [b"A", b"B"]
     assert fetcher._records_fetched == 2
     assert fetcher.parser_factory.parse.call_count == 2
+
+
+def test_replay_skip_still_runs_periodic_com_buffer_gc():
+    fetcher = _fetcher()
+    fetcher._jvd_replay_records_remaining = 1
+    fetcher.jvlink.jv_read.side_effect = [
+        (1, b"A", "first.jvd"),
+        (0, None, None),
+    ]
+
+    with (
+        patch("src.fetcher.base.time") as fetcher_time,
+        patch("src.fetcher.base.gc.collect") as collect,
+    ):
+        fetcher_time.time.side_effect = [0.0, 11.0]
+        assert list(
+            fetcher._fetch_and_parse(
+                consume_replayed_record=fetcher._consume_replayed_record,
+            )
+        ) == []
+
+    collect.assert_called_once_with()
+
+
+def test_incomplete_replay_does_not_mark_raw_cache_complete():
+    fetcher = _fetcher()
+    fetcher.show_progress = False
+    fetcher._service_key = None
+    fetcher.cache_manager = MagicMock()
+    fetcher.jvlink.jv_init.return_value = 0
+    fetcher.jvlink.jv_open.return_value = (0, 3, 0, "ts")
+
+    def incomplete_stream(*args, **kwargs):
+        fetcher._jvd_replay_records_remaining = 1
+        if False:
+            yield None
+
+    fetcher._fetch_and_parse = incomplete_stream
+
+    with pytest.raises(FetcherError, match="recovery replay caught up"):
+        list(fetcher.fetch("RACE", "20260101", "20260103"))
+
+    fetcher.cache_manager.mark_nl_complete.assert_not_called()
 
 
 def test_read_recovery_is_bounded():

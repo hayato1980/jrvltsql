@@ -104,6 +104,11 @@ class HistoricalFetcher(BaseFetcher):
                 fromtime,
                 option,
             )
+            if result == -1 or (read_count == 0 and download_count == 0):
+                raise FetcherError(
+                    "JVOpen returned no data while recovering "
+                    f"{filename} after JVRead {error_code}"
+                )
             if download_count > 0:
                 self._wait_for_download(download_count=download_count)
         except Exception as exc:
@@ -284,6 +289,12 @@ class HistoricalFetcher(BaseFetcher):
                     if rec_date:
                         self.cache_manager.write_nl_record(data_spec, rec_date, data["_raw"])
                 yield data
+
+            if self._jvd_replay_records_remaining > 0:
+                raise FetcherError(
+                    "Historical stream ended before recovery replay caught up; "
+                    f"{self._jvd_replay_records_remaining} record(s) remain"
+                )
 
             # Mark cached dates as complete
             if self.cache_manager:

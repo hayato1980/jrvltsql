@@ -166,6 +166,14 @@ class BaseFetcher(ABC):
 
                 elif ret_code > 0:
                     # Success with data (ret_code is data length)
+                    # Replayed records still hold COM buffers. Run the normal
+                    # periodic collection before a replay skip so a long setup
+                    # import cannot bypass the E_UNEXPECTED mitigation.
+                    current_time = time.time()
+                    if (current_time - last_gc_time) >= 10.0:
+                        gc.collect()
+                        last_gc_time = current_time
+
                     if consume_replayed_record is not None and consume_replayed_record():
                         continue
                     self._records_fetched += 1
@@ -209,12 +217,8 @@ class BaseFetcher(ABC):
                     # Periodic GC to free COM buffer references (every 10s).
                     # kmy-keiba frees COM buffers with Array.Resize(ref buff, 0) after each read.
                     # In Python, COM BSTR data may accumulate and cause E_UNEXPECTED.
-                    current_time = time.time()
-                    if (current_time - last_gc_time) >= 10.0:
-                        gc.collect()
-                        last_gc_time = current_time
-
                     # Update progress display (stats only - progress updated on file switch)
+                    current_time = time.time()
                     if (current_time - last_update_time) >= update_interval:
                         elapsed = current_time - self._start_time
                         speed = self._records_fetched / elapsed if elapsed > 0 else 0
