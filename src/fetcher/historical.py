@@ -334,9 +334,14 @@ class HistoricalFetcher(BaseFetcher):
                 from datetime import timedelta
                 d = datetime.strptime(from_date, "%Y%m%d").date()
                 end = datetime.strptime(to_date, "%Y%m%d").date()
+                completed_dates = []
                 while d <= end:
-                    active_cache_manager.mark_nl_complete(data_spec, d.strftime("%Y%m%d"))
+                    completed_dates.append(d.strftime("%Y%m%d"))
                     d += timedelta(days=1)
+                active_cache_manager.mark_nl_range_complete(
+                    data_spec,
+                    completed_dates,
+                )
                 cache_write_committed = True
 
             # Log summary

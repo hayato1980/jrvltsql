@@ -2,10 +2,12 @@
 
 import json
 import struct
+import tempfile
 import threading
+from collections.abc import Iterable, Iterator
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Optional
 
 
 class CacheManager:
@@ -55,7 +57,21 @@ class CacheManager:
         return {}
 
     def _save_index(self, path: Path, index: dict):
-        path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                delete=False,
+            ) as temp_file:
+                json.dump(index, temp_file, ensure_ascii=False, indent=2)
+                temp_path = Path(temp_file.name)
+            temp_path.replace(path)
+        finally:
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink()
 
     # --- NL_ public API ---
     def has_nl(self, spec: str, date_str: str) -> bool:
@@ -108,18 +124,23 @@ class CacheManager:
 
     def mark_nl_complete(self, spec: str, date_str: str):
         """Mark date as fully cached in NL index."""
+        self.mark_nl_range_complete(spec, [date_str])
+
+    def mark_nl_range_complete(self, spec: str, date_strs: Iterable[str]) -> None:
+        """Atomically mark every date in one completed fetch range."""
         idx_path = self._index_path(spec)
         with self._lock_for(f"idx:{spec}"):
             index = self._load_index(idx_path)
-            bin_path = self._nl_path(spec, date_str)
-            size = bin_path.stat().st_size if bin_path.exists() else 0
-            count = self._count_records(bin_path) if bin_path.exists() else 0
-            index[date_str] = {
-                "complete": True,
-                "count": count,
-                "size": size,
-                "mtime": _now_iso(),
-            }
+            for date_str in date_strs:
+                bin_path = self._nl_path(spec, date_str)
+                size = bin_path.stat().st_size if bin_path.exists() else 0
+                count = self._count_records(bin_path) if bin_path.exists() else 0
+                index[date_str] = {
+                    "complete": True,
+                    "count": count,
+                    "size": size,
+                    "mtime": _now_iso(),
+                }
             self._save_index(idx_path, index)
 
     def read_nl(self, spec: str, from_date: str, to_date: str) -> Iterator[bytes]:

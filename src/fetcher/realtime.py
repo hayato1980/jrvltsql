@@ -605,14 +605,15 @@ class RealtimeFetcher(BaseFetcher):
                         )
                         continue
 
-                    # Read all records for this key
+                    # Buffer one complete race key before yielding.  A later
+                    # JVRead error must not leave a partial key persisted by
+                    # callers while this batch continues with the next key.
+                    key_records = list(self._fetch_and_parse())
+                    records_for_key = len(key_records)
                     success_keys += 1
                     key_status = "success"
-
-                    for record in self._fetch_and_parse():
-                        records_for_key += 1
-                        total_records += 1
-                        yield record
+                    total_records += records_for_key
+                    yield from key_records
 
                     logger.debug(
                         "Fetched records for key",
@@ -883,14 +884,13 @@ class RealtimeFetcher(BaseFetcher):
                                 )
                                 continue
 
-                            # Read all records for this key
+                            # Do not expose a partial key when a later JVRead
+                            # fails and this loop continues with another key.
+                            key_records = list(self._fetch_and_parse())
+                            records_for_key = len(key_records)
                             success_keys += 1
-                            records_for_key = 0
-
-                            for record in self._fetch_and_parse():
-                                records_for_key += 1
-                                total_records += 1
-                                yield record
+                            total_records += records_for_key
+                            yield from key_records
 
                             logger.debug(
                                 "Fetched records for key",

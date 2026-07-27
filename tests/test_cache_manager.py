@@ -126,6 +126,41 @@ class TestNlIndex:
         cm.mark_nl_complete("RACE", "20260402")
         assert cm.has_nl("RACE", "20260402") is True
 
+    def test_mark_nl_range_complete_updates_all_dates(self, tmp_path):
+        cm = _make_cache(tmp_path)
+        cm.write_nl_record("RACE", "20260401", _raw("day1"))
+        cm.write_nl_record("RACE", "20260402", _raw("day2"))
+
+        cm.mark_nl_range_complete("RACE", ["20260401", "20260402"])
+
+        index = cm._load_index(cm._index_path("RACE"))
+        assert set(index) == {"20260401", "20260402"}
+        assert index["20260401"]["complete"] is True
+        assert index["20260401"]["count"] == 1
+        assert index["20260402"]["complete"] is True
+        assert index["20260402"]["count"] == 1
+
+    def test_mark_nl_range_complete_preserves_old_index_if_replace_fails(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        cm = _make_cache(tmp_path)
+        cm.mark_nl_complete("RACE", "20260401")
+        index_path = cm._index_path("RACE")
+        original_index = index_path.read_bytes()
+
+        def fail_replace(_self, _target):
+            raise OSError("simulated atomic replace failure")
+
+        monkeypatch.setattr(Path, "replace", fail_replace)
+
+        with pytest.raises(OSError, match="simulated atomic replace failure"):
+            cm.mark_nl_range_complete("RACE", ["20260402", "20260403"])
+
+        assert index_path.read_bytes() == original_index
+        assert list(index_path.parent.glob(f".{index_path.name}.*")) == []
+
     def test_has_nl_range_all_complete(self, tmp_path):
         cm = _make_cache(tmp_path)
         for d in ("20260401", "20260402", "20260403"):
