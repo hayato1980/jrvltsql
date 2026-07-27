@@ -52,6 +52,7 @@ class HistoricalFetcher(BaseFetcher):
         self._jvd_self_repair_attempts = 0
         self._jvd_replay_records_remaining = 0
         self._jv_open_context: Optional[tuple[str, str, int]] = None
+        self._jv_open_last_file_timestamp: Optional[str] = None
         self._fetch_task_id: Optional[int] = None
 
     def _consume_replayed_record(self) -> bool:
@@ -105,6 +106,7 @@ class HistoricalFetcher(BaseFetcher):
         # drain it without parsing, yielding, or appending it to raw cache.
         self._jvd_replay_records_remaining = self._records_fetched
         expected_read_count = self._total_files
+        expected_last_file_timestamp = self._jv_open_last_file_timestamp
         try:
             self.jvlink.jv_close()
             data_spec, fromtime, option = self._jv_open_context
@@ -123,6 +125,13 @@ class HistoricalFetcher(BaseFetcher):
                     f"JVOpen did not restore {filename} after JVRead {error_code}: "
                     f"read_count={read_count}, expected_exactly={expected_read_count}, "
                     f"download_count={download_count}"
+                )
+            if last_file_timestamp != expected_last_file_timestamp:
+                raise FetcherError(
+                    f"JVOpen stream changed while recovering {filename} after "
+                    f"JVRead {error_code}: last_file_timestamp="
+                    f"{last_file_timestamp!r}, expected="
+                    f"{expected_last_file_timestamp!r}"
                 )
             if download_count > 0:
                 self._wait_for_download(download_count=download_count)
@@ -237,6 +246,7 @@ class HistoricalFetcher(BaseFetcher):
             self._jvd_self_repair_attempts = 0
             self._jvd_replay_records_remaining = 0
             self._jv_open_context = (data_spec, fromtime, option)
+            self._jv_open_last_file_timestamp = None
 
             # Open data stream
             logger.info(
@@ -258,6 +268,7 @@ class HistoricalFetcher(BaseFetcher):
                 fromtime,
                 option,
             )
+            self._jv_open_last_file_timestamp = last_file_timestamp
 
             logger.info(
                 "Data stream opened",
@@ -387,6 +398,7 @@ class HistoricalFetcher(BaseFetcher):
                             error=str(rollback_error),
                         )
             self._jv_open_context = None
+            self._jv_open_last_file_timestamp = None
             self._fetch_task_id = None
             # Close stream (JVClose) — releases the current open session so
             # the next jv_init()/jv_open() call in a subsequent chunk works.

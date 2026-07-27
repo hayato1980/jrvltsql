@@ -32,6 +32,7 @@ def _fetcher():
     fetcher._jvd_self_repair_attempts = 0
     fetcher._jvd_replay_records_remaining = 0
     fetcher._jv_open_context = ("RACE", "20260101000000", 1)
+    fetcher._jv_open_last_file_timestamp = "ts"
     fetcher._fetch_task_id = None
     fetcher._wait_for_download = MagicMock()
     return fetcher
@@ -175,6 +176,18 @@ def test_read_recovery_checks_count_when_original_stream_reported_zero():
     assert "read_count=1, expected_exactly=0" in str(exc_info.value.__cause__)
 
 
+def test_read_recovery_rejects_changed_last_file_timestamp():
+    fetcher = _fetcher()
+    fetcher.jvlink.jv_open.return_value = (0, 3, 1, "changed-ts")
+
+    with pytest.raises(FetcherError, match="Failed to reopen") as exc_info:
+        fetcher._recover_historical_read_error(-402, "corrupt/RACE.jvd")
+
+    assert isinstance(exc_info.value.__cause__, FetcherError)
+    assert "stream changed" in str(exc_info.value.__cause__)
+    assert "expected='ts'" in str(exc_info.value.__cause__)
+
+
 def test_reopen_does_not_emit_already_processed_records_twice():
     fetcher = _fetcher()
     fetcher.jvlink.jv_read.side_effect = [
@@ -250,16 +263,22 @@ def test_recovery_write_through_cache_contains_no_replayed_duplicate(tmp_path):
     fetcher.parser_factory.parse.side_effect = lambda raw: {
         "RecordSpec": "RA",
         "Year": "2026",
-        "MonthDay": "0101",
+        "MonthDay": "0101" if raw == b"A" else "0103",
         "value": raw,
     }
 
-    records = list(fetcher.fetch("RACE", "20260101", "20260101"))
+    records = list(fetcher.fetch("RACE", "20260101", "20260103"))
 
     assert [record["value"] for record in records] == [b"A", b"B"]
     assert list(
-        fetcher.cache_manager.read_nl("RACE", "20260101", "20260101")
+        fetcher.cache_manager.read_nl("RACE", "20260101", "20260103")
     ) == [b"A", b"B"]
+    assert fetcher.cache_manager.has_nl_range(
+        "RACE",
+        "20260101",
+        "20260103",
+    )
+    assert fetcher.get_statistics()["repaired_read_errors"] == 1
 
 
 def test_failed_fetch_rolls_back_raw_cache_append(tmp_path):
