@@ -3,6 +3,7 @@
 This module fetches historical JV-Data from JV-Link.
 """
 
+import os
 import time
 from datetime import datetime
 from typing import Iterator, Optional
@@ -12,6 +13,26 @@ from src.utils.logger import get_logger
 from src.utils.progress import JVLinkProgressDisplay
 
 logger = get_logger(__name__)
+
+# EXPERIMENTAL (RC2-a, keibaai_cloud Issue #152, isolated branch only, NOT
+# merged to production): env-gated range-form JVOpen fromtime
+# ("YYYYMMDDhhmmss-YYYYMMDDhhmmss") for a small verify run (design.md
+# section 2.1). Unset (production default) -> unchanged behavior. Never set
+# via setx/persisted env -- session-scoped only.
+_RANGE_FROMTIME_ENV = "JLTSQL_EXPERIMENTAL_RANGE_FROMTIME"
+
+
+def _build_fromtime(from_date: str, to_date: str) -> tuple[str, bool]:
+    """Build the JVOpen fromtime argument.
+
+    Returns (fromtime, is_experimental). Default (env unset/not "1"):
+    unchanged single-timestamp form. Experimental (env=="1"): range form.
+    is_experimental lets the one caller log its warning without a second,
+    possibly-diverging os.environ read.
+    """
+    if os.environ.get(_RANGE_FROMTIME_ENV) == "1":
+        return f"{from_date}000000-{to_date}235959", True
+    return f"{from_date}000000", False
 
 
 def _extract_record_date(record: dict) -> Optional[str]:
@@ -120,11 +141,16 @@ class HistoricalFetcher(BaseFetcher):
             # jv_init() does not accept service_key parameter
             self.jvlink.jv_init()
 
-            # Convert dates to fromtime format
-            # fromtime format: "YYYYMMDDhhmmss" (single timestamp)
+            # Convert dates to fromtime format (see _build_fromtime: range
+            # form only when the RC2-a EXPERIMENTAL env gate is set).
             # JV-Link retrieves data from this timestamp onwards
             # Option meanings: 1=通常データ, 2=今週データ, 3/4=セットアップ
-            fromtime = f"{from_date}000000"
+            fromtime, is_experimental_fromtime = _build_fromtime(from_date, to_date)
+            if is_experimental_fromtime:
+                logger.warning(
+                    "EXPERIMENTAL(RC2-a): range fromtime enabled",
+                    fromtime=fromtime,
+                )
 
             # Open data stream
             logger.info(
