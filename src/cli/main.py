@@ -303,8 +303,8 @@ def update(ctx, force):
 
 
 @cli.command()
-@click.option("--from", "date_from", required=True, help="Start date (YYYYMMDD)")
-@click.option("--to", "date_to", required=True, help="End date (YYYYMMDD) - filters records up to this date")
+@click.option("--from", "date_from", required=True, help="Start date (YYYYMMDD). Effect depends on --option: ignored for option=2 (今週データ); the JVOpen fromtime start for options 1/3/4.")
+@click.option("--to", "date_to", required=True, help="End date (YYYYMMDD). Client-side filter only: excludes records dated after this; does NOT reduce the amount downloaded from the server.")
 @click.option("--spec", "data_spec", required=True, help="Data specification (RACE, DIFF, etc.)")
 @click.option(
     "--option",
@@ -359,6 +359,22 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
     if jv_option in (3, 4):
         console.print()
         console.print("[yellow]Note:[/yellow] セットアップモード - 全データ取得（ダイアログが表示されます）")
+
+    # Fail-loud guardrails: --from/--to have option-dependent effects, and an
+    # argument that silently does nothing (or less than expected) is a footgun --
+    # e.g. bounding a setup fetch with --to does NOT reduce the server download.
+    # Surface the ineffective ones instead of accepting them silently.
+    if jv_option == 2:
+        console.print(
+            "[yellow]Note:[/yellow] option=2（今週データ）では --from は無視されます"
+            "（取得対象は当該「今週」に固定）。"
+        )
+    if jv_option in (1, 3, 4):
+        console.print(
+            "[yellow]Note:[/yellow] --to はクライアント側の除外フィルタです"
+            "（to_date より後のレコードを取り込み時に除外するのみで、"
+            "サーバからのダウンロード量は絞りません）。"
+        )
 
     # Validate data_spec and option combination
     from src.jvlink.constants import is_valid_jvopen_combination, JVOPEN_VALID_COMBINATIONS
