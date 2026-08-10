@@ -262,6 +262,27 @@ class TestFetchCommand(unittest.TestCase):
             result.exception is not None
         )
 
+    def test_fetch_help_explains_option_dependent_date_semantics(self):
+        example_config = (
+            Path(__file__).resolve().parents[1] / 'config' / 'config.yaml.example'
+        )
+        with self.runner.isolated_filesystem():
+            config_path = Path('config.yaml')
+            config_path.write_text(
+                example_config.read_text(encoding='utf-8'),
+                encoding='utf-8',
+            )
+            result = self.runner.invoke(
+                cli,
+                ['--config', str(config_path), 'fetch', '--help'],
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn('option=2 ignores it server-side', result.output)
+        self.assertIn('ChokyoDate', result.output)
+        self.assertIn('calendar-year chunks', result.output)
+        self.assertIn('adds another chunk', result.output)
+
     @patch('src.importer.batch.BatchProcessor')
     def test_fetch_with_all_args(self, mock_batch_processor):
         """Test fetch command with all arguments."""
