@@ -124,6 +124,39 @@ class TestJVLinkBridgeAPI:
         code, buff, fname = bridge.jv_read()
         assert code == -502
 
+    @pytest.mark.parametrize("error_code", [-402, -403])
+    def test_jv_read_corrupt_file_preserves_filename(self, bridge, error_code):
+        bridge._is_open = True
+        _patch_responses(
+            bridge,
+            {
+                "status": "ok",
+                "code": error_code,
+                "filename": "corrupt/RACE.jvd",
+            },
+        )
+
+        assert bridge.jv_read() == (error_code, None, "corrupt/RACE.jvd")
+
+    def test_jv_file_delete_raises_on_bridge_error(self, bridge):
+        _patch_responses(
+            bridge,
+            {
+                "status": "error",
+                "code": -1,
+                "error": "delete failed",
+            },
+        )
+
+        with pytest.raises(JVLinkBridgeError, match="delete failed"):
+            bridge.jv_file_delete("corrupt/RACE.jvd")
+
+    def test_jv_file_delete_requires_result_code(self, bridge):
+        _patch_responses(bridge, {"status": "ok"})
+
+        with pytest.raises(JVLinkBridgeError, match="no result code"):
+            bridge.jv_file_delete("corrupt/RACE.jvd")
+
     def test_jv_gets_delegates_to_read(self, bridge):
         """jv_gets should delegate to jv_read."""
         bridge._is_open = True
