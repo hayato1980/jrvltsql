@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+from src.fetcher.base import FetcherError
 from src.fetcher.realtime import RealtimeFetcher, materialize_complete_records
 from src.services.realtime_monitor import RealtimeMonitor, MonitorStatus
 from src.realtime.updater import RealtimeUpdater, summarize_update_result
@@ -225,6 +226,31 @@ def test_realtime_fetcher_tracks_recoverable_read_loss():
     assert list(fetcher._fetch_and_parse()) == []
     assert fetcher.get_statistics()["recoverable_read_errors"] == 1
     fetcher.jvlink.jv_file_delete.assert_called_once_with("corrupt.jvd")
+
+
+@pytest.mark.parametrize("error_code", [-402, -403])
+def test_realtime_fetch_fails_fast_on_corrupt_file(error_code):
+    fetcher = RealtimeFetcher.__new__(RealtimeFetcher)
+    fetcher._service_key = None
+    fetcher._stream_open = False
+    fetcher.last_open_result = None
+    fetcher.last_open_key = None
+    fetcher._files_processed = 0
+    fetcher._total_files = 0
+    fetcher.progress_display = None
+    fetcher.parser_factory = MagicMock()
+    fetcher.jvlink = MagicMock()
+    fetcher.jvlink.jv_init.return_value = 0
+    fetcher.jvlink.jv_rt_open.return_value = (0, 1)
+    fetcher.jvlink.jv_read.side_effect = [
+        (error_code, None, "corrupt.jvd"),
+    ]
+
+    with pytest.raises(FetcherError, match="Realtime JVRead returned"):
+        list(fetcher.fetch("0B31", key="202601010101"))
+
+    fetcher.jvlink.jv_file_delete.assert_called_once_with("corrupt.jvd")
+    fetcher.jvlink.jv_close.assert_called_once_with()
 
 
 def test_process_parsed_record_preserves_failed_expanded_rows():

@@ -262,6 +262,29 @@ class TestFetchCommand(unittest.TestCase):
             result.exception is not None
         )
 
+    def test_fetch_help_explains_option_dependent_date_semantics(self):
+        example_config = (
+            Path(__file__).resolve().parents[1] / 'config' / 'config.yaml.example'
+        )
+        with self.runner.isolated_filesystem():
+            config_path = Path('config.yaml')
+            config_path.write_text(
+                example_config.read_text(encoding='utf-8'),
+                encoding='utf-8',
+            )
+            result = self.runner.invoke(
+                cli,
+                ['--config', str(config_path), 'fetch', '--help'],
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        help_text = ' '.join(result.output.split())
+        self.assertIn('current race-cycle data', help_text)
+        self.assertIn('Sunday or Monday may cover two cycles', help_text)
+        self.assertIn('ChokyoDate', help_text)
+        self.assertIn('calendar-year chunks', help_text)
+        self.assertIn('adds another chunk', help_text)
+
     @patch('src.importer.batch.BatchProcessor')
     def test_fetch_with_all_args(self, mock_batch_processor):
         """Test fetch command with all arguments."""

@@ -4,14 +4,21 @@
 # 出典: JV-Link インターフェース仕様書「3. コード表」
 JV_RT_SUCCESS = 0  # 正常終了
 JV_RT_ERROR = -1  # 該当データ無し（JVOpen/JVRTOpen）／ファイル切り替わり（JVRead）
-JV_RT_SETUP_CANCELED = -2  # セットアップダイアログでキャンセルが押された（JVOpen）
+JV_RT_SETUP_CANCELED = -2  # セットアップダイアログでキャンセルが押された（JVOpen）／エラー（JVRead、JV_READ_ERRORと同値）
 
 # Parameter Errors (JVOpen/JVRTOpen)
-JV_RT_INVALID_DATASPEC = -111  # dataspec パラメータが不正
+#
+# 注意: -111/-114/-115 は公式仕様上はパラメータ不正だが、実運用では
+# 未購読のデータ種別（例: MING）を指定した際にも同じコードが返ることを
+# 確認している（bf69cb6 参照）。呼び出し側の scripts/*.py・
+# src/services/realtime_monitor.py の SUBSCRIPTION_ERROR_CODES は、この
+# 実運用挙動に基づき意図的にこれらのコードを「契約外/未購読につき
+# スキップ」として扱っており、公式仕様の文言だけを見て変更しないこと。
+JV_RT_INVALID_DATASPEC = -111  # dataspec パラメータが不正（実運用では未購読データ種別のエラーとしても観測）
 JV_RT_INVALID_FROMTIME_START = -112  # fromtime パラメータが不正（読み出し開始時刻）
 JV_RT_INVALID_FROMTIME_END = -113  # fromtime パラメータが不正（読み出し終了時刻）
-JV_RT_INVALID_KEY = -114  # key パラメータが不正
-JV_RT_INVALID_OPTION = -115  # option パラメータが不正
+JV_RT_INVALID_KEY = -114  # key パラメータが不正（実運用では未購読データ種別のエラーとしても観測）
+JV_RT_INVALID_OPTION = -115  # option パラメータが不正（実運用では未購読データ種別のエラーとしても観測）
 JV_RT_INVALID_DATASPEC_OPTION = -116  # dataspec と option の組み合わせが不正
 
 # Call-order / State Errors
@@ -48,6 +55,14 @@ JV_RT_SERVER_MAINTENANCE = -504  # サーバーメンテナンス中
 JV_RT_SID_NOT_SET = -101  # sid が設定されていない（JVInit）
 JV_RT_SID_TOO_LONG = -102  # sid が64byte を超えている（JVInit）
 JV_RT_SID_INVALID = -103  # sid が不正（1桁目がスペース）（JVInit）
+
+# JVSetUIProperties / JVSetServiceKey / JVSetSaveFlag / JVSetSavePath specific
+#
+# -100 は公式仕様書「3. コード表」上、JVOpen/JVRTOpen の戻り値ではない
+# （それらは -111 以降のパラメータ不正系）。JVSetServiceKey は API 自体が
+# 不安定で -100 を返すことがあるため、wrapper.py はレジストリを直接操作して
+# これを回避している（wrapper.py の JVSetServiceKey 呼び出し箇所を参照）。
+JV_RT_INVALID_PARAMETER = -100  # パラメータが不正、あるいはレジストリへの保存に失敗
 
 # JVRead / JVGets Return Codes
 JV_READ_SUCCESS = 0  # 全ファイル読み込み終了（EOF）
@@ -495,18 +510,18 @@ ERROR_MESSAGES = {
     # Basic
     0: "成功",
     -1: "該当データ無し（JVOpen/JVRTOpen）／ファイル切り替わり（JVRead）",
-    -2: "セットアップダイアログでキャンセルが押された",
+    -2: "セットアップダイアログでキャンセルが押された（JVOpen）／エラー（JVRead）",
     -3: "ファイルダウンロード中（少し待って読み込みを再開してください）",
     # Parameter / Registry (JVSet系, JVOpen/JVRTOpen, JVInit)
-    -100: "パラメータが不正、あるいはレジストリへの保存に失敗",
+    -100: "パラメータが不正、あるいはレジストリへの保存に失敗（JVSetUIProperties/JVSetServiceKey/JVSetSaveFlag/JVSetSavePath。JVOpen/JVRTOpenの戻り値ではない）",
     -101: "sid が設定されていない（JVInit）／既に利用キーが登録されている（JVSetServiceKey）",
     -102: "sid が64byte を超えている（JVInit）",
     -103: "sid が不正（1桁目がスペース）（JVInit）",
-    -111: "dataspec パラメータが不正",
+    -111: "dataspec パラメータが不正（実運用では未購読データ種別のエラーとしても観測）",
     -112: "fromtime パラメータが不正（読み出し開始時刻）",
     -113: "fromtime パラメータが不正（読み出し終了時刻）",
-    -114: "key パラメータが不正",
-    -115: "option パラメータが不正",
+    -114: "key パラメータが不正（実運用では未購読データ種別のエラーとしても観測）",
+    -115: "option パラメータが不正（実運用では未購読データ種別のエラーとしても観測）",
     -116: "dataspec と option の組み合わせが不正",
     # Call-order / State
     -201: "JVInit が行なわれていない",
