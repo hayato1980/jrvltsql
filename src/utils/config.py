@@ -29,15 +29,13 @@ class Config:
         """Get configuration value by dot-separated key.
 
         Args:
-            key: Dot-separated key (e.g., "jvlink.service_key")
+            key: Dot-separated key
             default: Default value if key not found
 
         Returns:
             Configuration value
 
         Examples:
-            >>> config.get("jvlink.service_key")
-            "YOUR_KEY"
             >>> config.get("databases.sqlite.enabled")
             True
         """
@@ -93,7 +91,6 @@ def _expand_env_vars(config: Any) -> Any:
         Configuration with expanded environment variables
 
     Examples:
-        ${JVLINK_SERVICE_KEY} -> value of JVLINK_SERVICE_KEY
         ${POSTGRES_HOST:localhost} -> value of POSTGRES_HOST or "localhost"
     """
     if isinstance(config, dict):
@@ -139,16 +136,6 @@ def _validate_config(config: Dict[str, Any]) -> None:
     if not enabled_dbs:
         raise ConfigError("At least one database must be enabled")
 
-    # Validate JV-Link service key (if not using env var)
-    service_key = config.get("jvlink", {}).get("service_key", "")
-    if not service_key or service_key.startswith("${"):
-        # Will be expanded from environment variable
-        pass
-    elif len(service_key) < 10:
-        # Assume valid keys are at least 10 characters
-        raise ConfigError("Invalid JV-Link service key")
-
-
 
 def load_config(config_path: Optional[Union[str, Path]] = None) -> Config:
     """Load configuration from YAML file.
@@ -165,7 +152,6 @@ def load_config(config_path: Optional[Union[str, Path]] = None) -> Config:
 
     Examples:
         >>> config = load_config()
-        >>> service_key = config.get("jvlink.service_key")
     """
     resolved_path: Path
     if config_path is None:
@@ -203,9 +189,7 @@ def get_default_config() -> Dict[str, Any]:
         Default configuration dictionary
     """
     return {
-        "jvlink": {
-            "service_key": "",
-        },
+        "jvlink": {},
         "databases": {
             "sqlite": {
                 "enabled": True,

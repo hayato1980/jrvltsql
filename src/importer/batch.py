@@ -44,7 +44,6 @@ class BatchProcessor:
         database: BaseDatabase,
         batch_size: int = 1000,
         sid: str = "UNKNOWN",
-        service_key: Optional[str] = None,
         show_progress: bool = True,
         cache_manager=None,
     ):
@@ -54,14 +53,11 @@ class BatchProcessor:
             database: Database handler instance
             batch_size: Records per batch
             sid: Session ID for JV-Link API (default: "UNKNOWN")
-            service_key: Optional service key. If provided, it will be set
-                        programmatically without requiring registry configuration.
             show_progress: Show stylish progress display (default: True)
             cache_manager: Optional CacheManager for local file cache read/write
         """
         self.fetcher = HistoricalFetcher(
             sid,
-            service_key=service_key,
             show_progress=show_progress,
         )
         self.importer = DataImporter(database, batch_size)
@@ -71,7 +67,6 @@ class BatchProcessor:
         logger.info(
             "BatchProcessor initialized",
             sid=sid,
-            has_service_key=service_key is not None,
             show_progress=show_progress,
         )
 

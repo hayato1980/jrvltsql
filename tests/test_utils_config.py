@@ -129,22 +129,6 @@ class TestValidateConfig:
         with pytest.raises(ConfigError, match="At least one"):
             _validate_config(cfg)
 
-    def test_short_service_key_raises(self):
-        cfg = self._valid()
-        cfg["jvlink"]["service_key"] = "short"
-        with pytest.raises(ConfigError, match="service key"):
-            _validate_config(cfg)
-
-    def test_env_var_service_key_skips_length_check(self):
-        cfg = self._valid()
-        cfg["jvlink"]["service_key"] = "${JVLINK_KEY}"
-        _validate_config(cfg)  # should not raise
-
-    def test_empty_service_key_skips_check(self):
-        cfg = self._valid()
-        cfg["jvlink"]["service_key"] = ""
-        _validate_config(cfg)  # empty is allowed (env var path)
-
 
 # ---------------------------------------------------------------------------
 # load_config
@@ -218,4 +202,4 @@ class TestGetDefaultConfig:
         d1 = get_default_config()
         d2 = get_default_config()
         d1["jvlink"]["service_key"] = "MODIFIED"
-        assert d2["jvlink"]["service_key"] == ""
+        assert d2["jvlink"] == {}
