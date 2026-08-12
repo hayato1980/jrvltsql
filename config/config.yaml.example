@@ -2,10 +2,7 @@
 # Copy this file to config.yaml and edit as needed
 
 # JV-Link Settings
-jvlink:
-  # JRA-VAN Service Key (required)
-  # Get from https://jra-van.jp/dlb/
-  service_key: "${JVLINK_SERVICE_KEY}"
+jvlink: {}
 
 
 # Database Settings

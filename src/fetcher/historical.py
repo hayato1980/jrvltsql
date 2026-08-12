@@ -44,8 +44,8 @@ class HistoricalFetcher(BaseFetcher):
         ...     print(record['headRecordSpec'])
     """
 
-    def __init__(self, sid: str = "UNKNOWN", service_key: Optional[str] = None, show_progress: bool = True):
-        super().__init__(sid, service_key=service_key, show_progress=show_progress)
+    def __init__(self, sid: str = "UNKNOWN", show_progress: bool = True):
+        super().__init__(sid, show_progress=show_progress)
         self.cache_manager = None
 
     def fetch(
@@ -111,7 +111,7 @@ class HistoricalFetcher(BaseFetcher):
                 )
 
             # Initialize JV-Link
-            logger.info("Initializing JV-Link", has_service_key=self._service_key is not None)
+            logger.info("Initializing JV-Link")
             if self.progress_display:
                 # スペックヘッダーを表示（日付範囲付き）
                 self.progress_display.print_spec_header(data_spec, from_date, to_date)

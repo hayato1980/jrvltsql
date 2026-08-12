@@ -40,7 +40,6 @@ class EmptyTableFiller:
         config = load_config(str(config_path)) if config_path.exists() else None
         if config:
             self.db_config = config.get("databases.postgresql", {})
-            self.service_key = config.get("jvlink.service_key")
         else:
             self.db_config = {
                 "host": "localhost",
@@ -49,7 +48,6 @@ class EmptyTableFiller:
                 "user": "postgres",
                 "password": "",
             }
-            self.service_key = None
 
     def get_empty_tables(self, db):
         """空テーブルのリストを取得"""
@@ -85,7 +83,6 @@ class EmptyTableFiller:
         try:
             fetcher = HistoricalFetcher(
                 sid=f"FILL_{data_spec}",
-                service_key=self.service_key,
                 show_progress=False
             )
 

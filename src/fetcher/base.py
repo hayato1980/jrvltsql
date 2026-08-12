@@ -41,17 +41,12 @@ class BaseFetcher(ABC):
     def __init__(
         self,
         sid: str = "UNKNOWN",
-        service_key: Optional[str] = None,
         show_progress: bool = True,
     ):
         """Initialize base fetcher.
 
         Args:
             sid: Session ID for JV-Link API (default: "UNKNOWN")
-            service_key: Optional JV-Link service key. If provided, it will be set
-                        programmatically without requiring registry configuration.
-                        If not provided, the service key must be configured in
-                        JRA-VAN DataLab application or registry.
             show_progress: Show stylish progress display (default: True)
         """
         # Prefer C# JVLinkBridge over Python win32com for JRA operations.
@@ -72,13 +67,11 @@ class BaseFetcher(ABC):
         self._recoverable_read_errors = 0
         self._files_processed = 0
         self._total_files = 0
-        self._service_key = service_key
         self.show_progress = show_progress
         self.progress_display: Optional[JVLinkProgressDisplay] = None
         self._start_time = None
 
-        logger.info(f"{self.__class__.__name__} initialized", sid=sid,
-                   has_service_key=service_key is not None)
+        logger.info(f"{self.__class__.__name__} initialized", sid=sid)
 
     @abstractmethod
     def fetch(self, **kwargs) -> Iterator[dict]:

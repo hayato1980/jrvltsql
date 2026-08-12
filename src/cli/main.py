@@ -47,19 +47,6 @@ console = Console(legacy_windows=True)
 logger = get_logger(__name__)
 
 
-def _normalize_service_key(value: str | None) -> str | None:
-    """Normalize service key values from config/env."""
-    if not value:
-        return None
-    v = str(value).strip()
-    if not v:
-        return None
-    # Unresolved env placeholders should be treated as missing.
-    if v.startswith("${") and v.endswith("}"):
-        return None
-    return v
-
-
 @click.group()
 @click.option(
     "--config",
@@ -386,7 +373,6 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
             create_all_tables(database)
 
             sid = config.get("jvlink.sid", "JLTSQL") if config else "JLTSQL"
-            service_key = config.get("jvlink.service_key") if config else None
 
             cache_mgr = None
             if use_cache:
@@ -398,7 +384,6 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
                 database=database,
                 sid=sid,
                 batch_size=batch_size,
-                service_key=service_key,
                 show_progress=progress,
                 cache_manager=cache_mgr,
             )
@@ -511,7 +496,6 @@ def cache_build(ctx, data_spec, date_from, date_to, jv_option, also_import, db, 
     from src.fetcher.historical import HistoricalFetcher
 
     config = ctx.obj.get("config", {}) if ctx.obj else {}
-    service_key = config.get("jvlink", {}).get("service_key") or os.environ.get("JVLINK_SERVICE_KEY")
 
     mgr = CacheManager(Path(cache_dir))
 
@@ -523,7 +507,7 @@ def cache_build(ctx, data_spec, date_from, date_to, jv_option, also_import, db, 
 
     click.echo(f"Building cache: {data_spec} {date_from}..{date_to} (option={jv_option})")
 
-    fetcher = HistoricalFetcher(sid="UNKNOWN", service_key=service_key, show_progress=True)
+    fetcher = HistoricalFetcher(sid="UNKNOWN", show_progress=True)
     fetcher.cache_manager = mgr
 
     if also_import:
@@ -545,7 +529,6 @@ def cache_build(ctx, data_spec, date_from, date_to, jv_option, also_import, db, 
         with database:
             processor = BatchProcessor(
                 database=database,
-                service_key=service_key,
                 show_progress=True,
                 cache_manager=mgr,
             )
@@ -1248,7 +1231,6 @@ def config(ctx, show, set_value, get_key):
         jvlink_tree = tree.add("JV-Link")
         jvlink_config = config_dict.get("jvlink", {})
         jvlink_tree.add(f"SID: {jvlink_config.get('sid', 'N/A')}")
-        jvlink_tree.add(f"Service Key: {'*' * 20 if jvlink_config.get('service_key') else 'Not set'}")
 
         # Database section
         db_tree = tree.add("Database")
