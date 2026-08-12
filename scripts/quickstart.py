@@ -3332,7 +3332,6 @@ class QuickstartRunner:
                     database=database,
                     sid=config.get("jvlink.sid", "JLTSQL"),
                     batch_size=1000,
-                    service_key=config.get("jvlink.service_key"),
                     show_progress=True,
                 )
 

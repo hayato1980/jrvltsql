@@ -29,7 +29,6 @@ def test_historical_no_data_resets_statistics_from_previous_spec():
     fetcher.show_progress = False
     fetcher.progress_display = None
     fetcher.cache_manager = None
-    fetcher._service_key = None
     fetcher._records_fetched = 9
     fetcher._records_parsed = 8
     fetcher._records_failed = 1
