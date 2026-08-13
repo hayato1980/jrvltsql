@@ -10,20 +10,9 @@ from typing import Iterator, Optional
 from src.fetcher.base import BaseFetcher, FetcherError
 from src.utils.logger import get_logger
 from src.utils.progress import JVLinkProgressDisplay
+from src.utils.record_date import extract_record_date as _extract_record_date
 
 logger = get_logger(__name__)
-
-
-def _extract_record_date(record: dict) -> Optional[str]:
-    """Extract YYYYMMDD from a parsed record dict."""
-    year = record.get("Year") or record.get("headYear") or record.get("KaisaiNen")
-    monthday = record.get("MonthDay") or record.get("headMonthDay") or record.get("KaisaiTsukihi")
-    if year and monthday and len(str(year)) == 4 and len(str(monthday)) == 4:
-        return str(year) + str(monthday)
-    chokyo_date = record.get("ChokyoDate")
-    if chokyo_date and len(str(chokyo_date)) == 8:
-        return str(chokyo_date)
-    return None
 
 
 class HistoricalFetcher(BaseFetcher):

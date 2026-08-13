@@ -4,15 +4,82 @@ This module provides utilities for batch processing of JV-Data.
 """
 
 from datetime import datetime, timedelta
-from typing import Iterator, List, Optional, Tuple
+from typing import Generator, Iterator, List, Optional, Tuple
 
 from src.database.base import BaseDatabase
 from src.database.schema import create_all_tables
 from src.fetcher.historical import HistoricalFetcher
 from src.importer.importer import DataImporter, ImporterError
 from src.utils.logger import get_logger
+from src.utils.record_date import extract_record_year
 
 logger = get_logger(__name__)
+
+# JVOpen option that fetches an accumulated range in a single call. Such a run
+# spans decades, so it commits per year instead of as one transaction.
+SPLIT_SETUP_OPTION = 4
+
+
+def _report_committed_year(year: int) -> None:
+    """Announce a committed year on stdout.
+
+    This marker is the only contract between jltsql and the backfill driver:
+    the driver advances its resume point solely from the years reported here,
+    so it never points at a year that was fetched but not committed.
+    """
+    print(f"[commit] year={year}", flush=True)
+
+
+def _split_by_year(records: Iterator[dict]) -> Iterator[Tuple[dict, Iterator[dict]]]:
+    """Split a record stream into groups that never span a year increase.
+
+    Yields ``(state, group)`` pairs. Each group must be consumed before the
+    next one is requested; once it is, ``state["year"]`` holds the year the
+    group belongs to, or None when the group carried no dated record at all
+    (the master data specs). Records with no date join the group around them,
+    which is why no data-spec exclusion list is needed.
+
+    A record whose year is *below* the group's year does not open a new group.
+    Records are expected in ascending order, but a late arrival must not make
+    the reported years go backwards — the driver would resume from the earlier
+    year and re-fetch what is already committed.
+    """
+    records = iter(records)
+    carried: List[dict] = []
+
+    def group(state: dict) -> Generator[dict, None, None]:
+        while True:
+            if carried:
+                record = carried.pop()
+            else:
+                try:
+                    record = next(records)
+                except StopIteration:
+                    state["exhausted"] = True
+                    return
+
+            year = extract_record_year(record)
+            if year is not None:
+                if state["year"] is None:
+                    state["year"] = year
+                elif year > state["year"]:
+                    carried.append(record)
+                    return
+
+            yield record
+
+    while True:
+        state: dict = {"year": None, "exhausted": False}
+        group_records = group(state)
+        yield state, group_records
+        group_records.close()
+
+        if state["exhausted"]:
+            return
+        if not carried:
+            raise RuntimeError(
+                "Year group was abandoned before the record stream advanced"
+            )
 
 
 class BatchProcessor:
@@ -113,6 +180,11 @@ class BatchProcessor:
             JV-Link fetches all data from from_date onwards, then filters
             records client-side to only import those with dates <= to_date.
 
+            option=4 commits once per year of records instead of once for the
+            whole data spec, and reports each committed year on stdout as
+            ``[commit] year=YYYY``. A run interrupted partway keeps every year
+            already committed.
+
         Examples:
             >>> processor = BatchProcessor(database=db)
             >>> stats = processor.process_date_range("RACE", "20240601", "20240630")
@@ -133,6 +205,15 @@ class BatchProcessor:
                 to_date=to_date,
                 option=option,
                 auto_commit=auto_commit,
+                ensure_tables=ensure_tables,
+            )
+
+        if self._should_commit_per_year(option, auto_commit):
+            return self._process_year_boundary_range(
+                data_spec=data_spec,
+                from_date=from_date,
+                to_date=to_date,
+                option=option,
                 ensure_tables=ensure_tables,
             )
 
@@ -176,6 +257,120 @@ class BatchProcessor:
 
             if auto_commit:
                 self.database.commit()
+
+            logger.info("Batch processing completed", **combined_stats)
+
+            return combined_stats
+
+        except Exception as e:
+            try:
+                self.database.rollback()
+            except Exception as rollback_error:
+                logger.warning(
+                    "Batch rollback failed",
+                    error=str(rollback_error),
+                )
+            logger.error("Batch processing failed", error=str(e))
+            raise
+
+    @staticmethod
+    def _should_commit_per_year(option: int, auto_commit: bool) -> bool:
+        # option=4 (分割セットアップ) は JVOpen 1回で数十年ぶんを流し込むため、
+        # 全体を1トランザクションにすると途中で落ちたときに1行も残らない。
+        # 年境界でコミットするかどうかは option から決まる性質であり、
+        # 呼び出し側にフラグで指定させない。
+        # auto_commit=False は「コミットは呼び出し側が持つ」という契約なので、
+        # そのときは従来どおり単一トランザクションのまま扱う。
+        return option == SPLIT_SETUP_OPTION and auto_commit
+
+    def _process_year_boundary_range(
+        self,
+        data_spec: str,
+        from_date: str,
+        to_date: str,
+        option: int,
+        ensure_tables: bool,
+    ) -> dict:
+        """Import a setup range, committing once per year of records.
+
+        Each year is its own transaction, so a run interrupted partway keeps
+        every year that was already committed. A record rejection rolls back
+        only the year it happened in.
+        """
+        logger.info(
+            "Committing setup range at year boundaries",
+            data_spec=data_spec,
+            from_date=from_date,
+            to_date=to_date,
+            option=option,
+        )
+
+        if ensure_tables:
+            logger.info("Ensuring all tables exist")
+            create_all_tables(self.database)
+
+        try:
+            if self.cache_manager:
+                records = self.fetcher.fetch_with_cache(
+                    self.cache_manager, data_spec, from_date, to_date, option
+                )
+            else:
+                records = self.fetcher.fetch(data_spec, from_date, to_date, option)
+
+            import_totals: dict = {}
+            fetch_failed_before = 0
+
+            for state, year_records in _split_by_year(records):
+                begin_transaction = getattr(self.database, "begin_transaction", None)
+                if begin_transaction is not None:
+                    begin_transaction()
+
+                import_stats = self.importer.import_records(
+                    year_records, auto_commit=False
+                )
+
+                # Fetch statistics are cumulative over the stream, so compare
+                # against the previous year to see what this year rejected.
+                fetch_failed_total = int(
+                    self.fetcher.get_statistics().get("records_failed", 0) or 0
+                )
+                failed_records = (fetch_failed_total - fetch_failed_before) + int(
+                    import_stats.get("records_failed", 0) or 0
+                )
+                fetch_failed_before = fetch_failed_total
+
+                if failed_records:
+                    raise ImporterError(
+                        f"Import rejected {failed_records} record(s)"
+                    )
+
+                self.database.commit()
+
+                year = state["year"]
+                if year is not None:
+                    _report_committed_year(year)
+                    logger.info(
+                        "Committed year",
+                        data_spec=data_spec,
+                        year=year,
+                        **import_stats,
+                    )
+
+                for key, value in import_stats.items():
+                    if isinstance(value, (int, float)):
+                        import_totals[key] = import_totals.get(key, 0) + value
+                    else:
+                        import_totals[key] = value
+
+            fetch_stats = self.fetcher.get_statistics()
+            combined_stats = {
+                **fetch_stats,
+                **import_totals,
+                "records_failed": (
+                    int(fetch_stats.get("records_failed", 0) or 0)
+                    + int(import_totals.get("records_failed", 0) or 0)
+                ),
+            }
 
             logger.info("Batch processing completed", **combined_stats)
 

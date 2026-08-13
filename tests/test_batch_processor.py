@@ -321,3 +321,276 @@ def test_split_setup_rolls_back_all_chunks_on_later_failure(tmp_path):
         row_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_RA")["count"]
 
     assert row_count == 0
+
+
+class _RecordingDatabase:
+    """Fake database that records the transaction call sequence."""
+
+    def __init__(self):
+        self.events = []
+
+    def begin_transaction(self):
+        self.events.append("begin")
+
+    def commit(self):
+        self.events.append("commit")
+
+    def rollback(self):
+        self.events.append("rollback")
+
+
+class _RecordingFetcher:
+    """Fake fetcher that replays a fixed record stream."""
+
+    def __init__(self, records, records_failed=0):
+        self._records = list(records)
+        self._records_failed = records_failed
+
+    def fetch(self, *args, **kwargs):
+        return iter(self._records)
+
+    def get_statistics(self):
+        return {
+            "records_fetched": len(self._records),
+            "records_parsed": len(self._records),
+            "records_failed": self._records_failed,
+        }
+
+
+class _RecordingImporter:
+    """Fake importer that consumes each stream and records what it received."""
+
+    def __init__(self, rejected_years=()):
+        self.calls = []
+        self._rejected_years = set(rejected_years)
+
+    def import_records(self, records, auto_commit=True):
+        batch = list(records)
+        self.calls.append(batch)
+        rejected = sum(
+            1
+            for record in batch
+            if int(record.get("Year", 0)) in self._rejected_years
+        )
+        return {
+            "records_imported": len(batch) - rejected,
+            "records_failed": rejected,
+            "batches_processed": 1,
+        }
+
+
+def _dated_record(year, monthday="0105"):
+    return {"RecordSpec": "RA", "Year": str(year), "MonthDay": monthday}
+
+
+def _year_boundary_processor(records, importer=None, records_failed=0):
+    processor = BatchProcessor.__new__(BatchProcessor)
+    processor.database = _RecordingDatabase()
+    processor.cache_manager = None
+    processor.fetcher = _RecordingFetcher(records, records_failed=records_failed)
+    processor.importer = importer or _RecordingImporter()
+    return processor
+
+
+def _commit_markers(capsys):
+    return [
+        line.strip()
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("[commit] year=")
+    ]
+
+
+def test_option_4_commits_at_each_year_boundary(capsys):
+    processor = _year_boundary_processor(
+        [
+            _dated_record(1986, "0105"),
+            _dated_record(1986, "0301"),
+            _dated_record(1987, "0104"),
+            _dated_record(1988, "0110"),
+        ]
+    )
+
+    processor.process_date_range(
+        "RACE", "19860101", "19881231", option=4, ensure_tables=False
+    )
+
+    assert processor.database.events.count("commit") == 3
+    assert [len(batch) for batch in processor.importer.calls] == [2, 1, 1]
+    assert _commit_markers(capsys) == [
+        "[commit] year=1986",
+        "[commit] year=1987",
+        "[commit] year=1988",
+    ]
+
+
+def test_option_4_single_year_commits_once(capsys):
+    processor = _year_boundary_processor(
+        [_dated_record(2022, "0105"), _dated_record(2022, "1231")]
+    )
+
+    processor.process_date_range(
+        "RACE", "20220101", "20221231", option=4, ensure_tables=False
+    )
+
+    assert processor.database.events.count("commit") == 1
+    assert _commit_markers(capsys) == ["[commit] year=2022"]
+
+
+@pytest.mark.parametrize("option", [1, 2])
+def test_diff_options_keep_a_single_transaction_across_years(capsys, option):
+    processor = _year_boundary_processor(
+        [_dated_record(1986), _dated_record(1987), _dated_record(1988)]
+    )
+
+    processor.process_date_range(
+        "RACE", "19860101", "19881231", option=option, ensure_tables=False
+    )
+
+    assert processor.database.events.count("commit") == 1
+    assert [len(batch) for batch in processor.importer.calls] == [3]
+    assert _commit_markers(capsys) == []
+
+
+def test_option_4_undated_records_commit_once_without_a_year_marker(capsys):
+    processor = _year_boundary_processor(
+        [
+            {"RecordSpec": "UM", "KettoNum": "1986100001"},
+            {"RecordSpec": "UM", "KettoNum": "1986100002"},
+        ]
+    )
+
+    processor.process_date_range(
+        "BLOD", "19860101", "20221231", option=4, ensure_tables=False
+    )
+
+    assert processor.database.events.count("commit") == 1
+    assert [len(batch) for batch in processor.importer.calls] == [2]
+    assert _commit_markers(capsys) == []
+
+
+def test_option_4_undated_records_join_the_surrounding_year(capsys):
+    processor = _year_boundary_processor(
+        [
+            {"RecordSpec": "UM", "KettoNum": "1986100001"},
+            _dated_record(1986),
+            {"RecordSpec": "UM", "KettoNum": "1986100002"},
+            _dated_record(1987),
+        ]
+    )
+
+    processor.process_date_range(
+        "RACE", "19860101", "19871231", option=4, ensure_tables=False
+    )
+
+    assert [len(batch) for batch in processor.importer.calls] == [3, 1]
+    assert _commit_markers(capsys) == ["[commit] year=1986", "[commit] year=1987"]
+
+
+def test_option_4_late_arriving_earlier_year_joins_the_current_transaction(capsys):
+    processor = _year_boundary_processor(
+        [
+            _dated_record(1986),
+            _dated_record(1987),
+            _dated_record(1986, "1231"),
+            _dated_record(1988),
+        ]
+    )
+
+    processor.process_date_range(
+        "RACE", "19860101", "19881231", option=4, ensure_tables=False
+    )
+
+    assert [len(batch) for batch in processor.importer.calls] == [1, 2, 1]
+    assert _commit_markers(capsys) == [
+        "[commit] year=1986",
+        "[commit] year=1987",
+        "[commit] year=1988",
+    ]
+
+
+def test_option_4_rejection_rolls_back_only_the_failing_year(capsys):
+    processor = _year_boundary_processor(
+        [_dated_record(1986), _dated_record(1987), _dated_record(1988)],
+        importer=_RecordingImporter(rejected_years=[1987]),
+    )
+
+    with pytest.raises(ImporterError, match="rejected 1 record"):
+        processor.process_date_range(
+            "RACE", "19860101", "19881231", option=4, ensure_tables=False
+        )
+
+    assert processor.database.events == ["begin", "commit", "begin", "rollback"]
+    assert _commit_markers(capsys) == ["[commit] year=1986"]
+
+
+def test_option_4_caller_managed_transaction_keeps_a_single_commit_point(capsys):
+    processor = _year_boundary_processor(
+        [_dated_record(1986), _dated_record(1987)]
+    )
+
+    processor.process_date_range(
+        "RACE",
+        "19860101",
+        "19871231",
+        option=4,
+        auto_commit=False,
+        ensure_tables=False,
+    )
+
+    assert "commit" not in processor.database.events
+    assert [len(batch) for batch in processor.importer.calls] == [2]
+    assert _commit_markers(capsys) == []
+
+
+def test_option_4_reports_combined_statistics_across_years():
+    processor = _year_boundary_processor(
+        [_dated_record(1986), _dated_record(1987), _dated_record(1988)]
+    )
+
+    stats = processor.process_date_range(
+        "RACE", "19860101", "19881231", option=4, ensure_tables=False
+    )
+
+    assert stats["records_imported"] == 3
+    assert stats["records_fetched"] == 3
+    assert stats["records_failed"] == 0
+    assert stats["batches_processed"] == 3
+
+
+def test_option_4_year_rejection_leaves_earlier_years_in_the_database(tmp_path):
+    database = SQLiteDatabase({"path": str(tmp_path / "year-boundary.db")})
+    processor = BatchProcessor.__new__(BatchProcessor)
+    processor.database = database
+    processor.cache_manager = None
+    processor.fetcher = _RecordingFetcher(
+        [
+            {
+                "RecordSpec": "RA",
+                "Year": "1986",
+                "MonthDay": "0105",
+                "JyoCD": "05",
+                "Kaiji": "01",
+                "Nichiji": "01",
+                "RaceNum": "01",
+            },
+            {"RecordSpec": "UNKNOWN", "Year": "1987", "MonthDay": "0104"},
+        ]
+    )
+
+    with database:
+        database.execute(SCHEMAS["NL_RA"])
+        database.commit()
+        processor.importer = DataImporter(database, batch_size=1)
+
+        with pytest.raises(ImporterError, match="rejected 1 record"):
+            processor.process_date_range(
+                "RACE",
+                "19860101",
+                "19871231",
+                option=4,
+                ensure_tables=False,
+            )
+
+        row_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_RA")["count"]
+
+    assert row_count == 1
