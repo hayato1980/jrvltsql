@@ -4,6 +4,7 @@ This module provides utilities for batch processing of JV-Data.
 """
 
 from datetime import datetime, timedelta
+from itertools import groupby
 from typing import Iterator, List, Optional, Tuple
 
 from src.database.base import BaseDatabase
@@ -11,8 +12,68 @@ from src.database.schema import create_all_tables
 from src.fetcher.historical import HistoricalFetcher
 from src.importer.importer import DataImporter, ImporterError
 from src.utils.logger import get_logger
+from src.utils.record_date import extract_record_year
 
 logger = get_logger(__name__)
+
+# JVOpen option that streams an accumulated range through a single JVOpen call
+# (分割セットアップ). Such a run spans decades, so it is committed per year
+# instead of as one transaction. Not to be confused with the year *chunking*
+# below, which splits the date range into several JVOpen calls for option=3.
+SINGLE_OPEN_SETUP_OPTION = 4
+
+
+def _report_committed_year(year: int) -> None:
+    """Announce a committed year on stdout.
+
+    This marker is the only contract between jltsql and the backfill driver:
+    the driver advances its resume point solely from the years reported here,
+    so it never points at a year that was fetched but not committed.
+    """
+    print(f"[commit] year={year}", flush=True)
+
+
+def _group_by_year(
+    records: Iterator[dict],
+) -> Iterator[Tuple[Optional[int], Iterator[dict]]]:
+    """Group a record stream into runs that never span a year increase.
+
+    The group key is the highest year seen so far, so both a record with no
+    date (the master data specs) and a record from an earlier year join the
+    group in progress. That is what keeps the reported years from going
+    backwards -- a driver that resumed from a lower year would skip what was
+    committed in between -- and what removes the need for a data-spec
+    exclusion list. The year is None only for a group with no dated record.
+
+    As with itertools.groupby, each group must be consumed before the next
+    one is requested.
+    """
+    highest_year: Optional[int] = None
+
+    def group_key(record: dict) -> Optional[int]:
+        nonlocal highest_year
+        year = extract_record_year(record)
+        if year is not None and (highest_year is None or year > highest_year):
+            highest_year = year
+        return highest_year
+
+    empty = True
+    for year, group in groupby(records, key=group_key):
+        empty = False
+        yield year, group
+    if empty:
+        # An empty stream still gets its one empty transaction, the same as
+        # the single-transaction path below.
+        yield None, iter(())
+
+
+def _accumulate_stats(totals: dict, stats: dict) -> None:
+    """Add one run's statistics into a running total, in place."""
+    for key, value in stats.items():
+        if isinstance(value, (int, float)):
+            totals[key] = totals.get(key, 0) + value
+        else:
+            totals[key] = value
 
 
 class BatchProcessor:
@@ -108,6 +169,11 @@ class BatchProcessor:
             JV-Link fetches all data from from_date onwards, then filters
             records client-side to only import those with dates <= to_date.
 
+            option=4 commits once per year of records instead of once for the
+            whole data spec, and reports each committed year on stdout as
+            ``[commit] year=YYYY``. A run interrupted partway keeps every year
+            already committed.
+
         Examples:
             >>> processor = BatchProcessor(database=db)
             >>> stats = processor.process_date_range("RACE", "20240601", "20240630")
@@ -144,33 +210,78 @@ class BatchProcessor:
                 )
             else:
                 records = self.fetcher.fetch(data_spec, from_date, to_date, option)
-            # Keep the whole data-spec import in one transaction. Committing
-            # inside DataImporter would make a later parser/import rejection
-            # impossible to roll back.
-            begin_transaction = getattr(self.database, "begin_transaction", None)
-            if begin_transaction is not None:
-                begin_transaction()
-            import_stats = self.importer.import_records(records, auto_commit=False)
 
-            # Combine statistics
+            # Deciding where the transaction breaks belongs here and nowhere
+            # else. Committing inside DataImporter would make a later
+            # parser/import rejection impossible to roll back.
+            commit_per_year = self._should_commit_per_year(option, auto_commit)
+            groups = _group_by_year(records) if commit_per_year else iter([(None, records)])
+
+            import_totals: dict = {}
+            # The fetcher counts its own rejections cumulatively over the whole
+            # stream, so a year's share is read as each record reaches the
+            # importer. Reading it any later would charge this year for the
+            # record that opens the next one, rolling back the wrong year.
+            fetch_failed_sampled = 0
+            fetch_failed_attributed = 0
+
+            def sampling_fetch_failures(group_records: Iterator[dict]) -> Iterator[dict]:
+                nonlocal fetch_failed_sampled
+                for record in group_records:
+                    yield record
+                    fetch_failed_sampled = self._fetch_failed_count()
+
+            for year, group_records in groups:
+                begin_transaction = getattr(self.database, "begin_transaction", None)
+                if begin_transaction is not None:
+                    begin_transaction()
+
+                if commit_per_year:
+                    group_records = sampling_fetch_failures(group_records)
+
+                import_stats = self.importer.import_records(
+                    group_records, auto_commit=False
+                )
+                _accumulate_stats(import_totals, import_stats)
+
+                if commit_per_year:
+                    self._raise_if_rejected(
+                        fetch_failed_sampled - fetch_failed_attributed, import_stats
+                    )
+                    fetch_failed_attributed = fetch_failed_sampled
+
+                    self.database.commit()
+
+                    if year is not None:
+                        _report_committed_year(year)
+                        logger.info(
+                            "Committed year",
+                            data_spec=data_spec,
+                            year=year,
+                            **import_stats,
+                        )
+
             fetch_stats = self.fetcher.get_statistics()
+
+            # Rejections no year could be charged for: they happened while
+            # fetching the record that ended a year, or after the last record
+            # of the run. Committed years stay committed, but the run fails.
+            self._raise_if_rejected(
+                int(fetch_stats.get("records_failed", 0) or 0) - fetch_failed_attributed,
+                import_totals,
+            )
+
+            if auto_commit and not commit_per_year:
+                self.database.commit()
+
             combined_stats = {
                 **fetch_stats,
-                **import_stats,
+                **import_totals,
                 "records_failed": (
                     int(fetch_stats.get("records_failed", 0) or 0)
-                    + int(import_stats.get("records_failed", 0) or 0)
+                    + int(import_totals.get("records_failed", 0) or 0)
                 ),
             }
-
-            failed_records = int(combined_stats.get("records_failed", 0) or 0)
-            if failed_records:
-                raise ImporterError(
-                    f"Import rejected {failed_records} record(s)"
-                )
-
-            if auto_commit:
-                self.database.commit()
 
             logger.info("Batch processing completed", **combined_stats)
 
@@ -186,6 +297,27 @@ class BatchProcessor:
                 )
             logger.error("Batch processing failed", error=str(e))
             raise
+
+    def _fetch_failed_count(self) -> int:
+        """Records the fetcher rejected so far, cumulative over the stream."""
+        return int(self.fetcher.get_statistics().get("records_failed", 0) or 0)
+
+    @staticmethod
+    def _raise_if_rejected(fetch_failed: int, import_stats: dict) -> None:
+        failed_records = int(fetch_failed) + int(
+            import_stats.get("records_failed", 0) or 0
+        )
+        if failed_records:
+            raise ImporterError(f"Import rejected {failed_records} record(s)")
+
+    @staticmethod
+    def _should_commit_per_year(option: int, auto_commit: bool) -> bool:
+        # option=4 は JVOpen 1回で数十年ぶんを流し込むため、全体を1トランザクションに
+        # すると途中で落ちたときに1行も残らない。年境界でコミットするかどうかは
+        # option から決まる性質であり、呼び出し側にフラグで指定させない。
+        # auto_commit=False は「コミットは呼び出し側が持つ」という既存の契約なので、
+        # そのときは従来どおり単一トランザクションのまま扱う。
+        return option == SINGLE_OPEN_SETUP_OPTION and auto_commit
 
     @staticmethod
     def _should_split_setup_range(from_date: str, to_date: str, option: int) -> bool:
@@ -251,11 +383,7 @@ class BatchProcessor:
                     auto_commit=False,
                     ensure_tables=False,
                 )
-                for key, value in chunk_stats.items():
-                    if isinstance(value, (int, float)):
-                        combined_stats[key] = combined_stats.get(key, 0) + value
-                    else:
-                        combined_stats[key] = value
+                _accumulate_stats(combined_stats, chunk_stats)
 
             if auto_commit:
                 self.database.commit()
