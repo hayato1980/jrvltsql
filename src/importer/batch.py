@@ -4,6 +4,7 @@ This module provides utilities for batch processing of JV-Data.
 """
 
 from datetime import datetime, timedelta
+from itertools import islice
 from typing import Iterator, List, Optional, Tuple
 
 from src.database.base import BaseDatabase
@@ -13,6 +14,39 @@ from src.importer.importer import DataImporter, ImporterError
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# option=4 (分割セットアップ) streams an accumulated range through a single
+# JVOpen call, so one import can run for hours. Held in a single transaction,
+# an interrupted run leaves nothing behind and the retry starts over from the
+# beginning -- a long enough range never gets imported at all. Commit it in
+# bounded chunks instead.
+SINGLE_OPEN_SETUP_OPTION = 4
+SETUP_COMMIT_INTERVAL = 10000
+
+
+def _chunks(records: Iterator[dict], size: int) -> Iterator[Iterator[dict]]:
+    """Split the record stream into chunks of at most ``size`` records.
+
+    Only one chunk is held at a time, so the caller can commit per chunk
+    without the memory of a whole run. An empty stream still yields one empty
+    chunk, so a run with no records takes the same path as any other.
+    """
+    records = iter(records)
+    yielded = False
+    while chunk := list(islice(records, size)):
+        yielded = True
+        yield iter(chunk)
+    if not yielded:
+        yield iter(())
+
+
+def _accumulate_stats(totals: dict, stats: dict) -> None:
+    """Add one import's statistics into a running total, in place."""
+    for key, value in stats.items():
+        if isinstance(value, (int, float)):
+            totals[key] = totals.get(key, 0) + value
+        else:
+            totals[key] = value
 
 
 class BatchProcessor:
@@ -108,6 +142,10 @@ class BatchProcessor:
             JV-Link fetches all data from from_date onwards, then filters
             records client-side to only import those with dates <= to_date.
 
+            option=4 commits every SETUP_COMMIT_INTERVAL records rather than
+            once for the whole data spec, so an interrupted run keeps what it
+            already imported.
+
         Examples:
             >>> processor = BatchProcessor(database=db)
             >>> stats = processor.process_date_range("RACE", "20240601", "20240630")
@@ -144,32 +182,45 @@ class BatchProcessor:
                 )
             else:
                 records = self.fetcher.fetch(data_spec, from_date, to_date, option)
-            # Keep the whole data-spec import in one transaction. Committing
-            # inside DataImporter would make a later parser/import rejection
-            # impossible to roll back.
-            begin_transaction = getattr(self.database, "begin_transaction", None)
-            if begin_transaction is not None:
-                begin_transaction()
-            import_stats = self.importer.import_records(records, auto_commit=False)
+            # Where the transaction breaks is decided here and nowhere else.
+            # Committing inside DataImporter would make a later parser/import
+            # rejection impossible to roll back.
+            commit_per_chunk = option == SINGLE_OPEN_SETUP_OPTION and auto_commit
+            groups = (
+                _chunks(records, SETUP_COMMIT_INTERVAL)
+                if commit_per_chunk
+                else iter([records])
+            )
+
+            import_totals: dict = {}
+            for group in groups:
+                begin_transaction = getattr(self.database, "begin_transaction", None)
+                if begin_transaction is not None:
+                    begin_transaction()
+
+                import_stats = self.importer.import_records(group, auto_commit=False)
+                _accumulate_stats(import_totals, import_stats)
+
+                if commit_per_chunk:
+                    # A chunk the importer rejected records in is rolled back
+                    # whole; the chunks committed before it stay committed.
+                    self._raise_if_rejected(import_stats)
+                    self.database.commit()
 
             # Combine statistics
             fetch_stats = self.fetcher.get_statistics()
             combined_stats = {
                 **fetch_stats,
-                **import_stats,
+                **import_totals,
                 "records_failed": (
                     int(fetch_stats.get("records_failed", 0) or 0)
-                    + int(import_stats.get("records_failed", 0) or 0)
+                    + int(import_totals.get("records_failed", 0) or 0)
                 ),
             }
 
-            failed_records = int(combined_stats.get("records_failed", 0) or 0)
-            if failed_records:
-                raise ImporterError(
-                    f"Import rejected {failed_records} record(s)"
-                )
+            self._raise_if_rejected(combined_stats)
 
-            if auto_commit:
+            if auto_commit and not commit_per_chunk:
                 self.database.commit()
 
             logger.info("Batch processing completed", **combined_stats)
@@ -186,6 +237,12 @@ class BatchProcessor:
                 )
             logger.error("Batch processing failed", error=str(e))
             raise
+
+    @staticmethod
+    def _raise_if_rejected(stats: dict) -> None:
+        failed_records = int(stats.get("records_failed", 0) or 0)
+        if failed_records:
+            raise ImporterError(f"Import rejected {failed_records} record(s)")
 
     @staticmethod
     def _should_split_setup_range(from_date: str, to_date: str, option: int) -> bool:
@@ -251,11 +308,7 @@ class BatchProcessor:
                     auto_commit=False,
                     ensure_tables=False,
                 )
-                for key, value in chunk_stats.items():
-                    if isinstance(value, (int, float)):
-                        combined_stats[key] = combined_stats.get(key, 0) + value
-                    else:
-                        combined_stats[key] = value
+                _accumulate_stats(combined_stats, chunk_stats)
 
             if auto_commit:
                 self.database.commit()

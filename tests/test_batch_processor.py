@@ -320,3 +320,165 @@ def test_split_setup_rolls_back_all_chunks_on_later_failure(tmp_path):
         row_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_RA")["count"]
 
     assert row_count == 0
+
+
+class _RecordingImporter:
+    """Fake importer that consumes each stream and records what it received."""
+
+    def __init__(self):
+        self.calls = []
+
+    def import_records(self, records, auto_commit=True):
+        batch = list(records)
+        self.calls.append(batch)
+        return {
+            "records_imported": len(batch),
+            "records_failed": 0,
+            "batches_processed": 1,
+        }
+
+
+def _record(index):
+    return {"RecordSpec": "RA", "index": index}
+
+
+def _chunking_processor(records):
+    processor = BatchProcessor.__new__(BatchProcessor)
+    processor.database = MagicMock()
+    processor.cache_manager = None
+    processor.fetcher = MagicMock()
+    processor.fetcher.fetch.return_value = iter(records)
+    processor.fetcher.get_statistics.return_value = {
+        "records_fetched": len(records),
+        "records_parsed": len(records),
+        "records_failed": 0,
+    }
+    processor.importer = _RecordingImporter()
+    return processor
+
+
+def _transaction_calls(database):
+    return [name for name, _args, _kwargs in database.mock_calls]
+
+
+def test_option_4_commits_once_per_interval(monkeypatch):
+    monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 2)
+    processor = _chunking_processor([_record(i) for i in range(5)])
+
+    processor.process_date_range(
+        "RACE", "19860101", "20221231", option=4, ensure_tables=False
+    )
+
+    assert [len(batch) for batch in processor.importer.calls] == [2, 2, 1]
+    assert _transaction_calls(processor.database).count("commit") == 3
+
+
+def test_option_4_shorter_than_the_interval_commits_once(monkeypatch):
+    monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 10)
+    processor = _chunking_processor([_record(0)])
+
+    processor.process_date_range(
+        "RACE", "19860101", "20221231", option=4, ensure_tables=False
+    )
+
+    assert [len(batch) for batch in processor.importer.calls] == [1]
+    assert _transaction_calls(processor.database).count("commit") == 1
+
+
+def test_option_4_empty_stream_still_commits_once(monkeypatch):
+    monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 2)
+    processor = _chunking_processor([])
+
+    processor.process_date_range(
+        "RACE", "19860101", "20221231", option=4, ensure_tables=False
+    )
+
+    assert [len(batch) for batch in processor.importer.calls] == [0]
+    assert _transaction_calls(processor.database).count("commit") == 1
+
+
+@pytest.mark.parametrize("option", [1, 2])
+def test_diff_options_keep_a_single_transaction(monkeypatch, option):
+    monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 2)
+    processor = _chunking_processor([_record(i) for i in range(5)])
+
+    processor.process_date_range(
+        "RACE", "20260101", "20260131", option=option, ensure_tables=False
+    )
+
+    assert [len(batch) for batch in processor.importer.calls] == [5]
+    assert _transaction_calls(processor.database).count("commit") == 1
+
+
+def test_option_4_caller_managed_transaction_keeps_a_single_commit_point(monkeypatch):
+    monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 2)
+    processor = _chunking_processor([_record(i) for i in range(5)])
+
+    processor.process_date_range(
+        "RACE",
+        "19860101",
+        "20221231",
+        option=4,
+        auto_commit=False,
+        ensure_tables=False,
+    )
+
+    assert [len(batch) for batch in processor.importer.calls] == [5]
+    assert "commit" not in _transaction_calls(processor.database)
+
+
+def test_option_4_sums_statistics_across_chunks(monkeypatch):
+    monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 2)
+    processor = _chunking_processor([_record(i) for i in range(5)])
+
+    stats = processor.process_date_range(
+        "RACE", "19860101", "20221231", option=4, ensure_tables=False
+    )
+
+    assert stats["records_imported"] == 5
+    assert stats["records_fetched"] == 5
+    assert stats["batches_processed"] == 3
+
+
+def test_option_4_rejection_rolls_back_only_its_own_chunk(tmp_path, monkeypatch):
+    # The counterpart of test_import_rejection_rolls_back_earlier_successful_batch,
+    # which pins the single-transaction path losing everything.
+    monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 1)
+    database = SQLiteDatabase({"path": str(tmp_path / "chunked.db")})
+    processor = BatchProcessor.__new__(BatchProcessor)
+    processor.database = database
+    processor.cache_manager = None
+    processor.fetcher = MagicMock()
+    processor.fetcher.fetch.return_value = iter(
+        [
+            {
+                "RecordSpec": "RA",
+                "Year": "2026",
+                "MonthDay": "0714",
+                "JyoCD": "05",
+                "Kaiji": "01",
+                "Nichiji": "01",
+                "RaceNum": "01",
+            },
+            {"RecordSpec": "UNKNOWN"},
+        ]
+    )
+    processor.fetcher.get_statistics.return_value = {
+        "records_fetched": 2,
+        "records_parsed": 2,
+        "records_failed": 0,
+    }
+
+    with database:
+        database.execute(SCHEMAS["NL_RA"])
+        database.commit()
+        processor.importer = DataImporter(database, batch_size=1)
+
+        with pytest.raises(ImporterError, match="rejected 1 record"):
+            processor.process_date_range(
+                "RACE", "19860101", "20221231", option=4, ensure_tables=False
+            )
+
+        row_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_RA")["count"]
+
+    assert row_count == 1
