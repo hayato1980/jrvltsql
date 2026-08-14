@@ -33,7 +33,7 @@ jltsql fetch --from 20260101 --to 20260417 --spec RACE --option 1
 | spec | 用途 |
 |------|------|
 | RACE | レース・出走馬・結果 |
-| DIFF / DIFN | 差分 |
+| DIFN | 差分（旧名 `DIFF` は受け付けません） |
 | O1-O6 | 確定オッズ |
 | MING | データマイニング予想 |
 

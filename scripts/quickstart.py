@@ -883,11 +883,11 @@ def _interactive_setup_rich() -> dict:
 
     mode_table.add_row(
         "1", "簡易",
-        "RACE, DIFF\n[dim](レース結果・確定オッズ・馬情報)[/dim]"
+        "RACE, DIFN\n[dim](レース結果・確定オッズ・馬情報)[/dim]"
     )
     mode_table.add_row(
         "2", "標準",
-        "簡易 + BLOD,YSCH,TOKU,SLOP,HOYU,HOSE等\n[dim](血統・調教・スケジュール等)[/dim]"
+        "簡易 + BLDN,YSCH,TOKU,SLOP,HOYU,HOSN等\n[dim](血統・調教・スケジュール等)[/dim]"
     )
     mode_table.add_row(
         "3", "フル",
@@ -1450,8 +1450,8 @@ def _interactive_setup_simple() -> dict:
     print()
     print("   No  モード  対象データ                                期間")
     print("   ──────────────────────────────────────────────────────────────")
-    print("   1)  簡易    RACE,DIFF (レース結果・確定オッズ・馬情報)")
-    print("   2)  標準    簡易+BLOD,YSCH,TOKU,SLOP等 (血統・調教等)")
+    print("   1)  簡易    RACE,DIFN (レース結果・確定オッズ・馬情報)")
+    print("   2)  標準    簡易+BLDN,YSCH,TOKU,SLOP等 (血統・調教等)")
     print("   3)  フル    標準+MING,WOOD,COMM (マイニング・解説等)")
     if last_setup:
         last_date = datetime.fromisoformat(last_setup['timestamp'])
@@ -3291,14 +3291,13 @@ class QuickstartRunner:
             return ("skipped", details)
 
         # option=3/4（セットアップモード）は一部のスペックのみ対応
-        # RACE, DIFF, BLOD等の主要スペックはoption=2対応
+        # RACE, DIFN, BLDN等の主要スペックはoption=2対応
         # COMM, PARA等の補助スペックはoption=1のみ対応
         # DIFN（マスタデータ: UM, KS, CH）はoption=4が必要（差分では不十分）
         OPTION_4_SUPPORTED_SPECS = {
-            "RACE", "DIFF", "BLOD", "SNAP", "SLOP", "WOOD",
-            "YSCH", "HOSE", "HOYU", "CHOK", "KISI", "BRDR",
+            "RACE", "DIFN", "BLDN", "SNPN", "SLOP", "WOOD",
+            "YSCH", "HOSN", "HOYU", "CHOK", "KISI", "BRDR",
             "TOKU", "MING", "O1", "O2", "O3", "O4", "O5", "O6",
-            "DIFN",  # Master data (horses, jockeys, trainers)
         }
 
         # option=1（差分データ）はJV-Link側の「最終取得時刻」以降のデータのみ返す

@@ -155,7 +155,7 @@ class EmptyTableFiller:
         # - TOKU: 特別登録          → TK
         #
         # 速報系データ (option=2)
-        # - SNAP: 速報レース詳細    → 変更系 (CC, JC, TC, WE, WH)
+        # - SNPN: 速報レース詳細    → 変更系 (CC, JC, TC, WE, WH)
         # - HOSN: 市場取引 (新)     → AV
         # - COMM: 各種解説
         # - MING: レース当日発表
@@ -186,8 +186,8 @@ class EmptyTableFiller:
 
         print("\n[3/4] 速報系データ取得 (option=2)...")
 
-        # SNAPデータスペック (直近1週間の速報)
-        stats = self.fetch_and_import(db, "SNAP", "20241110", option=2, max_records=10000)
+        # SNPNデータスペック (直近1週間の速報)
+        stats = self.fetch_and_import(db, "SNPN", "20241110", option=2, max_records=10000)
         for table, count in stats.items():
             all_table_stats[table] += count
 

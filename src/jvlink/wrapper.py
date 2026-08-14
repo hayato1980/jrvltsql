@@ -221,7 +221,7 @@ class JVLinkWrapper:
         """Open JV-Link data stream for historical data.
 
         Args:
-            data_spec: Data specification code (e.g., "RACE", "DIFF")
+            data_spec: Data specification code (e.g., "RACE", "DIFN")
             fromtime: Start time in YYYYMMDDhhmmss format (14 digits)
                      Example: "20241103000000"
                      Retrieves data from this timestamp onwards

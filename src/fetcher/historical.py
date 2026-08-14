@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Iterator, Optional
 
 from src.fetcher.base import BaseFetcher, FetcherError
+from src.jvlink.constants import is_retired_data_spec, retired_data_spec_message
 from src.utils.logger import get_logger
 from src.utils.progress import JVLinkProgressDisplay
 
@@ -176,7 +177,7 @@ class HistoricalFetcher(BaseFetcher):
         """Fetch historical data.
 
         Args:
-            data_spec: Data specification code (e.g., "RACE", "DIFF")
+            data_spec: Data specification code (e.g., "RACE", "DIFN")
             from_date: Start date in YYYYMMDD format
             to_date: End date in YYYYMMDD format (filters records up to this date)
             option: JVOpen option:
@@ -189,6 +190,7 @@ class HistoricalFetcher(BaseFetcher):
             Dictionary of parsed record data with dates <= to_date
 
         Raises:
+            ValueError: If data_spec was retired by the 2023-08 JV-Data revision
             FetcherError: If fetching fails
 
         Note:
@@ -207,6 +209,10 @@ class HistoricalFetcher(BaseFetcher):
             ...     # Process all records up to 20240630
             ...     pass
         """
+        # 廃止された dataspec は JV-Link に触れる前に弾く。
+        if is_retired_data_spec(data_spec):
+            raise ValueError(retired_data_spec_message(data_spec))
+
         # Fetcher instances are reused across data specs and setup chunks.
         # Reset before JVOpen so no-data/error early exits cannot expose
         # statistics left over from the preceding invocation.
@@ -469,6 +475,9 @@ class HistoricalFetcher(BaseFetcher):
         Yields:
             Dictionary of parsed record data with dates <= end_date
 
+        Raises:
+            ValueError: If data_spec was retired by the 2023-08 JV-Data revision
+
         Note:
             Records are filtered client-side to include only those with
             dates up to and including end_date.
@@ -502,7 +511,15 @@ class HistoricalFetcher(BaseFetcher):
 
         Yields:
             Dictionary of parsed record data
+
+        Raises:
+            ValueError: If data_spec was retired by the 2023-08 JV-Data revision
         """
+        # キャッシュヒット時は fetch() を通らないので、ここでも弾く。旧仕様の
+        # バイト列が過去のキャッシュに残っていても取り込みに到達させない。
+        if is_retired_data_spec(data_spec):
+            raise ValueError(retired_data_spec_message(data_spec))
+
         if option == 2:
             # Do not trust old false-complete markers created by earlier
             # versions, and do not attach a manager that could create new ones.

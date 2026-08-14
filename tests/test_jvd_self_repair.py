@@ -388,11 +388,11 @@ def test_undated_record_rolls_back_partial_cache_and_leaves_range_incomplete(tmp
         else {"RecordSpec": "UM"}
     )
 
-    records = list(fetcher.fetch("DIFF", "20260101", "20260101"))
+    records = list(fetcher.fetch("DIFN", "20260101", "20260101"))
 
     assert [record["RecordSpec"] for record in records] == ["RA", "UM"]
-    assert not fetcher.cache_manager.has_nl("DIFF", "20260101")
-    assert list(fetcher.cache_manager.read_nl("DIFF", "20260101", "20260101")) == []
+    assert not fetcher.cache_manager.has_nl("DIFN", "20260101")
+    assert list(fetcher.cache_manager.read_nl("DIFN", "20260101", "20260101")) == []
 
 
 def test_chokyo_date_is_used_for_cache_coverage(tmp_path):

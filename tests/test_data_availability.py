@@ -33,9 +33,9 @@ def test_data_availability():
     # Test different data specs
     test_specs = [
         ("RACE", "Race data (RA, SE, HR, WF, JG)"),
-        ("DIFF", "Master data (UM, KS, CH, BR, BN, etc.)"),
+        ("DIFN", "Master data (UM, KS, CH, BR, BN, etc.)"),
         ("YSCH", "Schedule data"),
-        ("SNAP", "Race card data"),
+        ("SNPN", "Race card data"),
     ]
 
     print("=" * 80)

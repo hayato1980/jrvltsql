@@ -42,7 +42,7 @@ def test_setup_download():
             # (data_spec, fromtime, option, description)
             ("YSCH", "20241001000000", 1, "Schedule data - October 2024 (SETUP)"),
             ("RACE", "20241001000000", 1, "Race data - October 2024 (SETUP)"),
-            ("DIFF", "20241001000000", 1, "Master data - October 2024 (SETUP)"),
+            ("DIFN", "20241001000000", 1, "Master data - October 2024 (SETUP)"),
         ]
 
         for data_spec, fromtime, option, description in test_configs:

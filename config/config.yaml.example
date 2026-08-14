@@ -52,12 +52,12 @@ data_fetch:
     date_to: "2024-12-31"
     # Data spec codes
     # RACE: RA, SE, HR
-    # DIFF: UM, KS, CH, BR, BN
+    # DIFN: UM, KS, CH, BR, BN
     # YSCH: Schedule
     # O1-O6: Odds
     data_specs:
       - "RACE"      # Race data (RA, SE, HR)
-      - "DIFF"      # Master data (UM, KS, CH, BR, BN)
+      - "DIFN"      # Master data (UM, KS, CH, BR, BN)
       - "YSCH"      # Schedule
       - "O1"        # Win/Place/Bracket odds
       - "O2"        # Quinella odds

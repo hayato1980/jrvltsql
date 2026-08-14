@@ -893,7 +893,7 @@ class BackgroundUpdater:
 
     # 蓄積系の更新対象スペック（option=2で差分更新）
     # 注意: Option 2（今週データ）はRACE, TOKU, TCVN, RCVNのみ対応
-    # DIFF, BLOD, YSCH, SNAPはOption 1（通常データ）でのみ取得可能
+    # DIFN, BLDN, YSCH, SNPNはOption 1（通常データ）でのみ取得可能
     HISTORICAL_SPECS = [
         ("RACE", "レース情報"),
         ("TOKU", "特別登録馬"),

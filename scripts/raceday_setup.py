@@ -58,10 +58,10 @@ def main():
                  "--spec", "RACE", "--option", "1", "--db", args.db],
          f"Fetch RACE data ({from_date}→{yesterday})"),
 
-        # 4. Fetch DIFF (latest diff update)
+        # 4. Fetch DIFN (latest diff update)
         (base + ["fetch", "--from", from_date, "--to", yesterday,
-                 "--spec", "DIFF", "--option", "1", "--db", args.db],
-         f"Fetch DIFF data (payouts, odds)"),
+                 "--spec", "DIFN", "--option", "1", "--db", args.db],
+         f"Fetch DIFN data (payouts, odds)"),
     ]
 
     all_ok = True

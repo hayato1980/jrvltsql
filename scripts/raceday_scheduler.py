@@ -19,7 +19,7 @@ JRA Saturday schedule (typical — 中山/阪神/小倉 etc):
  12R  16:35  → check at 16:55  (最終レース)
     ------
       17:30  → post-race NL_ update check
-      18:30  → final check (払戻 DIFFU available)
+      18:30  → final check (払戻 DIFN available)
       20:00  → quickstart smoke test
 
 Usage:
@@ -60,7 +60,7 @@ RACE_CHECKPOINTS = [
     ("16:20", "nl-mid",     "After 11R (start ~16:00): 重賞"),
     ("16:55", "post",       "After 12R (start ~16:35): 最終レース"),
     ("17:30", "post",       "Post-race: NL_ update + payout wait"),
-    ("18:30", "final",      "Final: 払戻 (DIFFU) available"),
+    ("18:30", "final",      "Final: 払戻 (DIFN) available"),
     ("20:00", "quickstart", "End-of-day: quickstart.bat smoke test"),
 ]
 

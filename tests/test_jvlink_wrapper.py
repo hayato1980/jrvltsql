@@ -106,14 +106,14 @@ class TestJVLinkWrapper:
 
         wrapper = JVLinkWrapper(sid="TEST")
         result, read_count, download_count, last_file_timestamp = wrapper.jv_open(
-            "DIFF", "20240101000000", option=2
+            "DIFN", "20240101000000", option=2
         )
 
         assert result == JV_RT_SUCCESS
         assert read_count == 500
         assert download_count == 100
         assert last_file_timestamp == "20241231235959"
-        mock_com.JVOpen.assert_called_once_with("DIFF", "20240101000000", 2)
+        mock_com.JVOpen.assert_called_once_with("DIFN", "20240101000000", 2)
 
     @patch("win32com.client.Dispatch")
     def test_jv_open_failure(self, mock_dispatch):
@@ -327,19 +327,19 @@ class TestJVLinkWrapper:
 
         wrapper = JVLinkWrapper(sid="TEST")
 
-        # Test DIFN (マスタデータ - DIFF の別名)
+        # Test DIFN (マスタデータ)
         mock_com.JVOpen.return_value = (0, 100, 0, "20241231235959")
         result, read_count, _, _ = wrapper.jv_open(DATA_SPEC_DIFN, "20240101000000", option=1)
         assert result == JV_RT_SUCCESS
         assert read_count == 100
 
-        # Test BLDN (血統情報 - BLOD の別名)
+        # Test BLDN (血統情報)
         mock_com.JVOpen.return_value = (0, 50, 0, "20241231235959")
         result, read_count, _, _ = wrapper.jv_open(DATA_SPEC_BLDN, "20240101000000", option=1)
         assert result == JV_RT_SUCCESS
         assert read_count == 50
 
-        # Test HOSN (競走馬市場取引価格 - HOSE の別名)
+        # Test HOSN (競走馬市場取引価格)
         mock_com.JVOpen.return_value = (0, 30, 0, "20241231235959")
         result, read_count, _, _ = wrapper.jv_open(DATA_SPEC_HOSN, "20240101000000", option=1)
         assert result == JV_RT_SUCCESS

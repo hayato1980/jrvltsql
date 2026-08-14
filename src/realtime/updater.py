@@ -161,8 +161,8 @@ class RealtimeUpdater:
 
     # Note: The following record types are NOT provided in real-time:
     # - TK (特別登録馬) - Accumulated data only
-    # - UM, KS, CH, BR, BN, HN, SK (Master data) - Updated via DIFF/DIFN
-    # - CK, HC, HS, HY (Code/Status data) - Updated via SNAP/SNPN
+    # - UM, KS, CH, BR, BN, HN, SK (Master data) - Updated via DIFN
+    # - CK, HC, HS, HY (Code/Status data) - Updated via SNPN
     # - YS, BT, CS (Change data) - Updated via YSCH, SLOP, etc.
     # - JG, WC - Not in the supported realtime stream
 
