@@ -29,6 +29,7 @@ jobs:
         pytest \
           tests/test_parsers.py \
           tests/test_parser.py \
+          tests/test_base_parser_byte_offsets.py \
           tests/test_comprehensive_integration.py \
           tests/test_realtime.py \
           tests/test_error_scenarios.py \

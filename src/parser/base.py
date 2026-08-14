@@ -126,19 +126,10 @@ class BaseParser(ABC):
         if not record:
             raise ValueError("Empty record")
 
-        # Decode record from Shift_JIS
-        # Use errors='replace' to handle invalid byte sequences gracefully
-        # instead of throwing an exception. Invalid sequences are replaced with '�'.
-        # This prevents data loss while preserving field positions.
-        try:
-            record_str = record.decode(ENCODING_JVDATA, errors='replace')
-        except UnicodeDecodeError as e:
-            # Fallback if errors='replace' somehow still fails
-            logger.warning(f"Failed to decode record with replacement: {e}")
-            raise ValueError(f"Failed to decode record: {e}")
-
-        # Verify record type
-        actual_type = record_str[:2]
+        # Verify record type. Only the 2-byte record spec is decoded here; the
+        # record as a whole stays bytes so that fields are sliced at the byte
+        # offsets the JV-Data layouts are defined in.
+        actual_type = record[:2].decode(ENCODING_JVDATA, errors='replace')
         if actual_type != self.record_type:
             raise ValueError(
                 f"Record type mismatch: expected {self.record_type}, got {actual_type}"
@@ -148,7 +139,7 @@ class BaseParser(ABC):
         result = {}
         for field_def in self._fields:
             try:
-                value = self._extract_field(record_str, field_def)
+                value = self._extract_field(record, field_def)
                 result[field_def.name] = value
             except Exception as e:
                 logger.warning(
@@ -162,18 +153,25 @@ class BaseParser(ABC):
 
         return result
 
-    def _extract_field(self, record: str, field_def: FieldDef) -> Any:
+    def _extract_field(self, record: bytes, field_def: FieldDef) -> Any:
         """Extract a single field from the record.
 
+        The record is sliced as bytes and only the field itself is decoded.
+        Decoding the whole record first and slicing the resulting string would
+        use character offsets, which shifts every field that follows a
+        multibyte (cp932) value.
+
         Args:
-            record: Decoded record string
+            record: Raw record bytes (Shift_JIS encoded)
             field_def: Field definition
 
         Returns:
             Parsed field value
         """
         end = field_def.start + field_def.length
-        raw_value = record[field_def.start:end]
+        # errors='replace' keeps an undecodable field from failing the whole
+        # record; invalid sequences become '�'.
+        raw_value = record[field_def.start:end].decode(ENCODING_JVDATA, errors='replace')
 
         # Strip whitespace
         value = raw_value.strip()
