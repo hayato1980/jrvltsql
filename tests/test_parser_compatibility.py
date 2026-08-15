@@ -76,7 +76,7 @@ class TestRAParser:
         assert result["Kyori"] == "1400"
 
     def test_ra_record_length(self, factory):
-        """RA record should be exactly 1272 bytes."""
+        """RA record should be the official 1,272 bytes including CRLF."""
         data = make_ra_record()
         assert len(data) == 1272
         parser = factory.get_parser("RA")
