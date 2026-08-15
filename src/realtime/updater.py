@@ -240,6 +240,12 @@ class RealtimeUpdater:
         directly through this method. Returns a list when parsed_data is a list.
         """
         if isinstance(parsed_data, list):
+            if parsed_data:
+                from src.importer.importer import _dm_native_snapshot_rows
+
+                snapshot_rows = _dm_native_snapshot_rows(parsed_data[0], "RT_DM")
+                if snapshot_rows is not None:
+                    return self._replace_dm_native_snapshot(parsed_data[0], snapshot_rows)
             results = []
             for item in parsed_data:
                 if timeseries and source_spec:
@@ -253,6 +259,42 @@ class RealtimeUpdater:
         if timeseries and source_spec:
             parsed_data.setdefault("SourceSpec", source_spec)
         return self._process_single_record(parsed_data, timeseries=timeseries)
+
+    def _replace_dm_native_snapshot(
+        self,
+        record: Dict,
+        snapshot_rows: list[Dict],
+    ) -> List[Dict]:
+        """Replace one complete RT_DM race snapshot inside the caller transaction."""
+        from src.importer.importer import replace_dm_native_snapshot
+
+        try:
+            inserted = replace_dm_native_snapshot(self.database, record, "RT_DM")
+            if inserted != len(snapshot_rows):
+                raise RuntimeError(
+                    f"RT_DM snapshot inserted {inserted} of {len(snapshot_rows)} rows"
+                )
+            return [
+                {
+                    "operation": "insert",
+                    "table": "RT_DM",
+                    "record_type": "DM",
+                    "success": True,
+                }
+                for _ in snapshot_rows
+            ]
+        except Exception as exc:
+            logger.error(f"Failed to replace RT_DM snapshot: {exc}", exc_info=True)
+            return [
+                {
+                    "operation": "insert",
+                    "table": "RT_DM",
+                    "record_type": "DM",
+                    "success": False,
+                    "error": str(exc),
+                }
+                for _ in snapshot_rows
+            ]
 
     def process_parsed_records_batch(self, records: list[Dict], timeseries: bool = False) -> Dict:
         """Insert already parsed records in batches grouped by target table."""
@@ -651,7 +693,7 @@ class RealtimeUpdater:
         expanded_tables = {
             "RT_H1", "RT_H6",
             "RT_O1", "RT_O2", "RT_O3", "RT_O4", "RT_O5", "RT_O6",
-            "RT_WH",
+            "RT_WH", "RT_DM",
         }
         ts_tables = {
             "TS_O1", "TS_O2", "TS_O3", "TS_O4", "TS_O5", "TS_O6",

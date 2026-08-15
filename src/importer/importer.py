@@ -43,6 +43,17 @@ def resolve_standard_table_name(database: BaseDatabase, native_table_name: str) 
             "Automatic BR import is refused; rebuild the standard table as SEISAN and "
             "reimport current-shape source records."
         )
+    if (
+        native_table_name == "NL_DM"
+        and database.is_connected()
+        and database.table_exists("DATA_MASTER")
+        and not database.table_exists(standard_name)
+    ):
+        raise SchemaMigrationError(
+            "Legacy standard table DATA_MASTER exists but canonical MINING does not. "
+            "Automatic DM import is refused; rebuild the standard table as MINING and "
+            "reimport official 303-byte source records."
+        )
     return standard_name
 
 
@@ -98,12 +109,100 @@ def translate_standard_field_names(record: dict, table_name: str) -> dict:
 
 def _expanded_record_fingerprint(record: dict, table_name: str) -> Optional[tuple]:
     """Identify duplicate expanded rows that share one official wide record."""
-    if table_name != "BATAIJYU":
+    if table_name not in {"BATAIJYU", "MINING"}:
         return None
     wide_record = record.get("_wide_record")
     if not isinstance(wide_record, dict):
         return None
     return tuple(sorted((str(key), repr(value)) for key, value in wide_record.items()))
+
+
+_DM_RACE_KEY_COLUMNS = ("Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum")
+_DM_SNAPSHOT_ROWS_KEY = "_dm_snapshot_rows"
+_DM_SNAPSHOT_INDEX_KEY = "_dm_snapshot_index"
+
+
+def _is_dm_race_delete(record: dict, table_name: str) -> bool:
+    """Return whether a DM record instructs deletion of one complete race."""
+    return table_name in {"NL_DM", "MINING"} and record.get("DataKubun") == "0"
+
+
+def _delete_dm_race_rows(database: BaseDatabase, record: dict, table_name: str) -> int:
+    """Delete every native horse row, or the standard wide row, for one DM race."""
+    converted = convert_record_types(record, table_name)
+    missing = [column for column in _DM_RACE_KEY_COLUMNS if converted.get(column) in (None, "")]
+    if missing:
+        raise ValueError(f"DM race delete has incomplete key: {missing}")
+    where = " AND ".join(f"{column} = ?" for column in _DM_RACE_KEY_COLUMNS)
+    values = tuple(converted[column] for column in _DM_RACE_KEY_COLUMNS)
+    return database.execute(f"DELETE FROM {table_name} WHERE {where}", values)
+
+
+def _dm_native_snapshot_rows(record: dict, table_name: str) -> list[dict] | None:
+    """Return all rows from one official native DM snapshot, when available."""
+    if table_name not in {"NL_DM", "RT_DM"} or record.get("DataKubun") == "0":
+        return None
+    rows = record.get(_DM_SNAPSHOT_ROWS_KEY)
+    if not isinstance(rows, list) or not rows:
+        return None
+    return rows
+
+
+def _is_dm_snapshot_follower(record: dict, table_name: str) -> bool:
+    """Skip non-leading rows already represented by one physical DM snapshot."""
+    if table_name not in {"NL_DM", "MINING"}:
+        return False
+    rows = record.get(_DM_SNAPSHOT_ROWS_KEY)
+    return isinstance(rows, list) and bool(rows) and record.get(_DM_SNAPSHOT_INDEX_KEY) != 0
+
+
+def replace_dm_native_snapshot(
+    database: BaseDatabase,
+    record: dict,
+    table_name: str,
+) -> int:
+    """Replace one complete native DM race snapshot without leaving stale horses.
+
+    Transaction ownership remains with the caller. All rows are validated before
+    the race delete so malformed parser metadata cannot erase an existing snapshot.
+    """
+    snapshot_rows = _dm_native_snapshot_rows(record, table_name)
+    if snapshot_rows is None:
+        raise ValueError(f"{table_name} DM snapshot metadata is missing")
+
+    converted_rows = [convert_record_types(row, table_name) for row in snapshot_rows]
+    primary_keys = get_table_primary_key_columns(table_name)
+    if not primary_keys:
+        raise SchemaMigrationError(f"{table_name} DM snapshot requires a primary key")
+
+    expected_race_key = None
+    seen_primary_keys = set()
+    for converted in converted_rows:
+        missing = [column for column in primary_keys if converted.get(column) in (None, "")]
+        if missing:
+            raise ValueError(f"DM snapshot row has incomplete key: {missing}")
+        race_key = tuple(converted[column] for column in _DM_RACE_KEY_COLUMNS)
+        if expected_race_key is None:
+            expected_race_key = race_key
+        elif race_key != expected_race_key:
+            raise ValueError("DM snapshot rows span more than one race")
+        primary_key = tuple(converted[column] for column in primary_keys)
+        if primary_key in seen_primary_keys:
+            raise ValueError(f"DM snapshot contains duplicate primary key: {primary_key}")
+        seen_primary_keys.add(primary_key)
+
+    converted_record = convert_record_types(record, table_name)
+    record_race_key = tuple(converted_record.get(column) for column in _DM_RACE_KEY_COLUMNS)
+    if record_race_key != expected_race_key:
+        raise ValueError("DM snapshot metadata does not match its expanded row")
+
+    _delete_dm_race_rows(database, record, table_name)
+    inserted = database.insert_many(table_name, converted_rows, use_replace=True)
+    if inserted != len(converted_rows):
+        raise DatabaseError(
+            f"{table_name} DM snapshot inserted {inserted} of {len(converted_rows)} rows"
+        )
+    return inserted
 
 
 _CH_SEISEKI_ROWS_KEY = "_ch_seiseki_rows"
@@ -664,7 +763,7 @@ class DataImporter:
 
     def _record_for_table(self, record: dict, table_name: str) -> dict:
         """Return the parser representation required by the target schema."""
-        if table_name == "BATAIJYU":
+        if table_name in {"BATAIJYU", "MINING"}:
             wide_record = record.get("_wide_record")
             if isinstance(wide_record, dict):
                 return self._clean_record(wide_record)
@@ -754,6 +853,41 @@ class DataImporter:
                         record_type=record_type,
                     )
                     self._records_failed += 1
+                    continue
+
+                if _is_dm_race_delete(record, table_name):
+                    pending = batch_buffers.setdefault(table_name, [])
+                    if pending:
+                        self._flush_batch(table_name, pending, auto_commit)
+                        batch_buffers[table_name] = []
+                    _delete_dm_race_rows(self.database, record, table_name)
+                    self._records_imported += 1
+                    self._batches_processed += 1
+                    if auto_commit:
+                        self.database.commit()
+                    last_expanded_record_fingerprint = None
+                    continue
+
+                if _is_dm_snapshot_follower(record, table_name):
+                    continue
+
+                dm_snapshot_rows = _dm_native_snapshot_rows(record, table_name)
+                if dm_snapshot_rows is not None:
+                    pending = batch_buffers.setdefault(table_name, [])
+                    if pending:
+                        self._flush_batch(table_name, pending, auto_commit)
+                        batch_buffers[table_name] = []
+                    if auto_commit:
+                        self.database.begin_transaction()
+                    try:
+                        rows = replace_dm_native_snapshot(self.database, record, table_name)
+                        if auto_commit:
+                            self.database.commit()
+                    except Exception:
+                        self.database.rollback()
+                        raise
+                    self._records_imported += rows
+                    self._batches_processed += 1
                     continue
 
                 fingerprint = _expanded_record_fingerprint(record, table_name)
@@ -990,6 +1124,26 @@ class DataImporter:
             return False
 
         try:
+            if _is_dm_race_delete(record, table_name):
+                _delete_dm_race_rows(self.database, record, table_name)
+                self._records_imported += 1
+                self._batches_processed += 1
+                if auto_commit:
+                    self.database.commit()
+                return True
+            if _dm_native_snapshot_rows(record, table_name) is not None:
+                if auto_commit:
+                    self.database.begin_transaction()
+                try:
+                    rows = replace_dm_native_snapshot(self.database, record, table_name)
+                    if auto_commit:
+                        self.database.commit()
+                except Exception:
+                    self.database.rollback()
+                    raise
+                self._records_imported += rows
+                self._batches_processed += 1
+                return True
             clean_record = self._record_for_table(record, table_name)
             converted_record = self._convert_record(clean_record, table_name)
             if not self._has_complete_primary_key(table_name, converted_record):
