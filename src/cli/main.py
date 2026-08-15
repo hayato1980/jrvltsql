@@ -63,10 +63,17 @@ FETCH_NOTE_TO_RANGE_FROMTIME = (
     "取得後のクライアント側フィルタも従来どおり働きます"
     "（窓の外の日付を含むファイルが届くため）。"
 )
-FETCH_NOTE_TO_START_ONLY = (
-    "このデータ種別は範囲形式の fromtime だと JV-Link がエラーを返さず0件になるため、"
-    "開始のみの fromtime で開きます。--to は取得後のクライアント側フィルタとしてのみ働き、"
-    "サーバからのダウンロード量は減りません。"
+FETCH_NOTE_TO_START_ONLY_SPEC = (
+    "このデータ種別は範囲形式の fromtime で窓に絞れることを実測していないため、"
+    "開始のみの fromtime で開きます"
+    "（マスタ系は範囲形式だと JV-Link がエラーを返さず0件になることを実測済み。"
+    "未実測の種別も同じ側へ倒しています）。"
+    "--to は取得後のクライアント側フィルタとしてのみ働き、サーバからのダウンロード量は減りません。"
+)
+FETCH_NOTE_TO_START_ONLY_OPTION2 = (
+    "option=2 の fromtime は開催サイクル内の連続性管理に使われるもので過去の窓を選べないため、"
+    "データ種別によらず開始のみの fromtime で開きます。"
+    "--to は取得後のクライアント側フィルタとしてのみ働き、サーバからのダウンロード量は減りません。"
 )
 FETCH_NOTE_TO_SETUP_CHUNKS = (
     "option=3 の370日超の範囲は年単位の JVOpen に分割され、"
@@ -117,8 +124,11 @@ def _print_fetch_guardrail_notes(jv_option: int, data_spec: str) -> None:
 
     if supports_range_fromtime(data_spec, jv_option):
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_RANGE_FROMTIME}")
+    elif jv_option == 2:
+        # Name the real cause: under option=2 the option decides, not the spec.
+        err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_START_ONLY_OPTION2}")
     else:
-        err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_START_ONLY}")
+        err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_START_ONLY_SPEC}")
     if jv_option == 3:
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_SETUP_CHUNKS}")
     err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_DATE_FIELDS}")
