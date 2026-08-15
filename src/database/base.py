@@ -50,6 +50,7 @@ class BaseDatabase(ABC):
         self.config = config
         self._connection = None
         self._cursor = None
+        self._context_exit_invalidated = False
         logger.info(f"{self.__class__.__name__} initialized")
 
     def _quote_identifier(self, identifier: str) -> str:
@@ -81,9 +82,7 @@ class BaseDatabase(ABC):
         pass
 
     @abstractmethod
-    def execute(
-        self, sql: str, parameters: Optional[tuple] = None
-    ) -> int:
+    def execute(self, sql: str, parameters: Optional[tuple] = None) -> int:
         """Execute SQL statement.
 
         Args:
@@ -99,9 +98,7 @@ class BaseDatabase(ABC):
         pass
 
     @abstractmethod
-    def executemany(
-        self, sql: str, parameters_list: List[tuple]
-    ) -> int:
+    def executemany(self, sql: str, parameters_list: List[tuple]) -> int:
         """Execute SQL statement with multiple parameter sets.
 
         Args:
@@ -173,6 +170,16 @@ class BaseDatabase(ABC):
         """
         pass
 
+    def table_exists_strict(self, table_name: str) -> bool:
+        """Check for a table without suppressing catalog query failures.
+
+        Backends whose compatibility ``table_exists`` method converts a
+        ``DatabaseError`` to ``False`` must override this method.  Callers use
+        this strict variant when a missing table and an unreadable catalog
+        require different recovery paths.
+        """
+        return self.table_exists(table_name)
+
     def insert(self, table_name: str, data: Dict[str, Any], use_replace: bool = True) -> int:
         """Insert single row into table.
 
@@ -208,7 +215,9 @@ class BaseDatabase(ABC):
 
         return self.execute(sql, tuple(values))
 
-    def insert_many(self, table_name: str, data_list: List[Dict[str, Any]], use_replace: bool = True) -> int:
+    def insert_many(
+        self, table_name: str, data_list: List[Dict[str, Any]], use_replace: bool = True
+    ) -> int:
         """Insert multiple rows into table.
 
         Note: By default uses INSERT OR REPLACE to handle duplicate records.
@@ -256,9 +265,7 @@ class BaseDatabase(ABC):
         sql = f"{insert_clause} {table_name} ({', '.join(quoted_columns)}) VALUES ({placeholders})"
 
         # Extract values in correct order for each row
-        parameters_list = [
-            tuple(row.get(col) for col in columns) for row in data_list
-        ]
+        parameters_list = [tuple(row.get(col) for col in columns) for row in data_list]
 
         return self.executemany(sql, parameters_list)
 
@@ -308,6 +315,21 @@ class BaseDatabase(ABC):
         """
         return self._connection is not None
 
+    def invalidate_connection(self) -> None:
+        """Discard an unsafe session and identify it to context teardown.
+
+        This is deliberately distinct from a caller-requested ``disconnect``:
+        only a failed transactional recovery may skip the context manager's
+        final commit or rollback.
+        """
+        self._context_exit_invalidated = True
+        try:
+            self.disconnect()
+        except Exception:
+            if self.is_connected():
+                self._context_exit_invalidated = False
+            raise
+
     @abstractmethod
     def get_db_type(self) -> str:
         """Get database type identifier.
@@ -319,11 +341,18 @@ class BaseDatabase(ABC):
 
     def __enter__(self):
         """Context manager entry."""
+        self._context_exit_invalidated = False
         self.connect()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
+        # A failed transactional recovery may explicitly invalidate the old
+        # session. Arbitrary disconnects retain the normal fail-closed commit
+        # or rollback attempt so lost writes cannot be reported as success.
+        if self._context_exit_invalidated and not self.is_connected():
+            self._context_exit_invalidated = False
+            return None
         if exc_type is not None:
             self.rollback()
         else:

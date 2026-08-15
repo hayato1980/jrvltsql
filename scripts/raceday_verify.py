@@ -132,7 +132,7 @@ def check_schema(con, issues):
         "NL_RA", "NL_SE", "NL_HR", "NL_H1", "NL_H6",
         "NL_O1", "NL_O2", "NL_O3", "NL_O4", "NL_O5", "NL_O6",
         "NL_WE", "NL_WH", "NL_TK",
-        "NL_UM", "NL_KS", "NL_CH", "NL_BR", "NL_BN", "NL_RC",
+        "NL_UM", "NL_KS", "NL_CH", "NL_CH_SEISEKI", "NL_BR", "NL_BN", "NL_RC",
         "NL_JC", "NL_TC",
     ]
     rt_required = [
@@ -619,7 +619,8 @@ def check_master_data(con, issues):
     print("\n--- [14] Master Data ---")
     um = q(con, "SELECT COUNT(*) FROM NL_UM") or 0
     ks = q(con, "SELECT COUNT(*) FROM NL_KS") or 0
-    ch = q(con, "SELECT COUNT(*) FROM NL_CH") or 0 if table_exists(con, "NL_CH") else None
+    ch_exists = table_exists(con, "NL_CH")
+    ch = (q(con, "SELECT COUNT(*) FROM NL_CH") or 0) if ch_exists else None
     print(f"  {'[OK] ' if um > 0 else '[!]  '} NL_UM  (horses)    {um:>8,}")
     print(f"  {'[OK] ' if ks > 0 else '[!]  '} NL_KS  (jockeys)   {ks:>8,}")
     if ch is not None:
@@ -628,6 +629,77 @@ def check_master_data(con, issues):
         issues.append("NL_UM (horse master) empty -- run setup fetch")
     if ks == 0:
         issues.append("NL_KS (jockey master) empty -- run setup fetch")
+
+    if not ch_exists:
+        issues.append("NL_CH missing -- run create-tables and full DIFN reimport")
+        return
+    if ch == 0:
+        issues.append("NL_CH empty -- run full DIFN reimport")
+    if not table_exists(con, "NL_CH_SEISEKI"):
+        print("  [FAIL] NL_CH_SEISEKI missing")
+        issues.append(
+            "NL_CH_SEISEKI missing -- run create-tables and full DIFN reimport"
+        )
+        return
+
+    incomplete = q(
+        con,
+        """
+        SELECT COUNT(*) FROM (
+            SELECT ch.ChokyosiCode
+            FROM NL_CH ch
+            LEFT JOIN NL_CH_SEISEKI result
+              ON result.ChokyosiCode = ch.ChokyosiCode
+            GROUP BY ch.ChokyosiCode
+            HAVING COUNT(result.ChokyosiCode) != 3
+               OR COUNT(DISTINCT CASE WHEN result.Num IN (1, 2, 3)
+                                      THEN result.Num END) != 3
+        ) incomplete
+        """,
+    )
+    orphan = q(
+        con,
+        """
+        SELECT COUNT(*)
+        FROM NL_CH_SEISEKI result
+        LEFT JOIN NL_CH ch ON ch.ChokyosiCode = result.ChokyosiCode
+        WHERE ch.ChokyosiCode IS NULL
+        """,
+    )
+    revision_mismatch = q(
+        con,
+        """
+        SELECT COUNT(*)
+        FROM NL_CH_SEISEKI result
+        JOIN NL_CH ch ON ch.ChokyosiCode = result.ChokyosiCode
+        WHERE result.MakeDate IS NOT ch.MakeDate
+        """,
+    )
+    if incomplete is None or orphan is None or revision_mismatch is None:
+        print("  [FAIL] NL_CH_SEISEKI completeness could not be verified")
+        issues.append(
+            "NL_CH_SEISEKI completeness could not be verified -- inspect schema"
+        )
+        return
+
+    print(
+        f"  {'[OK] ' if ch > 0 and incomplete == 0 and orphan == 0 and revision_mismatch == 0 else '[FAIL]'} "
+        f"NL_CH_SEISEKI incomplete_trainers={incomplete:,} orphan_rows={orphan:,} "
+        f"revision_mismatch_rows={revision_mismatch:,}"
+    )
+    if incomplete:
+        issues.append(
+            f"NL_CH_SEISEKI incomplete for {incomplete} trainer(s) -- run full DIFN reimport"
+        )
+    if orphan:
+        issues.append(
+            f"NL_CH_SEISEKI has {orphan} orphan row(s) -- run full DIFN reimport"
+        )
+    if revision_mismatch:
+        issues.append(
+            f"NL_CH_SEISEKI has {revision_mismatch} row(s) from a different "
+            "parent MakeDate -- run full DIFN reimport"
+        )
 
 
 def check_cache_status(issues):
@@ -781,6 +853,7 @@ def run_phase_pre(con, args, year, monthday, issues, nl_checks, rt_checks):
 def run_phase_rt_check(con, args, year, monthday, issues, nl_checks, rt_checks):
     rt_checks.update(check_rt_today(con, year, monthday, issues, "RT_ 速報系 (during races)") or {})
     nl_checks.update(check_nl_today(con, year, monthday, [], "NL_ 蓄積系") or {})
+    check_master_data(con, issues)
     check_rt_process_running(issues, race_date_str=args.date)
     check_rt_data_freshness(con, year, monthday, issues)
     check_odds_coverage(con, year, monthday, issues)
@@ -799,6 +872,7 @@ def run_phase_nl_mid(con, args, year, monthday, issues, nl_checks, rt_checks):
     check_schema(con, issues)
     nl_checks.update(check_nl_today(con, year, monthday, issues, "NL_ 蓄積系 (mid-race)") or {})
     rt_checks.update(check_rt_today(con, year, monthday, issues, "RT_ 速報系 (mid-race)") or {})
+    check_master_data(con, issues)
     check_rt_process_running(issues, race_date_str=args.date)
     check_rt_data_freshness(con, year, monthday, issues)
     check_odds_coverage(con, year, monthday, issues)

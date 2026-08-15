@@ -94,6 +94,7 @@ Benefits with PRIMARY KEY constraints:
 from typing import Any, Dict, List
 
 from src.database.base import BaseDatabase
+from src.database.schema_ch import NL_CH_SCHEMA, NL_CH_SEISEKI_SCHEMA
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -327,69 +328,8 @@ SCHEMAS = {
             PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, KettoNum)
         )
     """,
-    "NL_CH": """
-        CREATE TABLE IF NOT EXISTS NL_CH (
-            RecordSpec TEXT,
-            DataKubun TEXT,
-            MakeDate TEXT,
-            ChokyosiCode TEXT,
-            DelKubun TEXT,
-            IssueDate TEXT,
-            DelDate TEXT,
-            BirthDate TEXT,
-            ChokyosiName TEXT,
-            ChokyosiNameKana TEXT,
-            ChokyosiRyakusyo TEXT,
-            ChokyosiNameEng TEXT,
-            SexCD TEXT,
-            TozaiCD TEXT,
-            Syotai TEXT,
-            SaikinJyusyo1_id TEXT,
-            SaikinJyusyo1_Hondai TEXT,
-            SaikinJyusyo1_Ryakusyo10 TEXT,
-            SaikinJyusyo1_Ryakusyo6 TEXT,
-            SaikinJyusyo1_Ryakusyo3 TEXT,
-            SaikinJyusyo1_GradeCD TEXT,
-            SaikinJyusyo1_SyussoTosu INTEGER,
-            SaikinJyusyo1_KettoNum TEXT,
-            SaikinJyusyo1_Bamei TEXT,
-            SetYear INTEGER,
-            HonSyokinH BIGINT,
-            HonSyokinS BIGINT,
-            FukaSyokinH BIGINT,
-            FukaSyokinS BIGINT,
-            ChakuKaisuH INTEGER,
-            ChakuKaisuS INTEGER,
-            ChakuKaisu01H INTEGER,
-            ChakuKaisu01S INTEGER,
-            ChakuKaisu02H INTEGER,
-            ChakuKaisu02S INTEGER,
-            ChakuKaisu03H INTEGER,
-            ChakuKaisu03S INTEGER,
-            ChakuKaisu04H INTEGER,
-            ChakuKaisu04S INTEGER,
-            ChakuKaisu05H INTEGER,
-            ChakuKaisu05S INTEGER,
-            ChakuKaisu06H INTEGER,
-            ChakuKaisu06S INTEGER,
-            ChakuKaisu07H INTEGER,
-            ChakuKaisu07S INTEGER,
-            ChakuKaisu08H INTEGER,
-            ChakuKaisu08S INTEGER,
-            ChakuKaisu09H INTEGER,
-            ChakuKaisu09S INTEGER,
-            ChakuKaisu10H INTEGER,
-            ChakuKaisu10S INTEGER,
-            ChakuKaisuSiba1 INTEGER,
-            ChakuKaisuSiba2 INTEGER,
-            ChakuKaisuSiba3 INTEGER,
-            ChakuKaisuDirt1 INTEGER,
-            ChakuKaisuDirt2 INTEGER,
-            ChakuKaisuDirt3 INTEGER,
-            Reserved_591 TEXT,
-            PRIMARY KEY (ChokyosiCode)
-        )
-    """,
+    "NL_CH": NL_CH_SCHEMA,
+    "NL_CH_SEISEKI": NL_CH_SEISEKI_SCHEMA,
     "NL_CS": """
         CREATE TABLE IF NOT EXISTS NL_CS (
             RecordSpec TEXT,
@@ -2960,17 +2900,21 @@ class SchemaManager:
 
             elif db_type == "postgresql":
                 # PostgreSQL: Use COMMENT ON
+                table_identifier = self.db._quote_identifier(table_name)
                 # Table comment
                 table_desc = metadata.get("description", "").replace("'", "''")
-                self.db.execute(f"COMMENT ON TABLE {table_name} IS '{table_desc}'")
+                self.db.execute(f"COMMENT ON TABLE {table_identifier} IS '{table_desc}'")
 
                 # Column comments
                 for col in metadata.get("columns", []):
                     col_name = col.get("name", "")
                     col_desc = col.get("description", "").replace("'", "''")
                     if col_name:
-                        # Use double quotes for column names with Japanese characters
-                        self.db.execute(f'COMMENT ON COLUMN {table_name}."{col_name}" IS \'{col_desc}\'')
+                        column_identifier = self.db._quote_identifier(col_name)
+                        self.db.execute(
+                            f"COMMENT ON COLUMN {table_identifier}.{column_identifier} "
+                            f"IS '{col_desc}'"
+                        )
 
             logger.info(f"Applied metadata to table {table_name}")
             return True

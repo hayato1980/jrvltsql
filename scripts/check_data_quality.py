@@ -433,6 +433,8 @@ class DataQualityChecker:
     def _check_referential_integrity(self):
         """Check referential integrity between tables"""
 
+        self._check_ch_normalized_results()
+
         # Check if NL_SE records reference existing NL_RA records
         if self.db.table_exists('NL_SE') and self.db.table_exists('NL_RA'):
             orphan_check = self.db.fetch_one("""
@@ -520,6 +522,120 @@ class DataQualityChecker:
                             'INFO'
                         )
 
+    def _check_ch_normalized_results(self):
+        """Require one complete Num=1,2,3 result group per trainer."""
+        if not self.db.table_exists('NL_CH'):
+            self._add_issue(
+                'NL_CH',
+                'normalized trainer parent table is missing',
+                'CRITICAL',
+            )
+            if self.db.table_exists('NL_CH_SEISEKI'):
+                try:
+                    orphan_result = self.db.fetch_one(
+                        'SELECT COUNT(*) AS orphan_count FROM NL_CH_SEISEKI'
+                    )
+                    if not orphan_result:
+                        raise ValueError('normalized CH orphan query returned no result')
+                    orphan_count = int(orphan_result['orphan_count'])
+                except Exception as error:
+                    logger.error("Normalized CH orphan check failed", error=str(error))
+                    self._add_issue(
+                        'NL_CH_SEISEKI',
+                        'normalized trainer results could not be verified',
+                        'CRITICAL',
+                    )
+                    return
+                if orphan_count:
+                    self._add_issue(
+                        'NL_CH_SEISEKI',
+                        f'{orphan_count} normalized trainer result row(s) have no parent',
+                        'CRITICAL',
+                    )
+            return
+        if not self.db.table_exists('NL_CH_SEISEKI'):
+            self._add_issue(
+                'NL_CH_SEISEKI',
+                'normalized trainer results table is missing',
+                'CRITICAL',
+            )
+            return
+
+        try:
+            parent_result = self.db.fetch_one(
+                'SELECT COUNT(*) AS parent_count FROM NL_CH'
+            )
+            if not parent_result:
+                raise ValueError("normalized CH parent count query returned no result")
+            parent_count = int(parent_result['parent_count'])
+            incomplete_result = self.db.fetch_one("""
+                SELECT COUNT(*) AS incomplete_count FROM (
+                    SELECT ch.ChokyosiCode
+                    FROM NL_CH ch
+                    LEFT JOIN NL_CH_SEISEKI result
+                      ON result.ChokyosiCode = ch.ChokyosiCode
+                    GROUP BY ch.ChokyosiCode
+                    HAVING COUNT(result.ChokyosiCode) != 3
+                       OR COUNT(DISTINCT CASE WHEN result.Num IN (1, 2, 3)
+                                              THEN result.Num END) != 3
+                ) incomplete
+            """)
+            orphan_result = self.db.fetch_one("""
+                SELECT COUNT(*) AS orphan_count
+                FROM NL_CH_SEISEKI result
+                LEFT JOIN NL_CH ch
+                  ON ch.ChokyosiCode = result.ChokyosiCode
+                WHERE ch.ChokyosiCode IS NULL
+            """)
+            revision_result = self.db.fetch_one("""
+                SELECT COUNT(*) AS revision_mismatch_count
+                FROM NL_CH_SEISEKI result
+                JOIN NL_CH ch
+                  ON ch.ChokyosiCode = result.ChokyosiCode
+                WHERE result.MakeDate IS NOT ch.MakeDate
+            """)
+            if not incomplete_result or not orphan_result or not revision_result:
+                raise ValueError("normalized CH completeness query returned no result")
+            incomplete_count = int(incomplete_result['incomplete_count'])
+            orphan_count = int(orphan_result['orphan_count'])
+            revision_mismatch_count = int(
+                revision_result['revision_mismatch_count']
+            )
+        except Exception as error:
+            logger.error("Normalized CH completeness check failed", error=str(error))
+            self._add_issue(
+                'NL_CH_SEISEKI',
+                'normalized trainer results could not be verified',
+                'CRITICAL',
+            )
+            return
+
+        if parent_count == 0:
+            self._add_issue(
+                'NL_CH',
+                'normalized trainer parent table is empty',
+                'CRITICAL',
+            )
+        if incomplete_count:
+            self._add_issue(
+                'NL_CH_SEISEKI',
+                f'{incomplete_count} trainer(s) do not have exactly result rows Num=1,2,3',
+                'CRITICAL',
+            )
+        if orphan_count:
+            self._add_issue(
+                'NL_CH_SEISEKI',
+                f'{orphan_count} normalized trainer result row(s) have no parent',
+                'CRITICAL',
+            )
+        if revision_mismatch_count:
+            self._add_issue(
+                'NL_CH_SEISEKI',
+                f'{revision_mismatch_count} normalized trainer result row(s) '
+                'have a different MakeDate than parent',
+                'CRITICAL',
+            )
+
     def _add_issue(self, table: str, message: str, severity: str = 'WARNING'):
         """Add an issue to the issues list
 
@@ -592,6 +708,12 @@ Examples:
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(report, f, ensure_ascii=False, indent=2)
             print(f"\nDetailed report saved to: {output_path}")
+
+        has_critical_issue = any(
+            issue.get('severity') == 'CRITICAL'
+            for issue in report.get('issues', [])
+        )
+        sys.exit(1 if has_critical_issue else 0)
 
     except Exception as e:
         logger.error(f"Quality check failed: {e}")

@@ -47,7 +47,7 @@ FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "jra")
 PARSER_MAP = {
     "BN": (BNParser, BNParser.RECORD_LENGTH),
     "BR": (BRParser, BRParser.RECORD_LENGTH),
-    "CH": (CHParser, 592),
+    "CH": (CHParser, CHParser.RECORD_LENGTH),
     "DM": (DMParser, 48),
     "H1": (H1Parser, 317),   # Fixture files use flat format (317 bytes)
     "H6": (H6Parser, 78),    # Fixture files use flat format (78 bytes)
@@ -73,7 +73,7 @@ PARSER_MAP = {
     "YS": (YSParser, 146),
 }
 EXPANDED_RECORD_TYPES = {"O1", "O2", "O3", "O4", "O5", "O6"}
-LEGACY_RECONSTRUCTED_LENGTHS = {"BN": 387, "BR": 455, "RA": 856, "SK": 78}
+LEGACY_RECONSTRUCTED_LENGTHS = {"BN": 387, "BR": 455, "CH": 592, "RA": 856, "SK": 78}
 
 
 def _has_complete_fixture_records(data, record_type, record_length):
@@ -117,6 +117,11 @@ def load_fixture_records(record_type, record_length):
                 # parser. Only its first 423 core bytes are position-compatible;
                 # the full result arrays are covered by the official contract.
                 chunk = chunk[:423].ljust(BRParser.RECORD_LENGTH - 2, b" ") + b"\r\n"
+            if record_type == "CH" and len(chunk) == 592:
+                # This fixture was reconstructed through the obsolete parser,
+                # whose result bytes start where current recent-win block 2
+                # begins. Preserve only the position-compatible 378-byte prefix.
+                chunk = chunk[:378].ljust(CHParser.RECORD_LENGTH - 2, b" ") + b"\r\n"
             if record_type == "SK" and len(chunk) == 78:
                 # This fixture was reconstructed from stored columns through
                 # the obsolete one-pedigree parser. Preserve its core values
@@ -134,6 +139,23 @@ def load_fixture_records(record_type, record_length):
                 chunk = chunk[:11].ljust(WFParser.RECORD_LENGTH - 2, b" ") + b"\r\n"
             records.append(chunk)
     return records
+
+
+def test_ch_legacy_fixture_preserves_only_the_position_compatible_prefix():
+    record = load_fixture_records("CH", CHParser.RECORD_LENGTH)[0]
+    parsed = CHParser().parse(record)
+
+    assert parsed is not None
+    assert parsed["SaikinJyusyo1_id"]
+    assert parsed["SaikinJyusyo2_id"] == ""
+    assert parsed["SaikinJyusyo3_Bamei"] == ""
+    for row in parsed["_ch_seiseki_rows"]:
+        payload = {
+            key: value
+            for key, value in row.items()
+            if key not in {"MakeDate", "ChokyosiCode", "Num"}
+        }
+        assert set(payload.values()) == {""}
 
 
 @pytest.mark.parametrize("record_type", list(PARSER_MAP.keys()))
