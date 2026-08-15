@@ -8,7 +8,9 @@ Key optimizations:
 """
 
 from typing import Dict, Iterator, List, Optional, Union
+
 from src.database.base import BaseDatabase, DatabaseError
+from src.importer.importer import _expanded_record_fingerprint
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -159,6 +161,15 @@ class OptimizedDataImporter:
             if key not in metadata_fields and not key.startswith("_")
         }
 
+    @classmethod
+    def _record_for_table(cls, record: dict, table_name: str) -> dict:
+        """Return the parser representation required by the target schema."""
+        if table_name == "BATAIJYU":
+            wide_record = record.get("_wide_record")
+            if isinstance(wide_record, dict):
+                return cls._clean_record(wide_record)
+        return cls._clean_record(record)
+
     @staticmethod
     def _convert_record(record: dict, table_name: str) -> dict:
         from src.importer.importer import convert_record_types
@@ -170,7 +181,11 @@ class OptimizedDataImporter:
         from src.database.schema_types import get_table_primary_key_columns
         from src.database.table_mappings import JRAVAN_TO_JLTSQL
 
-        primary_keys = get_table_primary_key_columns(JRAVAN_TO_JLTSQL.get(table_name, table_name))
+        primary_keys = get_table_primary_key_columns(table_name)
+        if not primary_keys:
+            primary_keys = get_table_primary_key_columns(
+                JRAVAN_TO_JLTSQL.get(table_name, table_name)
+            )
         return not primary_keys or all(record.get(key) not in (None, "") for key in primary_keys)
 
     def import_records(
@@ -201,6 +216,7 @@ class OptimizedDataImporter:
 
         # Group records by type for batch insertion
         batch_buffers: Dict[str, List[dict]] = {}
+        last_expanded_record_fingerprint = None
 
         try:
             for record in records:
@@ -227,11 +243,17 @@ class OptimizedDataImporter:
                     self._records_failed += 1
                     continue
 
+                fingerprint = _expanded_record_fingerprint(record, table_name)
+                if fingerprint is not None:
+                    if fingerprint == last_expanded_record_fingerprint:
+                        continue
+                    last_expanded_record_fingerprint = fingerprint
+
                 # Add to batch buffer
                 if table_name not in batch_buffers:
                     batch_buffers[table_name] = []
 
-                clean_record = self._clean_record(record)
+                clean_record = self._record_for_table(record, table_name)
                 converted_record = self._convert_record(clean_record, table_name)
                 if not self._has_complete_primary_key(table_name, converted_record):
                     logger.warning(
@@ -254,9 +276,7 @@ class OptimizedDataImporter:
             # Flush remaining batches
             for table_name, batch in batch_buffers.items():
                 if batch:
-                    self._flush_batch_optimized(
-                        table_name, batch, commit_batch=auto_commit
-                    )
+                    self._flush_batch_optimized(table_name, batch, commit_batch=auto_commit)
 
             # Log summary
             stats = self.get_statistics()

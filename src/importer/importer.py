@@ -15,6 +15,16 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _expanded_record_fingerprint(record: dict, table_name: str) -> Optional[tuple]:
+    """Identify duplicate expanded rows that share one official wide record."""
+    if table_name != "BATAIJYU":
+        return None
+    wide_record = record.get("_wide_record")
+    if not isinstance(wide_record, dict):
+        return None
+    return tuple(sorted((str(key), repr(value)) for key, value in wide_record.items()))
+
+
 # ============================================================================
 # REAL型フィールドの変換ルール定義
 # JV-Dataでは一部の数値フィールドが10倍された状態で格納されている
@@ -268,7 +278,7 @@ class DataImporter:
             "HY": "NL_HY",  # 馬名の意味由来
             "WE": "NL_WE",  # 気象情報
             "WF": "NL_WF",  # 風情報
-            "WH": "NL_WH",  # 馬場情報
+            "WH": "NL_WH",  # 馬体重情報
             "TM": "NL_TM",  # タイムマスター
             "TK": "NL_TK",  # 追切マスター
             "BT": "NL_BT",  # 調教Bタイム
@@ -286,7 +296,7 @@ class DataImporter:
             "RT_H1": "RT_H1",  # 票数1（全賭式・速報）
             "RT_H6": "RT_H6",  # 票数6（三連単・速報）
             "RT_WE": "RT_WE",  # 気象情報（速報）
-            "RT_WH": "RT_WH",  # 馬場情報（速報）
+            "RT_WH": "RT_WH",  # 馬体重情報（速報）
             "RT_JC": "RT_JC",  # 重量変更情報（速報）
             "RT_CC": "RT_CC",  # コース変更（速報）
             "RT_TC": "RT_TC",  # タイムコメント（速報）
@@ -375,6 +385,14 @@ class DataImporter:
             k: v for k, v in record.items() if k not in metadata_fields and not k.startswith("_")
         }
 
+    def _record_for_table(self, record: dict, table_name: str) -> dict:
+        """Return the parser representation required by the target schema."""
+        if table_name == "BATAIJYU":
+            wide_record = record.get("_wide_record")
+            if isinstance(wide_record, dict):
+                return self._clean_record(wide_record)
+        return self._clean_record(record)
+
     def _convert_record(self, record: dict, table_name: str) -> dict:
         """Convert record field types based on table schema.
 
@@ -388,7 +406,11 @@ class DataImporter:
         """Return True when a converted row has all schema primary-key values."""
         from src.database.table_mappings import JRAVAN_TO_JLTSQL
 
-        primary_keys = get_table_primary_key_columns(JRAVAN_TO_JLTSQL.get(table_name, table_name))
+        primary_keys = get_table_primary_key_columns(table_name)
+        if not primary_keys:
+            primary_keys = get_table_primary_key_columns(
+                JRAVAN_TO_JLTSQL.get(table_name, table_name)
+            )
         if not primary_keys:
             return True
         return all(record.get(key) not in (None, "") for key in primary_keys)
@@ -429,6 +451,7 @@ class DataImporter:
 
         # Group records by type for batch insertion
         batch_buffers: Dict[str, List[dict]] = {}
+        last_expanded_record_fingerprint = None
 
         try:
             for record in records:
@@ -455,6 +478,12 @@ class DataImporter:
                     )
                     self._records_failed += 1
                     continue
+
+                fingerprint = _expanded_record_fingerprint(record, table_name)
+                if fingerprint is not None:
+                    if fingerprint == last_expanded_record_fingerprint:
+                        continue
+                    last_expanded_record_fingerprint = fingerprint
 
                 # Add to batch buffer
                 if table_name not in batch_buffers:
@@ -504,7 +533,7 @@ class DataImporter:
 
         try:
             # Clean records to remove metadata fields before insertion
-            clean_batch = [self._clean_record(record) for record in batch]
+            clean_batch = [self._record_for_table(record, table_name) for record in batch]
             # Convert types based on schema definition
             converted_batch = []
             for record in clean_batch:
@@ -576,7 +605,7 @@ class DataImporter:
 
             for record in batch:
                 try:
-                    clean_record = self._clean_record(record)
+                    clean_record = self._record_for_table(record, table_name)
                     converted_record = self._convert_record(clean_record, table_name)
                     if not self._has_complete_primary_key(table_name, converted_record):
                         fail_count += 1
@@ -636,7 +665,7 @@ class DataImporter:
             return False
 
         try:
-            clean_record = self._clean_record(record)
+            clean_record = self._record_for_table(record, table_name)
             converted_record = self._convert_record(clean_record, table_name)
             if not self._has_complete_primary_key(table_name, converted_record):
                 self._records_failed += 1
