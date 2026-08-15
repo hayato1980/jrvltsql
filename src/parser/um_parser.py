@@ -49,24 +49,27 @@ class UMParser:
             フィールド名をキーとした辞書、エラー時はNone
         """
         try:
-            # レコード長チェック (短いレコードも許容)
-            if len(data) < 200:
+            # レコード長チェック: 仕様の 1609 バイト以外は取り込まない。
+            # 旧仕様（1577 バイト等）のレコードを部分抽出すると、壊れた
+            # 競走馬マスタ行が黙って保存されてしまうため None で拒否する。
+            if len(data) != self.RECORD_LENGTH:
                 self.logger.warning(
-                    f"UMレコード長不足: expected>={200}, actual={len(data)}"
+                    f"UMレコード長不正: expected={self.RECORD_LENGTH}, "
+                    f"actual={len(data)}. 仕様世代の異なるレコードの可能性があるため破棄"
                 )
+                return None
 
-            # レイアウト検算: 項番63 レコード区切が CR/LF かを見る。
-            # 仕様世代がずれたレコードを掴んでいると、ここが CR/LF にならない
+            # レイアウト検算: 項番63 レコード区切が CRLF かを見る。
+            # 仕様世代がずれたレコードを掴んでいると、ここが CRLF にならない
             # （旧仕様1577バイトのレコードを本パーサで読むと、この位置は着回数の途中）。
-            # 黙って壊れた行を作るより、警告を残して気付けるようにする。
-            if len(data) >= self.RECORD_LENGTH:
-                delimiter = data[self.RECORD_DELIMITER_START:self.RECORD_LENGTH]
-                if delimiter not in (b"\r\n", b"\n\r"):
-                    self.logger.warning(
-                        "UMレコードのレコード区切が CR/LF ではない: "
-                        f"pos={self.RECORD_DELIMITER_START} actual={delimiter!r}. "
-                        "仕様世代の異なるレコードを読んでいる可能性がある"
-                    )
+            delimiter = data[self.RECORD_DELIMITER_START:self.RECORD_LENGTH]
+            if delimiter != b"\r\n":
+                self.logger.warning(
+                    "UMレコードのレコード区切が CRLF ではない: "
+                    f"pos={self.RECORD_DELIMITER_START} actual={delimiter!r}. "
+                    "仕様世代の異なるレコードの可能性があるため破棄"
+                )
+                return None
 
             # フィールド抽出
             result = {}

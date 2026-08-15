@@ -128,3 +128,33 @@ class TestUMParserLayout:
 
     def test_parser_emits_exactly_the_spec_fields(self):
         assert set(self.parser.parse(self.record)) == set(EXPECTED)
+
+
+class TestUMParserExactLayoutEnforcement:
+    """長さ 1609・終端 CRLF ちょうどのレコードだけを受理することの検証
+
+    旧仕様（1577 バイト）や区切りずれのレコードを部分抽出してしまうと、
+    壊れた競走馬マスタ行が黙って取り込まれるため、None で拒否する。
+    """
+
+    def setup_method(self):
+        self.parser = UMParser()
+        self.record = build_record()
+
+    def test_exact_1609_byte_crlf_record_is_accepted(self):
+        row = self.parser.parse(self.record)
+        assert row is not None
+        assert row["KettoNum"] == EXPECTED["KettoNum"]
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            pytest.param(lambda r: r[:1575] + b"\r\n", id="legacy-1577-crlf"),
+            pytest.param(lambda r: r[:1608], id="short-1608"),
+            pytest.param(lambda r: r + b" ", id="long-1610"),
+            pytest.param(lambda r: r[:1607] + b"\n\r", id="delimiter-lfcr"),
+            pytest.param(lambda r: r[:1607] + b"  ", id="delimiter-spaces"),
+        ],
+    )
+    def test_unsupported_record_returns_none(self, mutate):
+        assert self.parser.parse(mutate(self.record)) is None
