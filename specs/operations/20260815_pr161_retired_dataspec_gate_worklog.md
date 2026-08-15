@@ -378,3 +378,21 @@ unless both reviewers are GREEN for the exact PR head SHA.
   provide H1, Actions is not successful, either final independent Codex review
   is not GREEN, an unresolved thread exists, tested SHA and PR head differ, or
   the worktree is dirty.
+
+## Second independent Codex review of `aff7f754b23da01c8e2b6ddead7c74770eacee67`
+
+- Boundary/operational reviewer `/root/pr161_boundary_review` → `GREEN`; no
+  P0/P1/P2 findings remained after the consolidated cache and recovery fixes.
+- Contract reviewer `/root/pr161_contract_review` → `NEEDS_CHANGES` with one
+  remaining P1: `check_se_results` still told operators to fetch DIFN when
+  central `NL_SE` results were incomplete, although result records are carried
+  by RACE. Its other first-pass findings were confirmed fixed; its focused run
+  reported `174 passed, 22 skipped`.
+- Candidate `aff7f754...` was rejected and was not pushed. A minimal regression
+  test was added before the production edit. On `aff7f754...` it failed with
+  actual issue text `fetch DIFN` versus expected `fetch RACE`, proving the
+  recovery guidance could select the wrong data spec.
+- The result-completion comment and actionable issue now consistently direct
+  operators to RACE. The paired normal behavior remains covered by the existing
+  completion checks; this change does not alter completion thresholds or
+  realtime `RT_SE` selection.

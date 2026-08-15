@@ -5,6 +5,28 @@ from types import SimpleNamespace
 from scripts import raceday_verify
 
 
+def test_result_completion_issue_recommends_race_fetch(monkeypatch):
+    """Missing central results must direct operators to the RACE data spec."""
+    counts = iter((12, 0, 0))
+    monkeypatch.setattr(raceday_verify, "q", lambda *args, **kwargs: next(counts))
+    monkeypatch.setattr(
+        raceday_verify,
+        "datetime",
+        type("AfterRacing", (), {"now": staticmethod(lambda: SimpleNamespace(hour=17))}),
+    )
+    issues = []
+
+    raceday_verify.check_se_results(None, "2026", "0815", issues)
+
+    assert issues == ["Race results only 0% complete after 17:00 -- fetch RACE"]
+
+    counts = iter((12, 12, 0))
+    issues = []
+    raceday_verify.check_se_results(None, "2026", "0815", issues)
+
+    assert issues == []
+
+
 def test_post_phase_uses_race_once_to_recover_missing_payouts(monkeypatch):
     """H1 is carried by RACE, so payout recovery must not request DIFN."""
     no_op_checks = (

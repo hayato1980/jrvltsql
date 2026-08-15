@@ -527,7 +527,7 @@ def check_se_results(con, year, monthday, issues):
     print(f"  [INFO] RT_SE confirmed winners:    {rt_winner}")
 
     if nl_ra_count > 0:
-        # During live racing NL_SE winners stay 0 until DIFN fetch (~17:30).
+        # During live racing NL_SE winners stay 0 until RACE fetch (~17:30).
         # Use RT_SE as the authoritative source while racing is ongoing.
         effective_winner = rt_winner if rt_winner > nl_winner else nl_winner
         source = "RT_SE" if rt_winner > nl_winner else "NL_SE"
@@ -535,7 +535,7 @@ def check_se_results(con, year, monthday, issues):
         marker = "[OK] " if completion >= 80 else "[!]  "
         print(f"  {marker} Result completion: {effective_winner}/{nl_ra_count} races ({completion:.0f}%)  [{source}]")
         if completion < 50 and datetime.now().hour >= 17:
-            issues.append(f"Race results only {completion:.0f}% complete after 17:00 -- fetch DIFN")
+            issues.append(f"Race results only {completion:.0f}% complete after 17:00 -- fetch RACE")
 
 
 def check_payout_completeness(con, year, monthday, issues):
