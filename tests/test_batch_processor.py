@@ -342,6 +342,40 @@ def _record(index):
     return {"RecordSpec": "RA", "index": index}
 
 
+_PARSE_FAILURE = object()
+
+
+class _ParseSkippingFetcher:
+    """Fake fetcher whose stream drops records mid-run, like a parse failure.
+
+    ``records_failed`` grows lazily while the stream is consumed, matching
+    how HistoricalFetcher counts parse failures inside its generator.
+    """
+
+    def __init__(self, plan):
+        self._plan = plan
+        self._fetched = 0
+        self._parsed = 0
+        self._failed = 0
+
+    def fetch(self, *_args, **_kwargs):
+        self._fetched = self._parsed = self._failed = 0
+        for item in self._plan:
+            self._fetched += 1
+            if item is _PARSE_FAILURE:
+                self._failed += 1
+                continue
+            self._parsed += 1
+            yield item
+
+    def get_statistics(self):
+        return {
+            "records_fetched": self._fetched,
+            "records_parsed": self._parsed,
+            "records_failed": self._failed,
+        }
+
+
 def _chunking_processor(records):
     processor = BatchProcessor.__new__(BatchProcessor)
     processor.database = MagicMock()
@@ -440,32 +474,60 @@ def test_option_4_sums_statistics_across_chunks(monkeypatch):
     assert stats["batches_processed"] == 3
 
 
+def test_option_4_fetch_failure_blocks_commit_of_the_consuming_chunk(monkeypatch):
+    monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 1)
+    processor = BatchProcessor.__new__(BatchProcessor)
+    processor.database = MagicMock()
+    processor.cache_manager = None
+    processor.fetcher = _ParseSkippingFetcher(
+        [_record(0), _PARSE_FAILURE, _record(1)]
+    )
+    processor.importer = _RecordingImporter()
+
+    with pytest.raises(ImporterError, match="rejected 1 record"):
+        processor.process_date_range(
+            "RACE", "19860101", "20221231", option=4, ensure_tables=False
+        )
+
+    # The chunk consumed alongside the parse failure must not be committed;
+    # the clean chunk before it stays committed.
+    assert _transaction_calls(processor.database).count("commit") == 1
+
+
 def test_option_4_rejection_rolls_back_only_its_own_chunk(tmp_path, monkeypatch):
     # The counterpart of test_import_rejection_rolls_back_earlier_successful_batch,
-    # which pins the single-transaction path losing everything.
-    monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 1)
+    # which pins the single-transaction path losing everything. The rejected
+    # chunk mixes an importable record with the rejected one, so the rollback
+    # must discard the whole chunk, not just the bad record.
+    monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 2)
     database = SQLiteDatabase({"path": str(tmp_path / "chunked.db")})
     processor = BatchProcessor.__new__(BatchProcessor)
     processor.database = database
     processor.cache_manager = None
+
+    def _ra_record(race_num):
+        return {
+            "RecordSpec": "RA",
+            "Year": "2026",
+            "MonthDay": "0714",
+            "JyoCD": "05",
+            "Kaiji": "01",
+            "Nichiji": "01",
+            "RaceNum": race_num,
+        }
+
     processor.fetcher = MagicMock()
     processor.fetcher.fetch.return_value = iter(
         [
-            {
-                "RecordSpec": "RA",
-                "Year": "2026",
-                "MonthDay": "0714",
-                "JyoCD": "05",
-                "Kaiji": "01",
-                "Nichiji": "01",
-                "RaceNum": "01",
-            },
+            _ra_record("01"),
+            _ra_record("02"),
+            _ra_record("03"),
             {"RecordSpec": "UNKNOWN"},
         ]
     )
     processor.fetcher.get_statistics.return_value = {
-        "records_fetched": 2,
-        "records_parsed": 2,
+        "records_fetched": 4,
+        "records_parsed": 4,
         "records_failed": 0,
     }
 
@@ -481,4 +543,6 @@ def test_option_4_rejection_rolls_back_only_its_own_chunk(tmp_path, monkeypatch)
 
         row_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_RA")["count"]
 
-    assert row_count == 1
+    # Chunk 1 (races 01, 02) stays committed; chunk 2 loses race 03 along
+    # with the rejected record.
+    assert row_count == 2

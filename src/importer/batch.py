@@ -193,6 +193,7 @@ class BatchProcessor:
             )
 
             import_totals: dict = {}
+            fetch_failures_seen = 0
             for group in groups:
                 begin_transaction = getattr(self.database, "begin_transaction", None)
                 if begin_transaction is not None:
@@ -202,9 +203,24 @@ class BatchProcessor:
                 _accumulate_stats(import_totals, import_stats)
 
                 if commit_per_chunk:
-                    # A chunk the importer rejected records in is rolled back
-                    # whole; the chunks committed before it stay committed.
-                    self._raise_if_rejected(import_stats)
+                    # A chunk that saw a rejection -- by the importer, or by
+                    # the fetcher/parser while the chunk was consumed -- is
+                    # rolled back whole; the chunks committed before it stay
+                    # committed. Fetch failures count lazily as the stream is
+                    # consumed, so compare the cumulative count per chunk.
+                    fetch_failures_total = int(
+                        self.fetcher.get_statistics().get("records_failed", 0) or 0
+                    )
+                    chunk_fetch_failures = fetch_failures_total - fetch_failures_seen
+                    fetch_failures_seen = fetch_failures_total
+                    self._raise_if_rejected(
+                        {
+                            "records_failed": (
+                                int(import_stats.get("records_failed", 0) or 0)
+                                + chunk_fetch_failures
+                            )
+                        }
+                    )
                     self.database.commit()
 
             # Combine statistics
