@@ -19,6 +19,8 @@ from src.jvlink.constants import (
     JV_READ_NO_MORE_DATA,
     JV_READ_SUCCESS,
     BUFFER_SIZE_JVREAD,
+    is_retired_data_spec,
+    retired_data_spec_message,
 )
 from src.utils.logger import get_logger
 
@@ -221,6 +223,11 @@ class JVLinkBridge:
         fromtime: str,
         option: int = 1,
     ) -> Tuple[int, int, int, str]:
+        # 廃止された dataspec はブリッジへ送信する前に弾く（wrapper 側と同じ
+        # fail-closed 境界。JVRTOpen の realtime spec は別名前空間なので対象外）。
+        if is_retired_data_spec(data_spec):
+            raise ValueError(retired_data_spec_message(data_spec))
+
         response = self._send_command(
             {"cmd": "open", "dataspec": data_spec, "fromtime": fromtime, "option": option},
             timeout=120.0,

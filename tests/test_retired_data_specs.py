@@ -19,6 +19,7 @@ from click.testing import CliRunner
 
 from src.cli.main import cli
 from src.fetcher.historical import HistoricalFetcher
+from src.jvlink.bridge import JVLinkBridge
 from src.jvlink.constants import (
     JV_RT_ERROR,
     JVOPEN_VALID_COMBINATIONS,
@@ -27,6 +28,7 @@ from src.jvlink.constants import (
     is_valid_jvopen_combination,
     retired_data_spec_message,
 )
+from src.jvlink.wrapper import JVLinkWrapper
 
 RETIRED = ("DIFF", "BLOD", "SNAP", "HOSE", "TCOV", "RCOV")
 REPLACEMENTS = ("DIFN", "BLDN", "SNPN", "HOSN", "TCVN", "RCVN")
@@ -214,11 +216,119 @@ class TestFetcherRejectsBeforeReachingJVLink:
         assert fetcher.jvlink.jv_open.call_args.args[0] == "DIFN"
 
 
+class TestWrapperRejectsBeforeCOM:
+    """公開 JVLinkWrapper.jv_open の直接呼び出しでも COM の JVOpen 前に弾く。
+
+    fetcher を経由しない直接利用者が旧 dataspec で JVOpen へ到達できると、
+    fail-closed の境界が破れる。
+    """
+
+    def _wrapper(self):
+        # JVLinkWrapper は __init__ で Windows COM を掴むので、__new__ で迂回して
+        # COM オブジェクトだけを差し替える (TestFetcherRejectsBeforeReachingJVLink
+        # と同じ方式)。JVOpen には正常応答を仕込み、拒否が実装より手前で起きた
+        # ことを「呼ばれていない」で判定できるようにする。
+        wrapper = JVLinkWrapper.__new__(JVLinkWrapper)
+        wrapper.sid = "TEST"
+        wrapper._jvlink = MagicMock()
+        wrapper._jvlink.JVOpen.return_value = (0, 100, 0, "20241231235959")
+        wrapper._is_open = False
+        wrapper._com_initialized = False
+        return wrapper
+
+    @pytest.mark.parametrize("data_spec", RETIRED + ("diff",))
+    def test_jv_open_never_calls_com_jvopen(self, data_spec):
+        wrapper = self._wrapper()
+
+        with pytest.raises(ValueError) as excinfo:
+            wrapper.jv_open(data_spec, "20240101000000", option=1)
+
+        assert RETIRED_DATA_SPECS[data_spec.upper()] in str(excinfo.value)
+        assert "2023-08" in str(excinfo.value)
+        wrapper._jvlink.JVOpen.assert_not_called()
+        assert wrapper.is_open() is False
+
+    def test_jv_open_still_reaches_com_for_the_replacement(self):
+        wrapper = self._wrapper()
+
+        result, read_count, _, _ = wrapper.jv_open("DIFN", "20240101000000", option=1)
+
+        assert (result, read_count) == (0, 100)
+        wrapper._jvlink.JVOpen.assert_called_once_with("DIFN", "20240101000000", 1)
+
+
+class TestBridgeRejectsBeforeTransmission:
+    """公開 JVLinkBridge.jv_open の直接呼び出しでもブリッジ送信前に弾く。"""
+
+    def _bridge(self):
+        # ブリッジ実行ファイルもサブプロセスも不要。__new__ で迂回して送信層だけ
+        # を差し替え、正常応答を仕込む (wrapper 側と同じ判定方式)。
+        bridge = JVLinkBridge.__new__(JVLinkBridge)
+        bridge.sid = "TEST"
+        bridge._send_command = MagicMock(
+            return_value={
+                "status": "ok",
+                "code": 0,
+                "readcount": 100,
+                "downloadcount": 5,
+                "lastfiletimestamp": "20241231235959",
+            }
+        )
+        bridge._is_open = False
+        return bridge
+
+    @pytest.mark.parametrize("data_spec", RETIRED + ("diff",))
+    def test_jv_open_never_transmits_a_bridge_command(self, data_spec):
+        bridge = self._bridge()
+
+        with pytest.raises(ValueError) as excinfo:
+            bridge.jv_open(data_spec, "20240101000000", option=1)
+
+        assert RETIRED_DATA_SPECS[data_spec.upper()] in str(excinfo.value)
+        assert "2023-08" in str(excinfo.value)
+        bridge._send_command.assert_not_called()
+        assert bridge.is_open() is False
+
+    def test_jv_open_still_transmits_for_the_replacement(self):
+        bridge = self._bridge()
+
+        code, read_count, download_count, _ = bridge.jv_open(
+            "DIFN", "20240101000000", option=1
+        )
+
+        assert (code, read_count, download_count) == (0, 100, 5)
+        bridge._send_command.assert_called_once()
+        assert bridge._send_command.call_args.args[0]["dataspec"] == "DIFN"
+
+
+# ルートコールバックは設定ファイルを前提条件とする（無ければ init 以外は終了）。
+# サブコマンドのガードまで到達させるため、検証 (_validate_config) を満たす最小の
+# 設定を書いて --config で渡す。auto_update_check は無効にして外部照会を避ける。
+MINIMAL_CLI_CONFIG = """\
+jvlink: {}
+database:
+  type: sqlite
+databases:
+  sqlite:
+    enabled: true
+    path: test.db
+auto_update_check: false
+"""
+
+
+def _invoke_cli_with_config(args):
+    """Invoke the real root command with a minimal temporary config."""
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        config_path = Path("config.yaml")
+        config_path.write_text(MINIMAL_CLI_CONFIG, encoding="utf-8")
+        return runner.invoke(cli, ["--config", str(config_path), *args])
+
+
 class TestCLIRejectsRetiredSpecs:
     @pytest.mark.parametrize("data_spec,replacement", list(zip(RETIRED, REPLACEMENTS, strict=True)))
     def test_fetch_command_reports_why(self, data_spec, replacement):
-        result = CliRunner().invoke(
-            cli,
+        result = _invoke_cli_with_config(
             ["fetch", "--from", "20240101", "--to", "20241231",
              "--spec", data_spec, "--db", "sqlite"],
         )
@@ -228,8 +338,7 @@ class TestCLIRejectsRetiredSpecs:
         assert replacement in result.output
 
     def test_cache_build_command_reports_why(self):
-        result = CliRunner().invoke(
-            cli,
+        result = _invoke_cli_with_config(
             ["cache", "build", "--spec", "DIFF",
              "--from", "20240101", "--to", "20241231"],
         )
@@ -239,8 +348,7 @@ class TestCLIRejectsRetiredSpecs:
         assert "DIFN" in result.output
 
     def test_cache_build_command_rejects_a_lowercase_retired_spec(self):
-        result = CliRunner().invoke(
-            cli,
+        result = _invoke_cli_with_config(
             ["cache", "build", "--spec", "diff",
              "--from", "20240101", "--to", "20241231"],
         )
@@ -252,13 +360,11 @@ class TestCLIRejectsRetiredSpecs:
         # rebuild は「キャッシュを消してから cache build に委譲」する。先に削除が
         # 走ることは許容する方針なので順序は問わず、取り込みに到達せず理由の
         # 分かるエラーで終わることだけを見る。
-        with CliRunner().isolated_filesystem():
-            result = CliRunner().invoke(
-                cli,
-                ["cache", "rebuild", "--spec", "DIFF",
-                 "--from", "20240101", "--to", "20241231"],
-            )
+        result = _invoke_cli_with_config(
+            ["cache", "rebuild", "--spec", "DIFF",
+             "--from", "20240101", "--to", "20241231"],
+        )
 
-            assert result.exit_code != 0
-            assert "2023-08" in result.output
-            assert "DIFN" in result.output
+        assert result.exit_code != 0
+        assert "2023-08" in result.output
+        assert "DIFN" in result.output

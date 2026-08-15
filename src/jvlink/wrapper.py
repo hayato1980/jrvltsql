@@ -15,6 +15,8 @@ from src.jvlink.constants import (
     JV_RT_ERROR,
     JV_RT_SUCCESS,
     get_error_message,
+    is_retired_data_spec,
+    retired_data_spec_message,
 )
 from src.utils.logger import get_logger
 
@@ -239,6 +241,7 @@ class JVLinkWrapper:
             - last_file_timestamp: Last file timestamp
 
         Raises:
+            ValueError: If data_spec was retired by the 2023-08 JV-Data revision
             JVLinkError: If open operation fails
 
         Examples:
@@ -248,6 +251,12 @@ class JVLinkWrapper:
             ...     "RACE", "20240101000000-20241231235959")
             >>> print(f"Will read {read_count} records")
         """
+        # 廃止された dataspec は COM の JVOpen に渡す前に弾く。fetcher を経由
+        # しない直接利用も同じ境界で fail-closed にする。try の外に置くのは、
+        # 下の except が ValueError を JVLinkError に包んでしまうため。
+        if is_retired_data_spec(data_spec):
+            raise ValueError(retired_data_spec_message(data_spec))
+
         try:
             # JVOpen signature: (dataspec, fromtime, option, ref readCount, ref downloadCount, out lastFileTimestamp)
             # pywin32: COM methods with ref/out parameters return them as tuple
