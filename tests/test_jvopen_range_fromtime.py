@@ -191,24 +191,30 @@ def _notes(data_spec: str, option: int) -> str:
     cli_main.err_console = MagicMock()
     cli_main.err_console.print.side_effect = lambda text: printed.append(text)
     try:
-        cli_main._print_fetch_guardrail_notes(option, data_spec)
+        cli_main._print_fetch_guardrail_notes(option, data_spec, "20220101", "20221231")
     finally:
         cli_main.err_console = original
     return " ".join(printed)
 
 
+def test_note_shows_the_fromtime_actually_passed_to_jvopen():
+    """説明ではなく、渡る値そのものを見せること."""
+    assert RANGE_2022 in _notes("RACE", 4)
+    assert START_ONLY_2022 in _notes("DIFN", 4)
+
+
 def test_range_form_note_says_the_download_is_bounded():
-    assert "サーバから降ってくる量そのものが窓に収まります" in _notes("RACE", 4)
+    assert "サーバから降ってくるのはこの窓のぶんだけです" in _notes("RACE", 4)
 
 
 def test_start_only_note_blames_the_spec_when_the_spec_is_the_reason():
     notes = _notes("DIFN", 4)
-    assert "このデータ種別は" in notes
+    assert "このデータ種別は範囲形式で窓に絞れることを実測していない" in notes
     assert "option=2" not in notes
 
 
 def test_start_only_note_blames_the_option_under_option2():
     """RACE は範囲形式が使える種別。option=2 で開始のみになる理由は option の側にある."""
     notes = _notes("RACE", 2)
-    assert "option=2 の fromtime は" in notes
-    assert "このデータ種別は範囲形式の fromtime で窓に絞れることを実測していない" not in notes
+    assert "option=2 の fromtime は開催サイクル内の連続性管理用" in notes
+    assert "このデータ種別は範囲形式で窓に絞れることを実測していない" not in notes
