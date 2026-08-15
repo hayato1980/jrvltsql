@@ -103,6 +103,11 @@ class SchemaParserValidator:
 
             # パターン2: parse()メソッドに直接フィールド定義がある場合
             elif hasattr(parser, 'parse'):
+                # まず実際に空レコードをパースして出力キーを採取する。
+                # ソースの静的スキャンでは、繰返項目をループで書いたパーサー
+                # （RA のラップタイム、BN/BR の成績ブロック等）を取りこぼす。
+                fields.update(self._probe_parser_fields(parser, parser_type))
+
                 # parse()メソッドのソースコードを取得してフィールド名を抽出
                 source = inspect.getsource(parser.parse)
 
@@ -143,6 +148,40 @@ class SchemaParserValidator:
             if self.verbose:
                 print(f"Warning: Failed to load parser for {record_type}: {e}")
             return set()
+
+    def _probe_parser_fields(self, parser, parser_type: str) -> Set[str]:
+        """空レコードを実際にパースして出力フィールド名を採取する。
+
+        繰返項目をループで組み立てるパーサーはソースの静的スキャンでは
+        フィールド名が取れないため、挙動から採る。
+
+        Args:
+            parser: パーサーのインスタンス
+            parser_type: レコードタイプ（RT_ を除いたもの）
+
+        Returns:
+            parse() が返したキーのセット。パースできなければ空セット。
+        """
+        length = getattr(parser, "FULL_RECORD_LENGTH", None) or getattr(
+            parser, "RECORD_LENGTH", 0
+        )
+        if not length:
+            return set()
+
+        probe = bytearray(b" " * length)
+        probe[0:2] = parser_type.upper().encode("ascii")[:2]
+        try:
+            result = parser.parse(bytes(probe))
+        except Exception as e:
+            # 空レコードを受け付けないパーサーもある。判定は静的スキャンに任せ、
+            # 黙って落とさないよう --verbose では理由を出す。
+            if self.verbose:
+                print(f"Warning: probe parse failed for {parser_type}: {e}")
+            return set()
+
+        # 展開型 (O1-O6) は 1 レコードから複数行を返し、空レコードでは組合せが
+        # 1 つも出ない。静的スキャン側の判定に任せる。
+        return set(result) if isinstance(result, dict) else set()
 
     def get_schema_columns(self, table_name: str) -> Set[str]:
         """スキーマからカラム名のリストを取得
