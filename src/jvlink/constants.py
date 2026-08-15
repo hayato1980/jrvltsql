@@ -81,6 +81,14 @@ DATA_SPEC_BLDN = "BLDN"  # 血統情報
 DATA_SPEC_HOYU = "HOYU"  # 馬名の意味由来
 DATA_SPEC_HOSN = "HOSN"  # 競走馬市場取引価格
 
+# Deprecated compatibility constants. Keep the legacy string values so code
+# importing the former public names reaches the actionable retired-spec guard
+# instead of failing during import. jrvltsql does not accept these dataspecs.
+DATA_SPEC_DIFF = "DIFF"
+DATA_SPEC_BLOD = "BLOD"
+DATA_SPEC_SNAP = "SNAP"
+DATA_SPEC_HOSE = "HOSE"
+
 # Additional Data Specifications
 DATA_SPEC_MING = "MING"  # データマイニング予想
 DATA_SPEC_WOOD = "WOOD"  # ウッドチップ調教

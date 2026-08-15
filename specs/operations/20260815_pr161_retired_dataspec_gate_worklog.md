@@ -396,3 +396,23 @@ unless both reviewers are GREEN for the exact PR head SHA.
   operators to RACE. The paired normal behavior remains covered by the existing
   completion checks; this change does not alter completion thresholds or
   realtime `RT_SE` selection.
+
+## Third independent Codex review of `f5f4f6d3b942f7324a6e55b103afb0b0a56fa64d`
+
+- Boundary/operational reviewer `/root/pr161_boundary_review` → `GREEN` with
+  no P0/P1/P2 findings; its related run reported `272 passed, 3 subtests
+  passed`, and it confirmed both result-guidance branches were reached.
+- Contract reviewer `/root/pr161_contract_review` → `NEEDS_CHANGES` with one
+  P2 compatibility finding: four public constants present on base
+  (`DATA_SPEC_DIFF`, `DATA_SPEC_BLOD`, `DATA_SPEC_SNAP`, `DATA_SPEC_HOSE`) had
+  been deleted, causing existing imports to fail before callers could receive
+  the actionable fail-closed rejection. Its previous RACE finding was fixed;
+  its focused run reported `175 passed, 22 skipped`.
+- Candidate `f5f4f6d3...` was rejected and was not pushed. A test-only import of
+  all four compatibility constants failed during collection with
+  `ImportError: cannot import name 'DATA_SPEC_BLOD'`, reproducing the break on
+  the unchanged production candidate.
+- The four public names are restored with their original legacy string values
+  and are explicitly documented as deprecated compatibility constants, not
+  aliases. Their parameterized test requires that every value remains
+  importable while all JVOpen options reject it through the central contract.

@@ -21,6 +21,10 @@ from src.cli.main import cli
 from src.fetcher.historical import HistoricalFetcher
 from src.jvlink.bridge import JVLinkBridge
 from src.jvlink.constants import (
+    DATA_SPEC_BLOD,
+    DATA_SPEC_DIFF,
+    DATA_SPEC_HOSE,
+    DATA_SPEC_SNAP,
     JV_RT_ERROR,
     JVOPEN_VALID_COMBINATIONS,
     RETIRED_DATA_SPECS,
@@ -40,9 +44,21 @@ REPLACEMENT_OPTIONS = (
     ("TCVN", 2),
     ("RCVN", 2),
 )
+LEGACY_COMPATIBILITY_CONSTANTS = (
+    DATA_SPEC_DIFF,
+    DATA_SPEC_BLOD,
+    DATA_SPEC_SNAP,
+    DATA_SPEC_HOSE,
+)
 
 
 class TestRetiredDataSpecTable:
+    @pytest.mark.parametrize("data_spec", LEGACY_COMPATIBILITY_CONSTANTS)
+    def test_deprecated_public_constants_remain_importable_but_invalid(self, data_spec):
+        assert data_spec in RETIRED_DATA_SPECS
+        for option in (1, 2, 3, 4):
+            assert is_valid_jvopen_combination(data_spec, option) is False
+
     def test_retired_specs_map_to_their_replacements(self):
         assert RETIRED_DATA_SPECS == {
             "DIFF": "DIFN",
