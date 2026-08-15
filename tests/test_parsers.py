@@ -84,7 +84,7 @@ class TestIndividualParsers:
             'JC': 252, 'JG': 251, 'KS': 282,
             'O1': 962, 'O2': 2042, 'O3': 2654, 'O4': 4031, 'O5': 12293, 'O6': 83285,
             'RA': 856, 'RC': 1926, 'SE': 555, 'SK': 263, 'TC': 71, 'TK': 240, 'TM': 216,
-            'UM': 969, 'WC': 72, 'WE': 195, 'WF': 7215, 'WH': 1356, 'YS': 424,
+            'UM': 1609, 'WC': 72, 'WE': 195, 'WF': 7215, 'WH': 1356, 'YS': 424,
         }
 
         for record_type in ALL_RECORD_TYPES:
@@ -96,7 +96,8 @@ class TestIndividualParsers:
             # 残りのフィールドをスペースで埋める
             remaining = length - len(data)
             data += b' ' * remaining
-            if record_type == "SE":
+            # 固定長＋終端CRLFを強制するパーサーは末尾を CRLF にする
+            if record_type in ("SE", "UM"):
                 data = data[:-2] + b"\r\n"
             samples[record_type] = data
 
@@ -419,7 +420,7 @@ class TestParserRobustness:
         data += b'1'
         data += b'20240601'
         data += b' ' * (parser.RECORD_LENGTH - len(data))
-        if record_type == "SE":
+        if record_type in ("SE", "UM"):
             data = data[:-2] + b"\r\n"
 
         assert len(data) == parser.RECORD_LENGTH

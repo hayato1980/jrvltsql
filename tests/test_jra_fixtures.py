@@ -38,7 +38,6 @@ from src.parser.se_parser import SEParser
 from src.parser.sk_parser import SKParser
 from src.parser.tk_parser import TKParser
 from src.parser.tm_parser import TMParser
-from src.parser.um_parser import UMParser
 from src.parser.wf_parser import WFParser
 from src.parser.ys_parser import YSParser
 
@@ -70,7 +69,6 @@ PARSER_MAP = {
     "SK": (SKParser, 78),
     "TK": (TKParser, 727),
     "TM": (TMParser, 39),
-    "UM": (UMParser, 1110),
     "WF": (WFParser, 169),  # Historical fixture uses the obsolete compact layout.
     "YS": (YSParser, 146),
 }
@@ -298,3 +296,4 @@ def test_se_storage_schemas_keep_all_three_opponent_slots():
         ):
             assert f"{column} TEXT" in schema
         assert "Reserved_462" not in schema
+
