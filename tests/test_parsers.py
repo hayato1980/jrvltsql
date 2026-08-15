@@ -14,6 +14,7 @@
 
 import pytest
 from src.parser.factory import ParserFactory, ALL_RECORD_TYPES
+from tests.fixtures.record_factory import make_ra_record
 
 
 EXPANDED_RECORD_TYPES = {"H1", "H6", "O1", "O2", "O3", "O4", "O5", "O6", "WH"}
@@ -76,14 +77,16 @@ class TestIndividualParsers:
         # RecordSpec(2) + DataKubun(1) + MakeDate(8) + その他のフィールドを0で埋める
         samples = {}
 
-        # レコード長の定義（公式仕様書より）
+        # サンプル生成に使うレコード長。一部のlegacy parserは短い入力を許容するため、
+        # 全値が公式の現行物理長を表すわけではない。厳密長を検査するparserだけは、
+        # そのparserが対応する現行物理長と一致させる。
         record_lengths = {
-            'AV': 78, 'BN': 263, 'BR': 475, 'BT': 415, 'CC': 71,
+            'AV': 78, 'BN': 477, 'BR': 545, 'BT': 415, 'CC': 71,
             'CH': 96, 'CK': 232, 'CS': 208, 'DM': 233,
             'H1': 28955, 'H6': 102890, 'HC': 60, 'HN': 251, 'HR': 719, 'HS': 200, 'HY': 123,
             'JC': 252, 'JG': 251, 'KS': 282,
             'O1': 962, 'O2': 2042, 'O3': 2654, 'O4': 4031, 'O5': 12293, 'O6': 83285,
-            'RA': 856, 'RC': 1926, 'SE': 555, 'SK': 263, 'TC': 71, 'TK': 240, 'TM': 216,
+            'RA': 1272, 'RC': 1926, 'SE': 555, 'SK': 208, 'TC': 71, 'TK': 240, 'TM': 216,
             'UM': 1609, 'WC': 72, 'WE': 195, 'WF': 7215, 'WH': 847, 'YS': 424,
         }
 
@@ -97,7 +100,7 @@ class TestIndividualParsers:
             remaining = length - len(data)
             data += b' ' * remaining
             # 固定長＋終端CRLFを強制するパーサーは末尾を CRLF にする
-            if record_type in ("SE", "UM", "WH"):
+            if record_type in ("BN", "BR", "HN", "RA", "SE", "SK", "UM", "WH"):
                 data = data[:-2] + b"\r\n"
             if record_type == "WH":
                 mutable = bytearray(data)
@@ -265,11 +268,7 @@ class TestParserFactoryParseMethod:
     @pytest.fixture
     def sample_ra_record(self):
         """RAレコードのサンプルデータ"""
-        data = b'RA'  # RecordSpec
-        data += b'1'  # DataKubun
-        data += b'20240601'  # MakeDate
-        data += b' ' * (856 - len(data))  # 残りをスペースで埋める
-        return data
+        return make_ra_record(make_date="20240601")
 
     def test_factory_parse_valid_record(self, parser_factory, sample_ra_record):
         """有効なレコードのパーステスト"""
@@ -334,17 +333,15 @@ class TestParserFieldExtraction:
         """RAパーサーのフィールド抽出テスト"""
         parser = parser_factory.get_parser('RA')
 
-        # より詳細なサンプルデータを作成
-        data = b'RA'  # RecordSpec (1-2)
-        data += b'1'  # DataKubun (3)
-        data += b'20240601'  # MakeDate (4-11)
-        data += b'2024'  # Year (12-15)
-        data += b'0601'  # MonthDay (16-19)
-        data += b'06'  # JyoCD (20-21)
-        data += b'03'  # Kaiji (22-23)
-        data += b'08'  # Nichiji (24-25)
-        data += b'11'  # RaceNum (26-27)
-        data += b' ' * (856 - len(data))  # 残りをスペースで埋める
+        data = make_ra_record(
+            make_date="20240601",
+            year="2024",
+            month_day="0601",
+            jyo_cd="06",
+            kaiji="03",
+            nichiji="08",
+            race_num="11",
+        )
 
         result = parser.parse(data)
 
@@ -398,16 +395,8 @@ class TestParserEncodingHandling:
         """CP932エンコーディングのテスト"""
         parser = parser_factory.get_parser('RA')
 
-        # 日本語を含むデータ
-        data = b'RA'  # RecordSpec
-        data += b'1'  # DataKubun
-        data += b'20240601'  # MakeDate
-        data += b' ' * (32 - len(data))  # パディング
-        # 競走名本題（日本語）
         race_name = 'テストレース'
-        data += race_name.encode('cp932')
-        data += b' ' * (60 - len(race_name.encode('cp932')))
-        data += b' ' * (856 - len(data))  # 残りをスペースで埋める
+        data = make_ra_record(make_date="20240601", hondai=race_name)
 
         result = parser.parse(data)
 
@@ -425,7 +414,7 @@ class TestParserRobustness:
         """ParserFactoryインスタンスを返すフィクスチャ"""
         return ParserFactory()
 
-    @pytest.mark.parametrize("record_type", ['RA', 'SE', 'HR', 'UM', 'BN'])
+    @pytest.mark.parametrize("record_type", ['RA', 'SE', 'HR', 'UM', 'BN', 'BR'])
     def test_parser_handles_exact_length(self, parser_factory, record_type):
         """正確な長さのデータを処理できることを確認"""
         parser = parser_factory.get_parser(record_type)
@@ -435,7 +424,7 @@ class TestParserRobustness:
         data += b'1'
         data += b'20240601'
         data += b' ' * (parser.RECORD_LENGTH - len(data))
-        if record_type in ("SE", "UM"):
+        if record_type in ("BN", "BR", "RA", "SE", "UM"):
             data = data[:-2] + b"\r\n"
 
         assert len(data) == parser.RECORD_LENGTH
@@ -455,9 +444,9 @@ class TestParserRobustness:
         data += b'20240601'
         data += b' ' * (parser.RECORD_LENGTH + 100)
 
-        # Fixed-width SE must reject trailing bytes; legacy parsers remain lenient.
+        # Strict fixed-width parsers reject trailing bytes; legacy parsers remain lenient.
         result = parser.parse(data)
-        if record_type == "SE":
+        if record_type in ("RA", "SE"):
             assert result is None
         else:
             assert result is not None

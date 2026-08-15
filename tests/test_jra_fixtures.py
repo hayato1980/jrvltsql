@@ -45,8 +45,8 @@ FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "jra")
 
 # Record type -> (ParserClass, record_length)
 PARSER_MAP = {
-    "BN": (BNParser, 387),
-    "BR": (BRParser, 455),
+    "BN": (BNParser, BNParser.RECORD_LENGTH),
+    "BR": (BRParser, BRParser.RECORD_LENGTH),
     "CH": (CHParser, 592),
     "DM": (DMParser, 48),
     "H1": (H1Parser, 317),   # Fixture files use flat format (317 bytes)
@@ -63,16 +63,24 @@ PARSER_MAP = {
     "O4": (O4Parser, 66),     # Fixture files use legacy compact format (66 bytes)
     "O5": (O5Parser, 68),     # Fixture files use legacy compact format (68 bytes)
     "O6": (O6Parser, 70),     # Fixture files use legacy compact format (70 bytes)
-    "RA": (RAParser, 856),
+    "RA": (RAParser, RAParser.RECORD_LENGTH),
     "RC": (RCParser, 241),
     "SE": (SEParser, 463),
-    "SK": (SKParser, 78),
+    "SK": (SKParser, SKParser.RECORD_LENGTH),
     "TK": (TKParser, 727),
     "TM": (TMParser, 39),
     "WF": (WFParser, 169),  # Historical fixture uses the obsolete compact layout.
     "YS": (YSParser, 146),
 }
 EXPANDED_RECORD_TYPES = {"O1", "O2", "O3", "O4", "O5", "O6"}
+LEGACY_RECONSTRUCTED_LENGTHS = {"BN": 387, "BR": 455, "RA": 856, "SK": 78}
+
+
+def _has_complete_fixture_records(data, record_type, record_length):
+    if not data or len(data) % record_length:
+        return False
+    marker = record_type.encode("ascii")
+    return all(data[offset : offset + 2] == marker for offset in range(0, len(data), record_length))
 
 
 def load_fixture_records(record_type, record_length):
@@ -82,15 +90,46 @@ def load_fixture_records(record_type, record_length):
         pytest.skip(f"Fixture file not found: {filepath}")
     with open(filepath, "rb") as f:
         data = f.read()
+    source_record_length = record_length
+    legacy_length = LEGACY_RECONSTRUCTED_LENGTHS.get(record_type)
+    if (
+        legacy_length
+        and not _has_complete_fixture_records(data, record_type, record_length)
+        and _has_complete_fixture_records(data, record_type, legacy_length)
+    ):
+        source_record_length = legacy_length
     records = []
-    for i in range(0, len(data), record_length):
-        chunk = data[i : i + record_length]
-        if len(chunk) == record_length:
+    for i in range(0, len(data), source_record_length):
+        chunk = data[i : i + source_record_length]
+        if len(chunk) == source_record_length:
             # The historical SE fixture was reconstructed with the obsolete
             # 463-byte parser and has no official tail. Preserve its core-field
             # checks while the tail is covered by a dedicated 555-byte test.
             if record_type == "SE" and len(chunk) == 463:
                 chunk = chunk.ljust(SEParser.RECORD_LENGTH - 2, b" ") + b"\r\n"
+            if record_type == "BN" and len(chunk) == 387:
+                # This fixture was reconstructed through the former 387-byte
+                # parser. Only its first 355 core bytes are position-compatible;
+                # the full result arrays are covered by the official contract.
+                chunk = chunk[:355].ljust(BNParser.RECORD_LENGTH - 2, b" ") + b"\r\n"
+            if record_type == "BR" and len(chunk) == 455:
+                # This fixture was reconstructed through the former 455-byte
+                # parser. Only its first 423 core bytes are position-compatible;
+                # the full result arrays are covered by the official contract.
+                chunk = chunk[:423].ljust(BRParser.RECORD_LENGTH - 2, b" ") + b"\r\n"
+            if record_type == "SK" and len(chunk) == 78:
+                # This fixture was reconstructed from stored columns through
+                # the obsolete one-pedigree parser. Preserve its core values
+                # as a synthetic current-shape record; the exact 208-byte
+                # contract is covered by test_sk_parser_layout.py.
+                chunk = chunk[:76].ljust(SKParser.RECORD_LENGTH - 2, b" ") + b"\r\n"
+            if record_type == "RA" and len(chunk) == 856:
+                # This fixture was reconstructed with the repository's former
+                # non-official 856-byte parser. Only its pre-array 713-byte
+                # prefix is position-compatible. Keep those core-value checks
+                # in a synthetic current record; the full arrays are covered
+                # by test_ra_official_contract.py.
+                chunk = chunk[:713].ljust(RAParser.RECORD_LENGTH - 2, b" ") + b"\r\n"
             if record_type == "WF" and len(chunk) == 169:
                 chunk = chunk[:11].ljust(WFParser.RECORD_LENGTH - 2, b" ") + b"\r\n"
             records.append(chunk)
@@ -226,7 +265,7 @@ class TestRAParserRealData:
 
     def setup_method(self):
         self.parser = RAParser()
-        self.records = load_fixture_records("RA", 856)
+        self.records = load_fixture_records("RA", RAParser.RECORD_LENGTH)
 
     def test_year_is_valid(self):
         for rec in self.records:
@@ -297,3 +336,13 @@ def test_se_storage_schemas_keep_all_three_opponent_slots():
             assert f"{column} TEXT" in schema
         assert "Reserved_462" not in schema
 
+
+def test_sk_current_fixture_file_is_split_at_the_current_record_length(tmp_path, monkeypatch):
+    record = b"SK" + b" " * (SKParser.RECORD_LENGTH - 4) + b"\r\n"
+    (tmp_path / "sk_records.bin").write_bytes(record * 2)
+    monkeypatch.setattr("tests.test_jra_fixtures.FIXTURES_DIR", str(tmp_path))
+
+    records = load_fixture_records("SK", PARSER_MAP["SK"][1])
+
+    assert PARSER_MAP["SK"][1] == SKParser.RECORD_LENGTH
+    assert records == [record, record]
