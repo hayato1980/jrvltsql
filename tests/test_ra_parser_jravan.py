@@ -17,7 +17,7 @@ class TestRAParserJRAVAN(unittest.TestCase):
     def test_parser_initialization(self):
         """Test parser initializes correctly."""
         self.assertEqual(self.parser.RECORD_TYPE, "RA")
-        self.assertEqual(self.parser.RECORD_LENGTH, 856)
+        self.assertEqual(self.parser.RECORD_LENGTH, 1272)
 
     def test_field_names(self):
         """Test field names match JRA-VAN standard."""
@@ -192,25 +192,6 @@ class TestRAParserJRAVAN(unittest.TestCase):
             data[base + 1:base + 2] = syukaisu
             data[base + 2:base + 2 + len(jyuni)] = jyuni
         return bytes(data)
-
-    def test_legacy_record_keeps_single_corner_set_and_blank_expansion(self):
-        """856-byte compat records expose one corner set; sets 2-4 stay empty."""
-        sample_data = bytearray(b" " * 856)
-        sample_data[0:2] = b"RA"
-        sample_data[2:3] = b"1"
-        sample_data[781:782] = b"4"
-        sample_data[782:783] = b"1"
-        sample_data[783:791] = b"03,05,07"
-
-        result = self.parser.parse(bytes(sample_data))
-
-        self.assertEqual(result["Corner"], "4")
-        self.assertEqual(result["Syukaisu"], "1")
-        self.assertEqual(result["TsukaJyuni"], "03,05,07")
-        for idx in (2, 3, 4):
-            self.assertEqual(result[f"Corner{idx}"], "")
-            self.assertEqual(result[f"Syukaisu{idx}"], "")
-            self.assertEqual(result[f"TsukaJyuni{idx}"], "")
 
     def test_extended_layout_expands_four_corner_sets(self):
         """Full-layout records expand all four corner sets by position."""

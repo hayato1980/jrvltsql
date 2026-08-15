@@ -17,19 +17,12 @@ class RAParser:
     RAレコードパーサー
 
     ２．レース詳細
-    レコード長: 856 bytes
+    レコード長: 1272 bytes
     VBテーブル名: RACE
     """
 
     RECORD_TYPE = "RA"
-    RECORD_LENGTH = 856
-
-    # JV-Data仕様 (Ver.4.9.0.1) フルレイアウトの<コーナー通過順位>位置。
-    # 856byte互換レイアウトは1セットのみだが、フルレイアウトでは
-    # (コーナー1 + 周回数1 + 各通過順位70 = 72byte) × 4セットが並ぶ。
-    EXTENDED_CORNER_OFFSET = 981
-    CORNER_SET_SIZE = 72
-    CORNER_SET_COUNT = 4
+    RECORD_LENGTH = 1272
 
     def __init__(self):
         self.logger = get_logger(__name__)
@@ -42,16 +35,6 @@ class RAParser:
             return data.decode("cp932", errors="replace").strip()
         except Exception:
             return ""
-
-    @staticmethod
-    def _looks_like_hhmm(value: str) -> bool:
-        """Return True when a field looks like a non-zero HHMM time."""
-
-        if len(value) != 4 or not value.isdigit() or value == "0000":
-            return False
-        hour = int(value[:2])
-        minute = int(value[2:])
-        return 0 <= hour <= 23 and 0 <= minute <= 59
 
     def parse(self, data: bytes) -> Optional[Dict[str, str]]:
         """
@@ -191,172 +174,98 @@ class RAParser:
             # 39. 変更前コース区分 (位置:712, 長さ:2)
             result["CourseKubunCDBefore"] = self.decode_field(data[711:713])
 
-            # 40. 本賞金 (位置:714, 長さ:8)
+            # 40. 本賞金 (位置:714, 繰返:7, 長さ:8, 合計:56)
             result["Honsyokin1"] = self.decode_field(data[713:721])
-
-            # 41. 変更前本賞金 (位置:722, 長さ:8)
             result["Honsyokin2"] = self.decode_field(data[721:729])
-
-            # 42. 付加賞金 (位置:730, 長さ:8)
             result["Honsyokin3"] = self.decode_field(data[729:737])
-
-            # 43. 変更前付加賞金 (位置:738, 長さ:8)
             result["Honsyokin4"] = self.decode_field(data[737:745])
+            result["Honsyokin5"] = self.decode_field(data[745:753])
+            result["Honsyokin6"] = self.decode_field(data[753:761])
+            result["Honsyokin7"] = self.decode_field(data[761:769])
 
-            # 44. 発走時刻 (位置:746, 長さ:4)
-            result["HassoTime"] = self.decode_field(data[745:749])
+            # 41. 変更前本賞金 (位置:770, 繰返:5, 長さ:8, 合計:40)
+            result["HonsyokinBefore1"] = self.decode_field(data[769:777])
+            result["HonsyokinBefore2"] = self.decode_field(data[777:785])
+            result["HonsyokinBefore3"] = self.decode_field(data[785:793])
+            result["HonsyokinBefore4"] = self.decode_field(data[793:801])
+            result["HonsyokinBefore5"] = self.decode_field(data[801:809])
 
-            # 45. 変更前発走時刻 (位置:750, 長さ:4)
-            result["HassoTimeBefore"] = self.decode_field(data[749:753])
+            # 42. 付加賞金 (位置:810, 繰返:5, 長さ:8, 合計:40)
+            result["Fukasyokin1"] = self.decode_field(data[809:817])
+            result["Fukasyokin2"] = self.decode_field(data[817:825])
+            result["Fukasyokin3"] = self.decode_field(data[825:833])
+            result["Fukasyokin4"] = self.decode_field(data[833:841])
+            result["Fukasyokin5"] = self.decode_field(data[841:849])
 
-            # 46. 登録頭数 (位置:754, 長さ:2)
-            result["TorokuTosu"] = self.decode_field(data[753:755])
+            # 43. 変更前付加賞金 (位置:850, 繰返:3, 長さ:8, 合計:24)
+            result["FukasyokinBefore1"] = self.decode_field(data[849:857])
+            result["FukasyokinBefore2"] = self.decode_field(data[857:865])
+            result["FukasyokinBefore3"] = self.decode_field(data[865:873])
 
-            # 47. 出走頭数 (位置:756, 長さ:2)
-            result["SyussoTosu"] = self.decode_field(data[755:757])
+            # 44. 発走時刻 (位置:874, 長さ:4)
+            result["HassoTime"] = self.decode_field(data[873:877])
 
-            # 48. 入線頭数 (位置:758, 長さ:2)
-            result["NyusenTosu"] = self.decode_field(data[757:759])
+            # 45. 変更前発走時刻 (位置:878, 長さ:4)
+            result["HassoTimeBefore"] = self.decode_field(data[877:881])
 
-            # 49. 天候コード (位置:760, 長さ:1)
-            result["TenkoCD"] = self.decode_field(data[759:760])
+            # 46. 登録頭数 (位置:882, 長さ:2)
+            result["TorokuTosu"] = self.decode_field(data[881:883])
 
-            # 50. 芝馬場状態コード (位置:761, 長さ:1)
-            result["SibaBabaCD"] = self.decode_field(data[760:761])
+            # 47. 出走頭数 (位置:884, 長さ:2)
+            result["SyussoTosu"] = self.decode_field(data[883:885])
 
-            # 51. ダート馬場状態コード (位置:762, 長さ:1)
-            result["DirtBabaCD"] = self.decode_field(data[761:762])
+            # 48. 入線頭数 (位置:886, 長さ:2)
+            result["NyusenTosu"] = self.decode_field(data[885:887])
 
-            # 52. ラップタイム (位置:763, 長さ:3)
-            result["LapTime"] = self.decode_field(data[762:765])
+            # 49. 天候コード (位置:888, 長さ:1)
+            result["TenkoCD"] = self.decode_field(data[887:888])
 
-            # 53. 障害マイルタイム (位置:766, 長さ:4)
-            result["SyogaiMileTime"] = self.decode_field(data[765:769])
+            # 50. 芝馬場状態コード (位置:889, 長さ:1)
+            result["SibaBabaCD"] = self.decode_field(data[888:889])
 
-            # 54. 前3ハロン (位置:770, 長さ:3)
-            result["Haron3F"] = self.decode_field(data[769:772])
+            # 51. ダート馬場状態コード (位置:890, 長さ:1)
+            result["DirtBabaCD"] = self.decode_field(data[889:890])
 
-            # 55. 前4ハロン (位置:773, 長さ:3)
-            result["Haron4F"] = self.decode_field(data[772:775])
+            # 52. ラップタイム (位置:891, 繰返:25, 長さ:3, 合計:75)
+            # 25 ハロン分をまとめて既存列へ入れる。
+            result["LapTime"] = self.decode_field(data[890:965])
 
-            # 56. 後3ハロン (位置:776, 長さ:3)
-            result["Haron3L"] = self.decode_field(data[775:778])
+            # 53. 障害マイルタイム (位置:966, 長さ:4)
+            result["SyogaiMileTime"] = self.decode_field(data[965:969])
 
-            # 57. 後4ハロン (位置:779, 長さ:3)
-            result["Haron4L"] = self.decode_field(data[778:781])
+            # 54. 前3ハロン (位置:970, 長さ:3)
+            result["Haron3F"] = self.decode_field(data[969:972])
 
-            # 58. <コーナー通過順位> (位置:782, 長さ:0)
-            # Note: This is a section header with 0 length, not an actual field
+            # 55. 前4ハロン (位置:973, 長さ:3)
+            result["Haron4F"] = self.decode_field(data[972:975])
 
-            # 59. 　　コーナー (位置:782, 長さ:1)
-            result["Corner"] = self.decode_field(data[781:782])
+            # 56. 後3ハロン (位置:976, 長さ:3)
+            result["Haron3L"] = self.decode_field(data[975:978])
 
-            # 60. 　　周回数 (位置:783, 長さ:1)
-            result["Syukaisu"] = self.decode_field(data[782:783])
+            # 57. 後4ハロン (位置:979, 長さ:3)
+            result["Haron4L"] = self.decode_field(data[978:981])
 
-            # 61. 　　各通過順位 (位置:784, 長さ:70)
-            result["TsukaJyuni"] = self.decode_field(data[783:853])
+            # 58. <コーナー通過順位> (位置:982, 繰返:4, 長さ:72, 合計:288)
+            # 59. 　　コーナー (長さ:1) / 60. 　　周回数 (長さ:1) /
+            # 61. 　　各通過順位 (長さ:70)
+            result["Corner"] = self.decode_field(data[981:982])
+            result["Syukaisu"] = self.decode_field(data[982:983])
+            result["TsukaJyuni"] = self.decode_field(data[983:1053])
+            result["Corner2"] = self.decode_field(data[1053:1054])
+            result["Syukaisu2"] = self.decode_field(data[1054:1055])
+            result["TsukaJyuni2"] = self.decode_field(data[1055:1125])
+            result["Corner3"] = self.decode_field(data[1125:1126])
+            result["Syukaisu3"] = self.decode_field(data[1126:1127])
+            result["TsukaJyuni3"] = self.decode_field(data[1127:1197])
+            result["Corner4"] = self.decode_field(data[1197:1198])
+            result["Syukaisu4"] = self.decode_field(data[1198:1199])
+            result["TsukaJyuni4"] = self.decode_field(data[1199:1269])
 
-            # 856byte互換レイアウトはコーナー通過順位を1セットしか持たない。
-            # 2-4セット目はフルレイアウト時のみ取得できるため空で初期化する
-            # (importer側でNULLに変換される)。
-            for corner_index in range(2, self.CORNER_SET_COUNT + 1):
-                result[f"Corner{corner_index}"] = ""
-                result[f"Syukaisu{corner_index}"] = ""
-                result[f"TsukaJyuni{corner_index}"] = ""
+            # 62. レコード更新区分 (位置:1270, 長さ:1)
+            result["RecordUpKubun"] = self.decode_field(data[1269:1270])
 
-            # 近年のJRA-VAN RAレコードは、856 byte互換レイアウトより後半の
-            # 賞金配列が長い形式で届く場合がある。この場合、従来位置で発走
-            # 時刻を読むと HassoTime=0000 などに崩れ、締切基準のオッズ抽出が
-            # 破綻する。既存DBスキーマは維持しつつ、利用中の既存列だけ正しい
-            # 後方オフセットで上書きする。
-            extended_layout_applied = False
-            if len(data) >= 889:
-                extended_hasso_time = self.decode_field(data[873:877])
-                # Official full records are 1,272 bytes even when a cancelled
-                # race has HassoTime=0000. Keep the HHMM heuristic only for
-                # truncated full-layout records used during recovery.
-                if len(data) >= 1272 or self._looks_like_hhmm(extended_hasso_time):
-                    extended_layout_applied = True
-                    result["HassoTime"] = extended_hasso_time
-                    result["HassoTimeBefore"] = self.decode_field(data[877:881])
-                    result["TorokuTosu"] = self.decode_field(data[881:883])
-                    result["SyussoTosu"] = self.decode_field(data[883:885])
-                    result["NyusenTosu"] = self.decode_field(data[885:887])
-                    # JV-Data 4.9.0 拡張レイアウトでは入線頭数(pos886)の直後に
-                    # 天候(888)/芝馬場(889)/ダート馬場(890)/ラップタイム(891)/
-                    # 障害マイル(966)/前後ハロン(970-981)が並ぶ (1-indexed)。
-                    # 従来はここで +2 ずれて ダート馬場を TenkoCD として読み、
-                    # 芝/ダート馬場・ラップ・ハロンタイムは全く読まれず、856byte
-                    # 互換位置の賞金配列断片('0'/'000')に化けていた。
-                    # 周回数(Syukaisu)/コーナー/各通過順位は RA では
-                    # <コーナー通過順位>内のフィールドで、フルレイアウトの正しい
-                    # 位置(982+)で展開する。856byte互換位置(781-853)の値は
-                    # 賞金配列の断片なので、展開ループが短いデータで break しても
-                    # 断片が残らないよう、ここで初期化する。
-                    result["Syukaisu"] = ""
-                    result["Corner"] = ""
-                    result["TsukaJyuni"] = ""
-                    if len(data) >= 890:
-                        result["TenkoCD"] = self.decode_field(data[887:888])
-                        result["SibaBabaCD"] = self.decode_field(data[888:889])
-                        result["DirtBabaCD"] = self.decode_field(data[889:890])
-                    if len(data) >= 981:
-                        # field52 ラップタイムは 25x3=75byte 配列 (pos891-965)。
-                        # nl_ra.laptime は単一 TEXT カラムのため、base レイアウト
-                        # (data[762:765]) と同じく先頭1ハロンのみを格納する。
-                        # 全25ハロンの取り込みは schema/importer/materialize の
-                        # 拡張が必要な別課題。
-                        result["LapTime"] = self.decode_field(data[890:893])
-                        result["SyogaiMileTime"] = self.decode_field(data[965:969])
-                        result["Haron3F"] = self.decode_field(data[969:972])
-                        result["Haron4F"] = self.decode_field(data[972:975])
-                        result["Haron3L"] = self.decode_field(data[975:978])
-                        result["Haron4L"] = self.decode_field(data[978:981])
-                    if len(data) >= 1270:
-                        result["RecordUpKubun"] = self.decode_field(data[1269:1270])
-
-                    # フルレイアウトの<コーナー通過順位>4セットを展開する。
-                    # 856byte互換位置 (781-853) はフルレイアウトでは賞金配列の
-                    # 途中になるため、こちらの正しい位置で上書きする。
-                    # 1セット目は後方互換のため既存列名を維持し、2セット目
-                    # 以降は Corner2/Syukaisu2/TsukaJyuni2 ... に格納する。
-                    for corner_index in range(1, self.CORNER_SET_COUNT + 1):
-                        offset = (
-                            self.EXTENDED_CORNER_OFFSET
-                            + (corner_index - 1) * self.CORNER_SET_SIZE
-                        )
-                        if len(data) < offset + self.CORNER_SET_SIZE:
-                            break
-                        corner = self.decode_field(data[offset : offset + 1])
-                        syukaisu = self.decode_field(data[offset + 1 : offset + 2])
-                        tsuka_jyuni = self.decode_field(
-                            data[offset + 2 : offset + self.CORNER_SET_SIZE]
-                        )
-                        if corner_index == 1:
-                            if corner or syukaisu or tsuka_jyuni:
-                                result["Corner"] = corner
-                                result["Syukaisu"] = syukaisu
-                                result["TsukaJyuni"] = tsuka_jyuni
-                            else:
-                                # 速報段階などコーナー情報が未確定 (全空白) の
-                                # 場合、互換位置 (781-853) の値は賞金配列の断片
-                                # なのでクリアする。Syukaisu は上の拡張位置で
-                                # 設定済みのため保持する。
-                                result["Corner"] = ""
-                                result["TsukaJyuni"] = ""
-                        else:
-                            result[f"Corner{corner_index}"] = corner
-                            result[f"Syukaisu{corner_index}"] = syukaisu
-                            result[f"TsukaJyuni{corner_index}"] = tsuka_jyuni
-
-            # 62. レコード更新区分 (位置:854, 長さ:1)
-            if not extended_layout_applied:
-                result["RecordUpKubun"] = self.decode_field(data[853:854])
-
-            # 63. レコード区切。拡張レイアウトでは終端位置も後方へ移動する。
-            delimiter_offset = 1270 if extended_layout_applied and len(data) >= 1272 else 854
-            result["Crlf"] = self.decode_field(data[delimiter_offset:delimiter_offset + 2])
+            # 63. レコード区切 (位置:1271, 長さ:2)
+            result["Crlf"] = self.decode_field(data[1270:1272])
 
             return result
 

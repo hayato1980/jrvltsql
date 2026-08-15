@@ -77,7 +77,7 @@ class TestRAParser:
         """Test RA parser initialization."""
         parser = RAParser()
         assert parser.RECORD_TYPE == "RA"
-        assert parser.RECORD_LENGTH == 856
+        assert parser.RECORD_LENGTH == 1272
 
     def test_parse_ra_record(self):
         """Test parsing RA record."""
