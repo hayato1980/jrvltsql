@@ -17,12 +17,12 @@ class SKParser:
     SKレコードパーサー
 
     １９．産駒マスタ
-    レコード長: 78 bytes
+    レコード長: 208 bytes
     VBテーブル名: SANKU
     """
 
     RECORD_TYPE = "SK"
-    RECORD_LENGTH = 78
+    RECORD_LENGTH = 208
 
     def __init__(self):
         self.logger = get_logger(__name__)
@@ -93,11 +93,24 @@ class SKParser:
             # 12. 産地名 (位置:47, 長さ:20)
             result["SanchiName"] = self.decode_field(data[46:66])
 
-            # 13. 父繁殖登録番号 (位置:67, 長さ:10)
+            # 13. 3代血統 繁殖登録番号 (位置:67, 繰返:14, 長さ:10, 合計:140)
             result["FNum"] = self.decode_field(data[66:76])
+            result["MNum"] = self.decode_field(data[76:86])        # 母
+            result["FFNum"] = self.decode_field(data[86:96])       # 父父
+            result["FMNum"] = self.decode_field(data[96:106])      # 父母
+            result["MFNum"] = self.decode_field(data[106:116])     # 母父
+            result["MMNum"] = self.decode_field(data[116:126])     # 母母
+            result["FFFNum"] = self.decode_field(data[126:136])    # 父父父
+            result["FFMNum"] = self.decode_field(data[136:146])    # 父父母
+            result["FMFNum"] = self.decode_field(data[146:156])    # 父母父
+            result["FMMNum"] = self.decode_field(data[156:166])    # 父母母
+            result["MFFNum"] = self.decode_field(data[166:176])    # 母父父
+            result["MFMNum"] = self.decode_field(data[176:186])    # 母父母
+            result["MMFNum"] = self.decode_field(data[186:196])    # 母母父
+            result["MMMNum"] = self.decode_field(data[196:206])    # 母母母
 
-            # 14. レコード区切 (位置:77, 長さ:2)
-            result["RecordDelimiter"] = self.decode_field(data[76:78])
+            # 14. レコード区切 (位置:207, 長さ:2)
+            result["RecordDelimiter"] = self.decode_field(data[206:208])
 
             return result
 

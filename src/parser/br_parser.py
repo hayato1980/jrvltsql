@@ -17,12 +17,12 @@ class BRParser:
     BRレコードパーサー
 
     １６．生産者マスタ
-    レコード長: 455 bytes
+    レコード長: 545 bytes
     VBテーブル名: SEISAN
     """
 
     RECORD_TYPE = "BR"
-    RECORD_LENGTH = 455
+    RECORD_LENGTH = 545
 
     def __init__(self):
         self.logger = get_logger(__name__)
@@ -84,21 +84,43 @@ class BRParser:
             # 9. 生産者住所自治省名 (位置:404, 長さ:20)
             result["Address"] = self.decode_field(data[403:423])
 
-            # 10. <本年･累計成績情報> (位置:424, 長さ:0)
-            # 11. 　　設定年 (位置:424, 長さ:4)
-            result["SetYear"] = self.decode_field(data[423:427])
+            # 10. <本年･累計成績情報> (位置:424, 繰返:2, 長さ:60, 合計:120)
+            # 10-1. 本年 設定年 (位置:424, 長さ:4)
+            result["H_SetYear"] = self.decode_field(data[423:427])
 
-            # 12. 　　本賞金合計 (位置:428, 長さ:10)
-            result["HonSyokinTotal"] = self.decode_field(data[427:437])
+            # 10-2. 本年 本賞金合計 (位置:428, 長さ:10)
+            result["H_HonSyokinTotal"] = self.decode_field(data[427:437])
 
-            # 13. 　　付加賞金合計 (位置:438, 長さ:10)
-            result["FukaSyokin"] = self.decode_field(data[437:447])
+            # 10-3. 本年 付加賞金合計 (位置:438, 長さ:10)
+            result["H_FukaSyokin"] = self.decode_field(data[437:447])
 
-            # 14. 　　着回数 (位置:448, 長さ:6)
-            result["ChakuKaisu"] = self.decode_field(data[447:453])
+            # 10-4. 本年 着回数 (位置:448, 繰返:6, 長さ:6, 合計:36)
+            result["H_ChakuKaisu1"] = self.decode_field(data[447:453])
+            result["H_ChakuKaisu2"] = self.decode_field(data[453:459])
+            result["H_ChakuKaisu3"] = self.decode_field(data[459:465])
+            result["H_ChakuKaisu4"] = self.decode_field(data[465:471])
+            result["H_ChakuKaisu5"] = self.decode_field(data[471:477])
+            result["H_ChakuKaisu6"] = self.decode_field(data[477:483])
 
-            # 15. レコード区切 (位置:454, 長さ:2)
-            result["Reserved_454"] = self.decode_field(data[453:455])
+            # 10-5. 累計 設定年 (位置:484, 長さ:4)
+            result["R_SetYear"] = self.decode_field(data[483:487])
+
+            # 10-6. 累計 本賞金合計 (位置:488, 長さ:10)
+            result["R_HonSyokinTotal"] = self.decode_field(data[487:497])
+
+            # 10-7. 累計 付加賞金合計 (位置:498, 長さ:10)
+            result["R_FukaSyokin"] = self.decode_field(data[497:507])
+
+            # 10-8. 累計 着回数 (位置:508, 繰返:6, 長さ:6, 合計:36)
+            result["R_ChakuKaisu1"] = self.decode_field(data[507:513])
+            result["R_ChakuKaisu2"] = self.decode_field(data[513:519])
+            result["R_ChakuKaisu3"] = self.decode_field(data[519:525])
+            result["R_ChakuKaisu4"] = self.decode_field(data[525:531])
+            result["R_ChakuKaisu5"] = self.decode_field(data[531:537])
+            result["R_ChakuKaisu6"] = self.decode_field(data[537:543])
+
+            # 11. レコード区切 (位置:544, 長さ:2)
+            result["RecordDelimiter"] = self.decode_field(data[543:545])
 
             return result
 

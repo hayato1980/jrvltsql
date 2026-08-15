@@ -1229,7 +1229,15 @@ TABLE_METADATA: Dict[str, TableMetadata] = {
             {"name": "父父繁殖登録番号", "type": "TEXT", "description": "父父（父の父）繁殖登録番号", "example": "1111111111", "nullable": True},
             {"name": "父母繁殖登録番号", "type": "TEXT", "description": "父母（父の母）繁殖登録番号", "example": "2222222222", "nullable": True},
             {"name": "母父繁殖登録番号", "type": "TEXT", "description": "母父（母の父）繁殖登録番号", "example": "3333333333", "nullable": True},
-            {"name": "母母繁殖登録番号", "type": "TEXT", "description": "母母（母の母）繁殖登録番号", "example": "4444444444", "nullable": True}
+            {"name": "母母繁殖登録番号", "type": "TEXT", "description": "母母（母の母）繁殖登録番号", "example": "4444444444", "nullable": True},
+            {"name": "父父父繁殖登録番号", "type": "TEXT", "description": "父父父の繁殖登録番号", "example": "5555555555", "nullable": True},
+            {"name": "父父母繁殖登録番号", "type": "TEXT", "description": "父父母の繁殖登録番号", "example": "6666666666", "nullable": True},
+            {"name": "父母父繁殖登録番号", "type": "TEXT", "description": "父母父の繁殖登録番号", "example": "7777777777", "nullable": True},
+            {"name": "父母母繁殖登録番号", "type": "TEXT", "description": "父母母の繁殖登録番号", "example": "8888888888", "nullable": True},
+            {"name": "母父父繁殖登録番号", "type": "TEXT", "description": "母父父の繁殖登録番号", "example": "9999999999", "nullable": True},
+            {"name": "母父母繁殖登録番号", "type": "TEXT", "description": "母父母の繁殖登録番号", "example": "1010101010", "nullable": True},
+            {"name": "母母父繁殖登録番号", "type": "TEXT", "description": "母母父の繁殖登録番号", "example": "1212121212", "nullable": True},
+            {"name": "母母母繁殖登録番号", "type": "TEXT", "description": "母母母の繁殖登録番号", "example": "1313131313", "nullable": True}
         ],
         "primary_key": ["血統登録番号"],
         "indexes": ["血統登録番号", "父馬繁殖登録番号", "母馬繁殖登録番号"]
