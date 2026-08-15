@@ -176,6 +176,7 @@ class RealtimeUpdater:
         self.database = database
         self.parser_factory = ParserFactory()
         self.cache_manager = cache_manager
+        self._verified_mining_native_tables: set[str] = set()
 
         logger.info("RealtimeUpdater initialized")
 
@@ -241,11 +242,18 @@ class RealtimeUpdater:
         """
         if isinstance(parsed_data, list):
             if parsed_data:
-                from src.importer.importer import _dm_native_snapshot_rows
+                from src.importer.importer import _mining_native_snapshot_rows
 
-                snapshot_rows = _dm_native_snapshot_rows(parsed_data[0], "RT_DM")
-                if snapshot_rows is not None:
-                    return self._replace_dm_native_snapshot(parsed_data[0], snapshot_rows)
+                record_type = parsed_data[0].get("RecordSpec")
+                table_name = {"DM": "RT_DM", "TM": "RT_TM"}.get(record_type)
+                if table_name is not None:
+                    snapshot_rows = _mining_native_snapshot_rows(
+                        parsed_data[0], table_name
+                    )
+                    if snapshot_rows is not None:
+                        return self._replace_mining_native_snapshot(
+                            parsed_data[0], snapshot_rows, table_name
+                        )
             results = []
             for item in parsed_data:
                 if timeseries and source_spec:
@@ -260,38 +268,71 @@ class RealtimeUpdater:
             parsed_data.setdefault("SourceSpec", source_spec)
         return self._process_single_record(parsed_data, timeseries=timeseries)
 
-    def _replace_dm_native_snapshot(
+    def _replace_mining_native_snapshot(
         self,
         record: Dict,
         snapshot_rows: list[Dict],
+        table_name: str,
     ) -> List[Dict]:
-        """Replace one complete RT_DM race snapshot inside the caller transaction."""
-        from src.importer.importer import replace_dm_native_snapshot
+        """Replace one complete realtime mining snapshot in the caller transaction."""
+        from src.importer.importer import replace_mining_native_snapshot
+
+        record_type = record.get("RecordSpec")
+        transaction_active = getattr(self.database, "is_transaction_active", None)
+        owns_transaction = not bool(transaction_active()) if callable(transaction_active) else False
+        owned_transaction_started = False
 
         try:
-            inserted = replace_dm_native_snapshot(self.database, record, "RT_DM")
+            from src.importer.importer import verify_mining_native_schema
+
+            if owns_transaction:
+                self.database.begin_transaction()
+                owned_transaction_started = True
+            if table_name not in self._verified_mining_native_tables:
+                if verify_mining_native_schema(self.database, record, table_name):
+                    self._verified_mining_native_tables.add(table_name)
+            inserted = replace_mining_native_snapshot(self.database, record, table_name)
             if inserted != len(snapshot_rows):
                 raise RuntimeError(
-                    f"RT_DM snapshot inserted {inserted} of {len(snapshot_rows)} rows"
+                    f"{table_name} snapshot inserted {inserted} of {len(snapshot_rows)} rows"
                 )
+            if owns_transaction:
+                self.database.commit()
+                owned_transaction_started = False
             return [
                 {
                     "operation": "insert",
-                    "table": "RT_DM",
-                    "record_type": "DM",
+                    "table": table_name,
+                    "record_type": record_type,
                     "success": True,
                 }
                 for _ in snapshot_rows
             ]
         except Exception as exc:
-            logger.error(f"Failed to replace RT_DM snapshot: {exc}", exc_info=True)
+            recovery_error = None
+            if owned_transaction_started:
+                try:
+                    self.database.rollback()
+                except Exception as rollback_error:
+                    recovery_error = rollback_error
+                    try:
+                        self.database.invalidate_connection()
+                    except Exception as invalidation_error:
+                        recovery_error = RuntimeError(
+                            f"rollback failed: {rollback_error}; "
+                            f"connection invalidation failed: {invalidation_error}"
+                        )
+            logger.error(f"Failed to replace {table_name} snapshot: {exc}", exc_info=True)
+            error = str(exc)
+            if recovery_error is not None:
+                error = f"{error}; transactional recovery failed: {recovery_error}"
             return [
                 {
                     "operation": "insert",
-                    "table": "RT_DM",
-                    "record_type": "DM",
+                    "table": table_name,
+                    "record_type": record_type,
                     "success": False,
-                    "error": str(exc),
+                    "error": error,
                 }
                 for _ in snapshot_rows
             ]
@@ -444,6 +485,12 @@ class RealtimeUpdater:
             if not table_name:
                 logger.warning(f"Unknown record type: {record_type}")
                 return None
+
+            from src.importer.importer import verify_mining_native_schema
+
+            if table_name not in self._verified_mining_native_tables:
+                if verify_mining_native_schema(self.database, parsed_data, table_name):
+                    self._verified_mining_native_tables.add(table_name)
 
             # headDataKubun is an explicit mutation instruction. RA/SE/WF use
             # record-level DataKubun for domain state (including finalized 7
@@ -693,7 +740,7 @@ class RealtimeUpdater:
         expanded_tables = {
             "RT_H1", "RT_H6",
             "RT_O1", "RT_O2", "RT_O3", "RT_O4", "RT_O5", "RT_O6",
-            "RT_WH", "RT_DM",
+            "RT_WH", "RT_DM", "RT_TM",
         }
         ts_tables = {
             "TS_O1", "TS_O2", "TS_O3", "TS_O4", "TS_O5", "TS_O6",
