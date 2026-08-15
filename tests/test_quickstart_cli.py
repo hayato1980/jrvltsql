@@ -345,9 +345,63 @@ class TestQuickstartUpdateSpecs:
 
         specs = [spec for spec, _desc, _opt in QuickstartRunner.UPDATE_SPECS]
         assert "MING" in specs
-        # MING は蓄積系のため option=1 (option=2 は TOKU/RACE/TCVN/RCVN のみ)
+        # MING は蓄積系のため option=1
+        # (option=2 は TOKU/RACE/SNPN/TCVN/RCVN のみ)
         ming = [row for row in QuickstartRunner.UPDATE_SPECS if row[0] == "MING"]
         assert ming and ming[0][2] == 1
+
+    def test_progress_fetch_accepts_snpn_option_2(self, tmp_path, monkeypatch):
+        """公式仕様で有効な SNPN + option=2 を独自 gate が拒否しないこと。"""
+        from scripts.quickstart import QuickstartRunner
+        from src.database import schema as schema_module
+        from src.importer import batch as batch_module
+        from src.utils import config as config_module
+
+        calls = []
+
+        class FakeDatabase:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+        class FakeBatchProcessor:
+            def __init__(self, **kwargs):
+                pass
+
+            def process_date_range(self, **kwargs):
+                calls.append(kwargs)
+                return {
+                    "records_fetched": 0,
+                    "records_parsed": 0,
+                    "records_imported": 0,
+                    "records_failed": 0,
+                }
+
+        runner = QuickstartRunner(
+            {
+                "db_path": str(tmp_path / "quickstart.db"),
+                "from_date": "20260101",
+                "to_date": "20260102",
+            }
+        )
+        monkeypatch.setattr(runner, "_create_database", lambda: FakeDatabase())
+        monkeypatch.setattr(schema_module, "create_all_tables", lambda database: None)
+        monkeypatch.setattr(batch_module, "BatchProcessor", FakeBatchProcessor)
+        monkeypatch.setattr(config_module, "load_config", lambda path: {})
+
+        status, _ = runner._fetch_single_spec_with_progress("SNPN", option=2)
+
+        assert status == "nodata"
+        assert calls == [
+            {
+                "data_spec": "SNPN",
+                "from_date": "20260101",
+                "to_date": "20260102",
+                "option": 2,
+            }
+        ]
 
 
 class TestAnalyzeErrorJVInitCodes:

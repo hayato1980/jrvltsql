@@ -71,28 +71,53 @@ JV_READ_FILE_DOWNLOADING = -3  # ファイルダウンロード中（少し待�
 JV_READ_ERROR = -2  # エラー
 
 # Data Specification Codes
-# Note: "N" suffix variants (DIFN, BLDN, HOSN) are aliases
 DATA_SPEC_RACE = "RACE"  # レースデータ (RA, SE, HR, WF, JG)
-DATA_SPEC_DIFF = "DIFF"  # マスタデータ (UM, KS, CH, BR, BN, HN, SK, RC)
-DATA_SPEC_DIFN = "DIFN"  # マスタデータ (DIFF の別名)
+DATA_SPEC_DIFN = "DIFN"  # マスタデータ (UM, KS, CH, BR, BN, HN, SK, RC)
 DATA_SPEC_YSCH = "YSCH"  # 開催スケジュール
 DATA_SPEC_TOKU = "TOKU"  # 特別登録馬
-DATA_SPEC_SNAP = "SNAP"  # 出馬表
+DATA_SPEC_SNPN = "SNPN"  # 出走時点情報
 DATA_SPEC_SLOP = "SLOP"  # 坂路調教
-DATA_SPEC_BLOD = "BLOD"  # 血統情報
-DATA_SPEC_BLDN = "BLDN"  # 血統情報 (BLOD の別名)
+DATA_SPEC_BLDN = "BLDN"  # 血統情報
 DATA_SPEC_HOYU = "HOYU"  # 馬名の意味由来
-DATA_SPEC_HOSE = "HOSE"  # 競走馬市場取引価格
-DATA_SPEC_HOSN = "HOSN"  # 競走馬市場取引価格 (HOSE の別名)
+DATA_SPEC_HOSN = "HOSN"  # 競走馬市場取引価格
+
+# Deprecated compatibility constants. Keep the legacy string values so code
+# importing the former public names reaches the actionable retired-spec guard
+# instead of failing during import. jrvltsql does not accept these dataspecs.
+DATA_SPEC_DIFF = "DIFF"
+DATA_SPEC_BLOD = "BLOD"
+DATA_SPEC_SNAP = "SNAP"
+DATA_SPEC_HOSE = "HOSE"
 
 # Additional Data Specifications
 DATA_SPEC_MING = "MING"  # データマイニング予想
 DATA_SPEC_WOOD = "WOOD"  # ウッドチップ調教
 DATA_SPEC_COMM = "COMM"  # コメント情報
 
-# Trainer/Jockey Change Specifications (option 2 only)
-DATA_SPEC_TCVN = "TCVN"  # 調教師変更情報
-DATA_SPEC_RCVN = "RCVN"  # 騎手変更情報
+# Non-accumulated supplemental specifications (option 2 only)
+DATA_SPEC_TCVN = "TCVN"  # 特別登録馬情報補てん
+DATA_SPEC_RCVN = "RCVN"  # レース情報補てん
+
+# 2023-08 の JV-Data 仕様変更より前のレイアウトを要求する dataspec。
+#
+# 旧名と新名は同じデータの別表記ではない。仕様変更で桁数が変わっており
+# （繁殖登録番号 8→10 / 生産者コード 6→8 / 生産者名 70→72）、旧名を要求すると
+# 現行のパーサが解釈できない旧仕様のバイト列が降ってくる。旧仕様のデータは
+# 変換せず新 dataspec で取り直す運用なので、jrvltsql は旧名を入口で拒否する。
+# JRA-VAN の仕様表には旧名も掲載されており、公式API全体での「廃止」を意味しない。
+#
+# RACE は仕様変更の対象外なので、ここには含めない。
+RETIRED_DATA_SPECS = {
+    "DIFF": "DIFN",  # マスタデータ
+    "BLOD": "BLDN",  # 血統情報
+    "SNAP": "SNPN",  # 出馬表
+    "HOSE": "HOSN",  # 競走馬市場取引価格
+    "TCOV": "TCVN",  # 特別登録馬情報補てん
+    "RCOV": "RCVN",  # レース情報補てん
+}
+
+# 仕様変更が行われた年月。拒否メッセージに含める。
+RETIRED_DATA_SPEC_CHANGED_AT = "2023-08"
 
 # Odds Data Specifications
 DATA_SPEC_O1 = "O1"  # 単勝・複勝・枠連オッズ
@@ -324,52 +349,96 @@ JVOPEN_VALID_COMBINATIONS = {
     # Option 1 (通常データ): TOKU, RACE, DIFN, BLDN, MING, SLOP, WOOD, YSCH, HOSN, HOYU, COMM
     1: [
         "TOKU", "RACE",
-        "DIFF", "DIFN",  # DIFF/DIFN are equivalent
-        "BLOD", "BLDN",  # BLOD/BLDN are equivalent
+        "DIFN",          # マスタデータ
+        "BLDN",          # 血統情報
         "MING",          # データマイニング予想
         "SLOP",          # 坂路調教
         "WOOD",          # ウッドチップ調教
         "YSCH",          # 開催スケジュール
-        "HOSE", "HOSN",  # HOSE/HOSN are equivalent
+        "HOSN",          # 競走馬市場取引価格
         "HOYU",          # 馬名の意味由来
         "COMM",          # コメント情報
-        "SNAP",          # 出馬表
+        "SNPN",          # 出馬表
         "O1", "O2", "O3", "O4", "O5", "O6",  # オッズ
     ],
-    # Option 2 (今週データ): TOKU, RACE, TCVN, RCVN のみ
+    # Option 2 (今週データ): TOKU, RACE, SNPN, TCVN, RCVN のみ
     2: [
         "TOKU",          # 特別登録馬
         "RACE",          # レースデータ
-        "TCVN",          # 調教師変更情報
-        "RCVN",          # 騎手変更情報
+        "SNPN",          # 出走時点情報
+        "TCVN",          # 特別登録馬情報補てん
+        "RCVN",          # レース情報補てん
     ],
     # Option 3, 4 (セットアップ): Option 1と同じ
     3: [
         "TOKU", "RACE",
-        "DIFF", "DIFN",
-        "BLOD", "BLDN",
+        "DIFN",
+        "BLDN",
         "MING", "SLOP", "WOOD", "YSCH",
-        "HOSE", "HOSN", "HOYU", "COMM",
-        "SNAP",
+        "HOSN", "HOYU", "COMM",
+        "SNPN",
         "O1", "O2", "O3", "O4", "O5", "O6",
     ],
     4: [
         "TOKU", "RACE",
-        "DIFF", "DIFN",
-        "BLOD", "BLDN",
+        "DIFN",
+        "BLDN",
         "MING", "SLOP", "WOOD", "YSCH",
-        "HOSE", "HOSN", "HOYU", "COMM",
-        "SNAP",
+        "HOSN", "HOYU", "COMM",
+        "SNPN",
         "O1", "O2", "O3", "O4", "O5", "O6",
     ],
 }
 
 
+def is_retired_data_spec(data_spec: str) -> bool:
+    """Check whether data_spec selects a legacy layout unsupported here.
+
+    大文字小文字は区別しない。CacheManager が spec.upper() でキャッシュ
+    ディレクトリを引くため、'diff' は 'DIFF' と同じ旧仕様データに到達する。
+
+    Args:
+        data_spec: Data specification code (e.g., "DIFF", "DIFN")
+
+    Returns:
+        True if the code selects a legacy layout jrvltsql must not request
+    """
+    return data_spec.upper() in RETIRED_DATA_SPECS
+
+
+def retired_data_spec_message(data_spec: str) -> str:
+    """Build the rejection message for an unsupported legacy data_spec.
+
+    Args:
+        data_spec: An unsupported legacy data specification code (e.g., "DIFF")
+
+    Returns:
+        A message naming the replacement and why the two are not interchangeable
+
+    Raises:
+        ValueError: If data_spec is not an unsupported legacy code
+    """
+    replacement = RETIRED_DATA_SPECS.get(data_spec.upper())
+    if replacement is None:
+        raise ValueError(f"'{data_spec}' は jrvltsql で非対応の旧仕様 dataspec ではありません")
+
+    return (
+        f"データ種別 '{data_spec}' は {RETIRED_DATA_SPEC_CHANGED_AT} より前の "
+        f"JV-Data レイアウトを要求するため、jrvltsql ではサポートしていません。"
+        f"対応する現行レイアウトの種別は '{replacement}' です。"
+        f"旧名は '{replacement}' の別名ではなく、要求すると桁数の異なる旧仕様の"
+        f"データが返るため、現行のパーサでは正しく取り込めません。"
+        f"'--spec {replacement}' で取得し直してください。"
+    )
+
+
 def is_valid_jvopen_combination(data_spec: str, option: int) -> bool:
     """Check if data_spec and option combination is valid for JVOpen.
 
+    Retired codes (see RETIRED_DATA_SPECS) are never valid, for any option.
+
     Args:
-        data_spec: Data specification code (e.g., "RACE", "DIFF")
+        data_spec: Data specification code (e.g., "RACE", "DIFN")
         option: JVOpen option (1, 2, 3, or 4)
 
     Returns:

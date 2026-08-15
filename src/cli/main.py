@@ -74,6 +74,21 @@ FETCH_NOTE_DATE_FIELDS = (
 )
 
 
+def _reject_retired_data_spec(data_spec: str) -> None:
+    """Stop before any side effect for a legacy layout jrvltsql cannot parse.
+
+    黙って落とさず、新しい種別名と理由を出してから終了する。改行を挟まない
+    click.echo を使うのは、rich の折り返しでコード名が割れないようにするため。
+    """
+    from src.jvlink.constants import is_retired_data_spec, retired_data_spec_message
+
+    if not is_retired_data_spec(data_spec):
+        return
+
+    click.echo(f"Error: {retired_data_spec_message(data_spec)}")
+    sys.exit(1)
+
+
 def _print_fetch_guardrail_notes(jv_option: int) -> None:
     """Emit option-dependent date-range caveats after input validation."""
     if jv_option in (3, 4):
@@ -355,7 +370,7 @@ def update(ctx, force):
         "downloads only when it adds another chunk."
     ),
 )
-@click.option("--spec", "data_spec", required=True, help="Data specification (RACE, DIFF, etc.)")
+@click.option("--spec", "data_spec", required=True, help="Data specification (RACE, DIFN, etc.)")
 @click.option(
     "--option",
     "jv_option",
@@ -380,7 +395,7 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
     \b
     Examples:
       jltsql fetch --from 20240101 --to 20241231 --spec RACE
-      jltsql fetch --from 20240101 --to 20241231 --spec DIFF --option 3
+      jltsql fetch --from 20240101 --to 20241231 --spec DIFN --option 3
     """
     from src.database import create_database_from_config, DatabaseError
     from src.database.schema import create_all_tables
@@ -406,6 +421,9 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
     console.print(f"  Database:   {db_type}")
 
     # Validate data_spec and option combination
+    # 非対応の旧仕様種別は「option では取得できません」より先に理由を返す。
+    _reject_retired_data_spec(data_spec)
+
     from src.jvlink.constants import is_valid_jvopen_combination, JVOPEN_VALID_COMBINATIONS
     if not is_valid_jvopen_combination(data_spec, jv_option):
         console.print()
@@ -531,7 +549,7 @@ def cache_info(ctx, cache_dir):
 
 
 @cache.command("build")
-@click.option("--spec", "data_spec", required=True, help="Data spec (RACE, DIFF, DIFFU, etc.)")
+@click.option("--spec", "data_spec", required=True, help="Data spec (RACE, DIFN, etc.)")
 @click.option("--from", "date_from", required=True, help="Start date YYYYMMDD (option=2 is not cacheable)")
 @click.option(
     "--to",
@@ -557,10 +575,12 @@ def cache_build(ctx, data_spec, date_from, date_to, jv_option, also_import, db, 
 
     Examples:
       jltsql cache build --spec RACE --from 20260101 --to 20260328
-      jltsql cache build --spec DIFF --from 20260101 --to 20260328 --also-import
+      jltsql cache build --spec DIFN --from 20260101 --to 20260328 --also-import
     """
     from src.cache import CacheManager
     from src.fetcher.historical import HistoricalFetcher
+
+    _reject_retired_data_spec(data_spec)
 
     if jv_option == 2:
         raise click.UsageError(
@@ -660,6 +680,10 @@ def cache_rebuild(ctx, data_spec, date_from, date_to, jv_option, cache_dir):
     Example:
       jltsql cache rebuild --spec RACE --from 20260301 --to 20260328
     """
+    # Reject before clearing: an unsupported legacy spec must never destroy a
+    # usable cache and then fail in the delegated build command.
+    _reject_retired_data_spec(data_spec)
+
     if jv_option == 2:
         raise click.UsageError(
             "cache rebuild does not support option=2: JVOpen uses --from to "

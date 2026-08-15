@@ -38,7 +38,7 @@ jrvltsql は JRA / 中央競馬専用です。NAR / 地方競馬はこのリポ�
 | 系統 | JV-Link API | option / データ種別 | 運用コマンド | キー / 範囲 | 対応状況 |
 | --- | --- | --- | --- | --- | --- |
 | 蓄積系 通常データ | `JVOpen` | option `1` | `jltsql fetch --spec <SPEC> --option 1` | FromTime 形式の日付範囲 | 対応済み |
-| 今週データ | `JVOpen` | option `2` | `quickstart.bat`, `daily_sync.bat`, `jltsql fetch --option 2` | 今週開催分 | `TOKU`, `RACE`, `TCVN`, `RCVN` に対応 |
+| 今週データ | `JVOpen` | option `2` | `quickstart.bat`, `daily_sync.bat`, `jltsql fetch --option 2` | 今週開催分 | `TOKU`, `RACE`, `SNPN`, `TCVN`, `RCVN` に対応 |
 | セットアップデータ | `JVOpen` | option `3` / `4` | `quickstart.bat`, `jltsql fetch --option 3/4` | 初期構築用の過去範囲 | 下記の蓄積系 spec に対応 |
 | 速報レース・開催情報 | `JVRTOpen` | `0B11`〜`0B17` | `jltsql realtime start --specs <SPEC>` | `YYYYMMDD` | 下記レコードに対応 |
 | 速報オッズ・票数 | `JVRTOpen` | `0B20`, `0B30`〜`0B36` | `jltsql realtime timeseries --spec <SPEC>` | `YYYYMMDDJJRR` | 対応済み。JRA-VAN 側の保持は約1週間 |
@@ -46,23 +46,37 @@ jrvltsql は JRA / 中央競馬専用です。NAR / 地方競馬はこのリポ�
 
 ## JVOpen 蓄積系データ
 
-| データ種別 | 別名 | 内容 | 主なレコード種別 | 保存先テーブル | option 1 | option 2 | option 3/4 | 備考 |
+| データ種別 | jrvltsqlで非対応の旧仕様名 | 内容 | 主なレコード種別 | 保存先テーブル | option 1 | option 2 | option 3/4 | 備考 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `TOKU` | - | 特別登録馬 | `TK` | `NL_TK` | はい | はい | はい | standard / full quickstart に含めています。 |
 | `RACE` | - | レース、出走馬、払戻、確定オッズ、票数、WIN5、除外情報 | `RA`, `SE`, `HR`, `H1`, `H6`, `O1`〜`O6`, `WF`, `JG` | `NL_RA`, `NL_SE`, `NL_HR`, `NL_H1`, `NL_H6`, `NL_O1`〜`NL_O6`, `NL_WF`, `NL_JG` | はい | はい | はい | 中核データです。`NL_O*` は確定オッズで、投資判断時点のオッズではありません。 |
-| `DIFF` | `DIFN` | 蓄積系マスタ差分 | `UM`, `KS`, `CH`, `BR`, `BN`, `RC` | `NL_UM`, `NL_KS`, `NL_CH`, `NL_BR`, `NL_BN`, `NL_RC` | はい | いいえ | はい | 現在は `DIFN` も受け付けます。 |
-| `BLOD` | `BLDN` | 血統情報 | `HN`, `SK`, `BT` | `NL_HN`, `NL_SK`, `NL_BT` | はい | いいえ | はい | 現在は `BLDN` も受け付けます。 |
+| `DIFN` | `DIFF` | 蓄積系マスタ差分 | `UM`, `KS`, `CH`, `BR`, `BN`, `RC` | `NL_UM`, `NL_KS`, `NL_CH`, `NL_BR`, `NL_BN`, `NL_RC` | はい | いいえ | はい | 旧名 `DIFF` は受け付けません（下記参照）。 |
+| `BLDN` | `BLOD` | 血統情報 | `HN`, `SK`, `BT` | `NL_HN`, `NL_SK`, `NL_BT` | はい | いいえ | はい | 旧名 `BLOD` は受け付けません（下記参照）。 |
 | `MING` | - | データマイニング予想 | `DM`, `TM` | `NL_DM`, `NL_TM` | はい | いいえ | はい | full quickstart に含めています。 |
 | `SLOP` | - | 坂路調教関連 | `HC` | `NL_HC` | はい | いいえ | はい | standard / full quickstart に含めています。 |
 | `WOOD` | - | ウッドチップ調教関連 | `WC` | `NL_WC` | はい | いいえ | はい | standard / full quickstart に含めています。 |
 | `YSCH` | - | 開催スケジュール | `YS` | `NL_YS` | はい | いいえ | はい | 開催カレンダー保守に使います。 |
-| `HOSE` | `HOSN` | 競走馬市場取引価格 | `HS` | `NL_HS` | はい | いいえ | はい | 現在は `HOSN` も受け付けます。 |
+| `HOSN` | `HOSE` | 競走馬市場取引価格 | `HS` | `NL_HS` | はい | いいえ | はい | 旧名 `HOSE` は受け付けません（下記参照）。 |
 | `HOYU` | - | 馬名の意味由来 | `HY` | `NL_HY` | はい | いいえ | はい | standard / full quickstart に含めています。 |
 | `COMM` | - | 各種解説・コース情報 | `CS` | `NL_CS` | はい | いいえ | はい | full quickstart に含めています。 |
-| `SNAP` | - | 出馬表スナップショット | 返却レコードは状況依存 | レコード種別に応じた既存 `NL_*` テーブル | はい | いいえ | はい | validation 上は対応。既定 quickstart では使っていません。 |
+| `SNPN` | `SNAP` | 出走時点情報 | `CK` | `NL_CK` | はい | はい | はい | validation 上は対応。既定 quickstart では使っていません。旧名 `SNAP` は受け付けません（下記参照）。 |
 | `O1`〜`O6` | - | 賭式別の確定オッズ | `O1`〜`O6` | `NL_O1`〜`NL_O6` | はい | いいえ | はい | 通常は `RACE` 経由で取得します。投資判断時点のオッズは時系列コマンドを使います。 |
-| `TCVN` | - | 特別登録馬情報補填 | 複数のマスタ・レース系レコード | レコード種別に応じた既存 `NL_*` テーブル | いいえ | はい | いいえ | 今週データ更新で使います。 |
-| `RCVN` | - | レース情報補填 | 複数のマスタ・レース系レコード | レコード種別に応じた既存 `NL_*` テーブル | いいえ | はい | いいえ | 今週データ更新で使います。 |
+| `TCVN` | `TCOV` | 特別登録馬情報補填 | 複数のマスタ・レース系レコード | レコード種別に応じた既存 `NL_*` テーブル | いいえ | はい | いいえ | 今週データ更新で使います。旧名 `TCOV` は受け付けません（下記参照）。 |
+| `RCVN` | `RCOV` | レース情報補填 | 複数のマスタ・レース系レコード | レコード種別に応じた既存 `NL_*` テーブル | いいえ | はい | いいえ | 今週データ更新で使います。旧名 `RCOV` は受け付けません（下記参照）。 |
+
+### jrvltsql で非対応の旧仕様 dataspec
+
+`DIFF` / `BLOD` / `SNAP` / `HOSE` / `TCOV` / `RCOV` は jrvltsql では
+受け付けません。`fetch` / `cache build` / `cache rebuild` は取り込みや既存
+cache の変更に入る前に、対応する現行種別名を示して停止します。JRA-VAN の
+仕様表には旧名も掲載されており、公式API全体で廃止されたという意味ではありません。
+
+**旧名は新名の別名ではありません。** 2023-08 の JV-Data 仕様変更で桁数が変わって
+おり（繁殖登録番号 8→10 / 生産者コード 6→8 / 生産者名 70→72）、旧名を要求すると
+現行のパーサが解釈できない旧仕様のバイト列が返ります。桁がずれたまま取り込むと、
+レコードの途中から後ろが全て壊れます。
+
+`RACE` はこの仕様変更の対象外なので、これまでどおり使えます。
 
 ## JVRTOpen 速報レース・開催情報
 

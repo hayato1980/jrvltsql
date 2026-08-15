@@ -73,6 +73,7 @@ except ImportError:
     RICH_AVAILABLE = False
 
 from src.utils.lock_manager import ProcessLock, ProcessLockError
+from src.jvlink.constants import is_valid_jvopen_combination
 
 
 # Windows cp932対策: stdoutをUTF-8に設定した上でConsoleを作成
@@ -883,11 +884,11 @@ def _interactive_setup_rich() -> dict:
 
     mode_table.add_row(
         "1", "簡易",
-        "RACE, DIFF\n[dim](レース結果・確定オッズ・馬情報)[/dim]"
+        "RACE, DIFN\n[dim](レース結果・確定オッズ・馬情報)[/dim]"
     )
     mode_table.add_row(
         "2", "標準",
-        "簡易 + BLOD,YSCH,TOKU,SLOP,HOYU,HOSE等\n[dim](血統・調教・スケジュール等)[/dim]"
+        "簡易 + BLDN,YSCH,TOKU,SLOP,HOYU,HOSN等\n[dim](血統・調教・スケジュール等)[/dim]"
     )
     mode_table.add_row(
         "3", "フル",
@@ -1450,8 +1451,8 @@ def _interactive_setup_simple() -> dict:
     print()
     print("   No  モード  対象データ                                期間")
     print("   ──────────────────────────────────────────────────────────────")
-    print("   1)  簡易    RACE,DIFF (レース結果・確定オッズ・馬情報)")
-    print("   2)  標準    簡易+BLOD,YSCH,TOKU,SLOP等 (血統・調教等)")
+    print("   1)  簡易    RACE,DIFN (レース結果・確定オッズ・馬情報)")
+    print("   2)  標準    簡易+BLDN,YSCH,TOKU,SLOP等 (血統・調教等)")
     print("   3)  フル    標準+MING,WOOD,COMM (マイニング・解説等)")
     if last_setup:
         last_date = datetime.fromisoformat(last_setup['timestamp'])
@@ -1873,7 +1874,7 @@ class QuickstartRunner:
     ]
 
     # 今週データモード: option=2で直近のレースデータのみ取得（高速）
-    # 注意: option=2 は TOKU, RACE, TCVN, RCVN のみ対応
+    # 注意: option=2 は TOKU, RACE, SNPN, TCVN, RCVN のみ対応
     UPDATE_SPECS = [
         ("TOKU", "特別登録馬", 2),
         ("RACE", "レース情報", 2),
@@ -1882,8 +1883,8 @@ class QuickstartRunner:
         # ブロックと NL_DM を埋めるため、定期実行の実経路である update モードにも
         # 含める。未購読環境では下の -111/-114/-115 判定で skipped 扱いになる。
         ("MING", "蓄積系ソフト用マイニング情報", 1),
-        ("TCVN", "調教師変更情報", 2),
-        ("RCVN", "騎手変更情報", 2),
+        ("TCVN", "特別登録馬情報補てん", 2),
+        ("RCVN", "レース情報補てん", 2),
     ]
 
     # JVRTOpenデータスペック（速報系・時系列）
@@ -3282,23 +3283,22 @@ class QuickstartRunner:
             logger.error(details['error_message'])
             return ("failed", details)
 
-        # option=2は特定のデータスペックのみ対応
-        OPTION_2_SUPPORTED_SPECS = {"TOKU", "RACE", "TCVN", "RCVN"}
-        if option == 2 and spec not in OPTION_2_SUPPORTED_SPECS:
+        # option=2 は中央の JVOpen 契約を正本にする。独自 allow-list を持つと
+        # SNPN のような有効な組合せが入口ごとに食い違う。
+        if option == 2 and not is_valid_jvopen_combination(spec, option):
             details['error_type'] = 'invalid_option'
             details['error_message'] = f'option=2 (今週データ) は {spec} に対応していません'
             logger.warning(details['error_message'])
             return ("skipped", details)
 
         # option=3/4（セットアップモード）は一部のスペックのみ対応
-        # RACE, DIFF, BLOD等の主要スペックはoption=2対応
+        # RACE, DIFN, BLDN等の主要スペックはoption=2対応
         # COMM, PARA等の補助スペックはoption=1のみ対応
         # DIFN（マスタデータ: UM, KS, CH）はoption=4が必要（差分では不十分）
         OPTION_4_SUPPORTED_SPECS = {
-            "RACE", "DIFF", "BLOD", "SNAP", "SLOP", "WOOD",
-            "YSCH", "HOSE", "HOYU", "CHOK", "KISI", "BRDR",
+            "RACE", "DIFN", "BLDN", "SNPN", "SLOP", "WOOD",
+            "YSCH", "HOSN", "HOYU", "CHOK", "KISI", "BRDR",
             "TOKU", "MING", "O1", "O2", "O3", "O4", "O5", "O6",
-            "DIFN",  # Master data (horses, jockeys, trainers)
         }
 
         # option=1（差分データ）はJV-Link側の「最終取得時刻」以降のデータのみ返す

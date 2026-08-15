@@ -426,7 +426,7 @@ class BatchProcessor:
 
         Examples:
             >>> processor = BatchProcessor(database=db)
-            >>> specs = ["RACE", "DIFF"]
+            >>> specs = ["RACE", "DIFN"]
             >>> results = processor.process_multiple_specs(
             ...     specs, "20240601", "20240630"
             ... )
