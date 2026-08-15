@@ -492,6 +492,86 @@ def validate_jvopen_combination(data_spec: str, option: int) -> None:
     )
 
 
+# JVOpen の fromtime に終了時刻を付けた「範囲形式」
+# (YYYYMMDDhhmmss-YYYYMMDDhhmmss) を渡してよい dataspec。
+#
+# 範囲形式は JV-Link 側のダウンロード量そのものを窓に閉じる。開始のみの
+# fromtime だと option=3/4 のセットアップが指定時刻から実行当日までを全量
+# ダウンロードするため、多年のセットアップでディスクが溢れる（実測 78GB）。
+#
+# ただし全 dataspec で使えるわけではない。日付フィールドを持たないコード主キーの
+# マスタ系は、範囲形式だと JV-Link が **エラーを返さずに 0 件** を返す。
+# 実測（2026-08-12・option=4・有人 RDP、当時の名前 'DIFF'）: 2022 年窓・2025 年窓とも
+# 0 件、同じ窓を開始のみで開くと 221,917 件。無言で何も取り込まないので、
+# 呼び出し側からは成功と見分けがつかない。
+#
+# そこで **拒否リストではなく許可リスト**にしてある。ここに載るのは
+# 「範囲形式で年の窓に絞れることを我々自身が実測した」dataspec だけで、
+# 未実測のものは開始のみへフォールバックする。開始のみは同じ窓の範囲形式の
+# 上位集合（返る量が減ることはない）なので、判断を誤ったときの代償は
+# ダウンロード量であってデータの取りこぼしではない。逆向きの表にすると、
+# 新しい dataspec を足すたびに「無言の 0 件」を踏む側が既定になる。
+#
+# 実測（いずれも option=4・有人 RDP）:
+#   RACE  2026-08-08: 範囲形式 167 件 / 開始のみ 876 件（実行当日まで流れる）
+#   SLOP  2026-08-12: 開始のみ 80 件 / 範囲形式は 2022 年窓で 11 ファイルに縮む
+#   WOOD  2026-08-12: 開始のみ 73 件 / 同上
+RANGE_FROMTIME_DATA_SPECS = frozenset({
+    "RACE",  # レースデータ（オッズ・票数を同梱）
+    "SLOP",  # 坂路調教
+    "WOOD",  # ウッドチップ調教
+})
+
+# option=2（今週データ）の fromtime は「任意の過去の窓」ではなく現在の開催
+# サイクル内の連続性管理に使われる。終了時刻を付けても窓を選べるようにはならず、
+# 過去の終端を渡す意味がないので、この option だけは常に開始のみで開く。
+_START_ONLY_JVOPEN_OPTION = 2
+
+
+def supports_range_fromtime(data_spec: str, option: int) -> bool:
+    """Whether JVOpen may be given a range fromtime for this spec/option.
+
+    Args:
+        data_spec: Data specification code (e.g., "RACE", "DIFN")
+        option: JVOpen option (1, 2, 3, or 4)
+
+    Returns:
+        True when the end bound belongs in the fromtime itself, False when the
+        fetch must fall back to a start-only fromtime.
+    """
+    if option == _START_ONLY_JVOPEN_OPTION:
+        return False
+    return data_spec.upper() in RANGE_FROMTIME_DATA_SPECS
+
+
+def build_jvopen_fromtime(
+    data_spec: str,
+    from_date: str,
+    to_date: str | None = None,
+    option: int = 1,
+) -> str:
+    """Build the fromtime argument for JVOpen.
+
+    Returns the range form ``YYYYMMDD000000-YYYYMMDD235959`` when this
+    dataspec is proven to honour it (see RANGE_FROMTIME_DATA_SPECS), and the
+    start-only form ``YYYYMMDD000000`` otherwise. The end bound is inclusive of
+    the whole of ``to_date``.
+
+    Args:
+        data_spec: Data specification code (e.g., "RACE", "DIFN")
+        from_date: Start date in YYYYMMDD format
+        to_date: End date in YYYYMMDD format, or None for no end bound
+        option: JVOpen option (1, 2, 3, or 4)
+
+    Returns:
+        The fromtime string to pass to JVOpen
+    """
+    start = f"{from_date}000000"
+    if not to_date or not supports_range_fromtime(data_spec, option):
+        return start
+    return f"{start}-{to_date}235959"
+
+
 # Record Type Codes (レコード種別)
 RECORD_TYPE_RA = "RA"  # レース詳細
 RECORD_TYPE_SE = "SE"  # 馬毎レース情報
