@@ -207,21 +207,21 @@
 - DONE (this session): red-first direct-boundary evidence, repaired CLI test
   setup, minimal public-boundary implementation, Python 3.12 focused and
   workflow-equivalent tests green locally, blocking flake8 and
-  `git diff --check` clean. Changes are uncommitted in the worktree by
-  instruction.
-- Commit the implementation on `claude/reject-legacy-dataspecs-225` and push
-  (outside this session's scope; no GitHub state was changed here).
-- Source-branch drift reconciliation before push.
-- GitHub Actions success on the eventual full SHA, independent Claude Code
-  GREEN review (session `ddf27a69-bc9a-4e68-8cb6-fba082d2e181`), unresolved
-  thread count zero, matching local/remote/PR head SHA, CLEAN merge state, PR
-  evidence comment, and clean worktree.
+  `git diff --check` clean.
+- DONE (Codex): source-branch drift reconciliation, commit, push, exact-SHA
+  local verification, and GitHub Actions test/lint success for the first
+  pushed candidate `341927c0d62de97be3979672e3e813e3f12a2d9b`.
+- PENDING: CodeRabbit completion, independent Claude Code GREEN review
+  (session `ddf27a69-bc9a-4e68-8cb6-fba082d2e181`), unresolved thread count
+  zero, matching local/remote/PR head SHA, CLEAN merge state, final PR evidence
+  comment, and clean worktree.
 
 ## Next safe command
 
-Review the uncommitted diff (`git diff` plus this worklog), then commit on
-`claude/reject-legacy-dataspecs-225` after confirming the contributor source
-branch still points at `b2a79a70145ddb6427fe03a7c711c5c6e3847c32`.
+Commit this worklog-only status update, push it, then re-run the required local
+checks and wait for GitHub/CodeRabbit on the resulting full SHA. After Claude
+Code's account limit resets, resume the independent read-only review and stop
+before merge unless it returns GREEN for that exact SHA.
 
 ## Codex verification and Claude availability note
 
@@ -239,6 +239,12 @@ branch still points at `b2a79a70145ddb6427fe03a7c711c5c6e3847c32`.
   `b2a79a70145ddb6427fe03a7c711c5c6e3847c32`; `origin/master` remains
   `e55b1f93f4661cf83cc7d890ebe6ee7399f354ab`; local pre-candidate HEAD is
   `7e1f583aea6d027528a1eec2cf863bf1559adc7b`.
+- First candidate committed and pushed as
+  `341927c0d62de97be3979672e3e813e3f12a2d9b`. Exact-SHA verification repeated:
+  focused `157 passed, 22 skipped`; workflow-equivalent coverage run `779
+  passed, 2 skipped, 3 subtests passed`; blocking flake8 `0`; `git diff
+  --check` clean. GitHub Actions run `31855794537` then completed with both
+  `test` and `lint` successful; performance-test was intentionally skipped.
 - Claude implementation session
   `e2ec26a4-3b59-499a-b1a7-a98c1a6b27cd` completed the edits, red/green
   evidence, boundary audit, and worklog update, then the CLI reported its
@@ -248,6 +254,10 @@ branch still points at `b2a79a70145ddb6427fe03a7c711c5c6e3847c32`.
   push, and Actions may proceed, but merge remains stopped until independent
   review session `ddf27a69-bc9a-4e68-8cb6-fba082d2e181` can review the frozen
   candidate and return GREEN.
+- The first independent-review invocation at 2026-08-15 10:11 JST stopped
+  before reading the candidate with `You've hit your session limit · resets
+  1:30pm (Asia/Tokyo)`. This is an unavailable review, not a verdict, and is
+  not counted as merge evidence. No file changed during the attempt.
 
 ## STOP conditions
 
