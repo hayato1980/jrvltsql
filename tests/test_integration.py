@@ -91,7 +91,7 @@ class TestIntegration:
                 "NL_RA": 71,   # Race details table (incl. corner sets 2-4)
                 "NL_SE": 103,  # Results plus canonical-v2 and provider-raw audit fields
                 "NL_UM": 90,   # Horse master (incl. 項番34-62 着回数/脚質傾向/登録レース数)
-                "NL_KS": 68,   # Jockey master table
+                "NL_KS": 167,  # Jockey master, incl. every repeat block
                 "NL_HR": 194,  # Expanded payout combinations
                 "NL_O1": 29,   # Odds table
             }
