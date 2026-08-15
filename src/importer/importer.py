@@ -6,6 +6,7 @@ This module imports parsed JV-Data records into database.
 from typing import Any, Dict, Iterator, List, Optional
 
 from src.database.base import BaseDatabase, DatabaseError
+from src.database.migration import SchemaMigrationError
 from src.database.schema_types import (
     get_table_column_types,
     get_table_primary_key_columns,
@@ -15,7 +16,42 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def resolve_standard_table_name(database: BaseDatabase, native_table_name: str) -> str:
+    """Resolve a canonical standard table and reject unsupported legacy-only storage."""
+    from src.database.table_mappings import JLTSQL_TO_JRAVAN
+
+    standard_name = JLTSQL_TO_JRAVAN.get(native_table_name, native_table_name)
+    if (
+        native_table_name == "NL_SK"
+        and database.is_connected()
+        and database.table_exists("HANSYOKU_UMA")
+        and not database.table_exists(standard_name)
+    ):
+        raise SchemaMigrationError(
+            "Legacy standard table HANSYOKU_UMA exists but canonical SANKU does not. "
+            "Automatic SK import is refused; rebuild the standard table as SANKU and "
+            "reimport current-shape source records."
+        )
+    if (
+        native_table_name == "NL_BR"
+        and database.is_connected()
+        and database.table_exists("BREEDER")
+        and not database.table_exists(standard_name)
+    ):
+        raise SchemaMigrationError(
+            "Legacy standard table BREEDER exists but canonical SEISAN does not. "
+            "Automatic BR import is refused; rebuild the standard table as SEISAN and "
+            "reimport current-shape source records."
+        )
+    return standard_name
+
+
 _STANDARD_FIELD_ALIASES = {
+    "HANSYOKU": {
+        "MochiKubun": "HansyokuMochiKubun",
+        "FHansyokuNum": "HansyokuFNum",
+        "MHansyokuNum": "HansyokuMNum",
+    },
     "TENKO_BABA": {
         "TenkoState": "AtoTenkoCD",
         "SibaBabaState": "AtoSibaBabaCD",
@@ -23,7 +59,7 @@ _STANDARD_FIELD_ALIASES = {
         "TenkoState2": "MaeTenkoCD",
         "SibaBabaState2": "MaeSibaBabaCD",
         "DirtBabaState2": "MaeDirtBabaCD",
-    }
+    },
 }
 
 
@@ -76,7 +112,7 @@ DIVIDE_BY_10_PREFIXES = frozenset(
 )
 
 # 完全一致で10で割るべきフィールド名
-DIVIDE_BY_10_EXACT = frozenset(["Odds", "Time"])
+DIVIDE_BY_10_EXACT = frozenset(["Odds", "SyogaiMileTime", "Time"])
 
 # Explicit-unit fields are already canonicalized by the parser contract.
 CANONICAL_SE_FIELDS = frozenset(
@@ -95,6 +131,22 @@ CANONICAL_SE_FIELDS = frozenset(
         "DMTimeSeconds",
         "DMGosaPSeconds",
         "DMGosaMSeconds",
+    ]
+)
+
+# RA corner-order fields use three leading spaces as a provider-defined marker
+# for horses that did not pass the corner. Only right-side record padding may
+# be removed from these fields.
+LEADING_SPACE_SIGNIFICANT_FIELDS = frozenset(
+    [
+        "Jyuni1",
+        "Jyuni2",
+        "Jyuni3",
+        "Jyuni4",
+        "TsukaJyuni",
+        "TsukaJyuni2",
+        "TsukaJyuni3",
+        "TsukaJyuni4",
     ]
 )
 
@@ -203,7 +255,11 @@ def convert_record_types(record: dict, table_name: str) -> dict:
 
             else:
                 if isinstance(value, str):
-                    converted[field_name] = value.strip() if value.strip() else None
+                    if field_name in LEADING_SPACE_SIGNIFICANT_FIELDS:
+                        normalized = value.rstrip(" ")
+                    else:
+                        normalized = value.strip()
+                    converted[field_name] = normalized if normalized else None
                 else:
                     converted[field_name] = str(value) if value is not None else None
 
@@ -287,8 +343,8 @@ class DataImporter:
             "CH": "NL_CH",  # 調教師マスター
             "BR": "NL_BR",  # 繁殖馬マスター
             "BN": "NL_BN",  # 生産者マスター
-            "HN": "NL_HN",  # 馬主マスター
-            "SK": "NL_SK",  # 競走馬見積もり
+            "HN": "NL_HN",  # 繁殖馬マスター
+            "SK": "NL_SK",  # 産駒マスター
             "RC": "NL_RC",  # レースコメント
             "CC": "NL_CC",  # コース変更
             "TC": "NL_TC",  # タイムコメント
@@ -380,9 +436,7 @@ class DataImporter:
 
         # Convert to JRA-VAN standard name if requested
         if self.use_jravan_schema:
-            from src.database.table_mappings import JLTSQL_TO_JRAVAN
-
-            return JLTSQL_TO_JRAVAN.get(table_name, table_name)
+            return resolve_standard_table_name(self.database, table_name)
 
         return table_name
 
@@ -535,6 +589,8 @@ class DataImporter:
 
             return stats
 
+        except SchemaMigrationError:
+            raise
         except Exception as e:
             logger.error("Import failed", error=str(e))
             raise ImporterError(f"Failed to import records: {e}")
