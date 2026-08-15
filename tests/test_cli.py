@@ -339,7 +339,11 @@ class TestFetchCommand(unittest.TestCase):
         self.assertIn('Sunday or Monday may cover two cycles', help_text)
         self.assertIn('ChokyoDate', help_text)
         self.assertIn('calendar-year chunks', help_text)
-        self.assertIn('adds another chunk', help_text)
+        # --to is an end BOUNDARY, not only a client-side filter: for the
+        # dataspecs that honour it, it reaches JVOpen and bounds the download.
+        self.assertIn('end of a range fromtime', help_text)
+        self.assertIn('bounds what the server sends', help_text)
+        self.assertIn('start-only fromtime', help_text)
 
     @patch('src.importer.batch.BatchProcessor')
     def test_fetch_with_all_args(self, mock_batch_processor):
