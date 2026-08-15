@@ -223,7 +223,7 @@ class JVLinkBridge:
         fromtime: str,
         option: int = 1,
     ) -> Tuple[int, int, int, str]:
-        # 廃止された dataspec はブリッジへ送信する前に弾く（wrapper 側と同じ
+        # 非対応の旧仕様 dataspec はブリッジへ送信する前に弾く（wrapper 側と同じ
         # fail-closed 境界。JVRTOpen の realtime spec は別名前空間なので対象外）。
         if is_retired_data_spec(data_spec):
             raise ValueError(retired_data_spec_message(data_spec))

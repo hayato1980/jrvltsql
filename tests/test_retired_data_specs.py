@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""2023-08 に廃止された旧 dataspec を受け付けないことのテスト。
+"""jrvltsql が非対応とする旧仕様 dataspec を受け付けないことのテスト。
 
 旧名（DIFF / BLOD / SNAP / HOSE / TCOV / RCOV）と新名（DIFN / BLDN / SNPN /
 HOSN / TCVN / RCVN）は別名ではない。2023-08 の JV-Data 仕様変更で桁数が変わって
@@ -370,15 +370,26 @@ class TestCLIRejectsRetiredSpecs:
         assert result.exit_code != 0
         assert "DIFN" in result.output
 
-    def test_cache_rebuild_refuses_via_the_build_step(self):
-        # rebuild は「キャッシュを消してから cache build に委譲」する。先に削除が
-        # 走ることは許容する方針なので順序は問わず、取り込みに到達せず理由の
-        # 分かるエラーで終わることだけを見る。
-        result = _invoke_cli_with_config(
-            ["cache", "rebuild", "--spec", "DIFF",
-             "--from", "20240101", "--to", "20241231"],
-        )
+    def test_cache_rebuild_rejects_before_deleting_existing_cache(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            config_path = Path("config.yaml")
+            config_path.write_text(MINIMAL_CLI_CONFIG, encoding="utf-8")
+            cache_file = Path("cache/nl/DIFF/20240101.v2.bin")
+            cache_file.parent.mkdir(parents=True)
+            cache_file.write_bytes(b"existing-cache")
 
-        assert result.exit_code != 0
-        assert "2023-08" in result.output
-        assert "DIFN" in result.output
+            result = runner.invoke(
+                cli,
+                [
+                    "--config", str(config_path),
+                    "cache", "rebuild", "--spec", "DIFF",
+                    "--from", "20240101", "--to", "20240101",
+                    "--cache-dir", "cache",
+                ],
+            )
+
+            assert result.exit_code != 0
+            assert "2023-08" in result.output
+            assert "DIFN" in result.output
+            assert cache_file.read_bytes() == b"existing-cache"

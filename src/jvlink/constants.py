@@ -75,7 +75,7 @@ DATA_SPEC_RACE = "RACE"  # レースデータ (RA, SE, HR, WF, JG)
 DATA_SPEC_DIFN = "DIFN"  # マスタデータ (UM, KS, CH, BR, BN, HN, SK, RC)
 DATA_SPEC_YSCH = "YSCH"  # 開催スケジュール
 DATA_SPEC_TOKU = "TOKU"  # 特別登録馬
-DATA_SPEC_SNPN = "SNPN"  # 出馬表
+DATA_SPEC_SNPN = "SNPN"  # 出走時点情報
 DATA_SPEC_SLOP = "SLOP"  # 坂路調教
 DATA_SPEC_BLDN = "BLDN"  # 血統情報
 DATA_SPEC_HOYU = "HOYU"  # 馬名の意味由来
@@ -90,12 +90,13 @@ DATA_SPEC_COMM = "COMM"  # コメント情報
 DATA_SPEC_TCVN = "TCVN"  # 特別登録馬情報補てん
 DATA_SPEC_RCVN = "RCVN"  # レース情報補てん
 
-# 2023-08 の JV-Data 仕様変更で置き換えられた dataspec。
+# 2023-08 の JV-Data 仕様変更より前のレイアウトを要求する dataspec。
 #
 # 旧名と新名は同じデータの別表記ではない。仕様変更で桁数が変わっており
 # （繁殖登録番号 8→10 / 生産者コード 6→8 / 生産者名 70→72）、旧名を要求すると
 # 現行のパーサが解釈できない旧仕様のバイト列が降ってくる。旧仕様のデータは
-# 変換せず新 dataspec で取り直す運用なので、旧名は入口で拒否する。
+# 変換せず新 dataspec で取り直す運用なので、jrvltsql は旧名を入口で拒否する。
+# JRA-VAN の仕様表には旧名も掲載されており、公式API全体での「廃止」を意味しない。
 #
 # RACE は仕様変更の対象外なので、ここには含めない。
 RETIRED_DATA_SPECS = {
@@ -383,7 +384,7 @@ JVOPEN_VALID_COMBINATIONS = {
 
 
 def is_retired_data_spec(data_spec: str) -> bool:
-    """Check if data_spec was replaced by the 2023-08 JV-Data revision.
+    """Check whether data_spec selects a legacy layout unsupported here.
 
     大文字小文字は区別しない。CacheManager が spec.upper() でキャッシュ
     ディレクトリを引くため、'diff' は 'DIFF' と同じ旧仕様データに到達する。
@@ -392,30 +393,31 @@ def is_retired_data_spec(data_spec: str) -> bool:
         data_spec: Data specification code (e.g., "DIFF", "DIFN")
 
     Returns:
-        True if the code is a retired name that must no longer be requested
+        True if the code selects a legacy layout jrvltsql must not request
     """
     return data_spec.upper() in RETIRED_DATA_SPECS
 
 
 def retired_data_spec_message(data_spec: str) -> str:
-    """Build the rejection message for a retired data_spec.
+    """Build the rejection message for an unsupported legacy data_spec.
 
     Args:
-        data_spec: A retired data specification code (e.g., "DIFF")
+        data_spec: An unsupported legacy data specification code (e.g., "DIFF")
 
     Returns:
         A message naming the replacement and why the two are not interchangeable
 
     Raises:
-        ValueError: If data_spec is not a retired code
+        ValueError: If data_spec is not an unsupported legacy code
     """
     replacement = RETIRED_DATA_SPECS.get(data_spec.upper())
     if replacement is None:
-        raise ValueError(f"'{data_spec}' は廃止された dataspec ではありません")
+        raise ValueError(f"'{data_spec}' は jrvltsql で非対応の旧仕様 dataspec ではありません")
 
     return (
-        f"データ種別 '{data_spec}' は {RETIRED_DATA_SPEC_CHANGED_AT} の JV-Data "
-        f"仕様変更で廃止されました。新しい種別は '{replacement}' です。"
+        f"データ種別 '{data_spec}' は {RETIRED_DATA_SPEC_CHANGED_AT} より前の "
+        f"JV-Data レイアウトを要求するため、jrvltsql ではサポートしていません。"
+        f"対応する現行レイアウトの種別は '{replacement}' です。"
         f"旧名は '{replacement}' の別名ではなく、要求すると桁数の異なる旧仕様の"
         f"データが返るため、現行のパーサでは正しく取り込めません。"
         f"'--spec {replacement}' で取得し直してください。"

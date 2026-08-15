@@ -13,7 +13,7 @@ JRA Saturday schedule (approx):
   16:00 11R 重賞
   16:30 12R last race
   16:45+ last race finishes
-  17:30+ NL_ payout records available (DIFN)
+  17:30+ NL_ payout records available (RACE)
 
 Phase auto-detection (--phase auto):
   < 10:05  → pre        (before 1R: schema/master/entry check)
@@ -63,7 +63,7 @@ _PHASE_SCHEDULE = [
     (14 * 60,       "rt-check"),   # 10:05-14:00  1R~6R running
     (17 * 60,       "nl-mid"),     # 14:00-17:00  7R~12R + cooling down
     (18 * 60,       "post"),       # 17:00-18:00  races done, payouts pending
-    (20 * 60,       "final"),      # 18:00-20:00  payouts available (DIFN)
+    (20 * 60,       "final"),      # 18:00-20:00  payouts available (RACE)
     (24 * 60,       "quickstart"), # 20:00+       end of day
 ]
 
@@ -556,7 +556,7 @@ def check_payout_completeness(con, year, monthday, issues):
     now_h = datetime.now().hour
     if now_h >= 17 and ra_count > 0:
         if nl_h1 == 0 and rt_h1 == 0:
-            issues.append("No payout data (H1) after 17:00 -- run: fetch --spec DIFN --option 1")
+            issues.append("No payout data (H1) after 17:00 -- run: fetch --spec RACE --option 1")
         elif nl_h1 < ra_count * 0.8:
             marker = "[!]  "
             print(f"  {marker} NL_H1 ({nl_h1}) << NL_RA ({ra_count}) -- payouts incomplete")
@@ -828,11 +828,10 @@ def run_phase_post(con, args, year, monthday, issues, nl_checks, rt_checks):
 
     race_date = args.date or date.today().strftime("%Y%m%d")
     if args.fetch:
-        if (nl_checks.get("NL_H1  (payouts)     ") or 0) == 0:
-            print("\n[AUTO-FETCH] Fetching DIFN (payouts/results)...")
-            run_fetch("DIFN", race_date, race_date, 1, args.db)
-        if (nl_checks.get("NL_RA  (race header) ") or 0) == 0:
-            print(f"\n[AUTO-FETCH] Fetching RACE data...")
+        missing_payouts = (nl_checks.get("NL_H1  (payouts)     ") or 0) == 0
+        missing_races = (nl_checks.get("NL_RA  (race header) ") or 0) == 0
+        if missing_payouts or missing_races:
+            print("\n[AUTO-FETCH] Fetching RACE data (results/payouts)...")
             run_fetch("RACE", race_date, race_date, 1, args.db)
         nl_checks.update(check_nl_today(con, year, monthday, [], "NL_ after fetch") or {})
 
@@ -857,9 +856,9 @@ def run_phase_final(con, args, year, monthday, issues, nl_checks, rt_checks):
         issues.append("FINAL: NL_RA has no data for today")
     # NL_H1 absence already reported by check_payout_completeness above
     # RT_H1 is never populated by realtime monitoring; JRA only publishes
-    # payout records via DIFN batch (NL_H1), not through 0B15 realtime stream.
+    # payout records via RACE batch (NL_H1), not through 0B15 realtime stream.
     if (rt_checks.get("RT_H1  (払戻 速報)   ") or 0) == 0:
-        print("  [INFO] RT_H1=0 (expected -- payout speed-reports only arrive via DIFN batch)")
+        print("  [INFO] RT_H1=0 (expected -- payout records arrive via RACE batch)")
 
     run_unit_tests(issues)
     test_quickstart(args.db, issues)

@@ -106,14 +106,14 @@ class TestJVLinkWrapper:
 
         wrapper = JVLinkWrapper(sid="TEST")
         result, read_count, download_count, last_file_timestamp = wrapper.jv_open(
-            "DIFN", "20240101000000", option=2
+            "SNPN", "20240101000000", option=2
         )
 
         assert result == JV_RT_SUCCESS
         assert read_count == 500
         assert download_count == 100
         assert last_file_timestamp == "20241231235959"
-        mock_com.JVOpen.assert_called_once_with("DIFN", "20240101000000", 2)
+        mock_com.JVOpen.assert_called_once_with("SNPN", "20240101000000", 2)
 
     @patch("win32com.client.Dispatch")
     def test_jv_open_failure(self, mock_dispatch):

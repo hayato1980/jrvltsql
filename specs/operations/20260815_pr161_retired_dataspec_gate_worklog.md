@@ -2,10 +2,11 @@
 
 ## Scope and provenance
 
-- Objective: make the 2023-08 retired JV-Data spec names fail closed at every
-  supported historical JVOpen entry point, while keeping the replacement
-  names usable and restoring the PR's failing CI tests without weakening the
-  CLI configuration contract.
+- Objective: make the pre-2023-08 JV-Data layout names that jrvltsql cannot
+  parse fail closed at every supported historical JVOpen entry point, while
+  keeping the current-layout names usable and restoring the PR's failing CI
+  tests without weakening the CLI configuration contract. This is a local
+  support policy, not a claim that JRA-VAN removed the old IDs from its API.
 - Minimal scope: shared retired-spec validation, the public Python JV-Link
   wrapper/bridge entry points, the existing historical/CLI guards and focused
   tests, plus this worklog. Operational name replacements already present in
@@ -41,9 +42,9 @@
 - Review corrections in this iteration must resume the implementation session;
   the final-review session is separate and read-only.
 
-## Retired-name contract
+## Unsupported legacy-name contract
 
-- Retired → replacement mappings introduced by the PR:
+- Legacy → current-layout mappings introduced by the PR:
   `DIFF→DIFN`, `BLOD→BLDN`, `SNAP→SNPN`, `HOSE→HOSN`, `TCOV→TCVN`,
   `RCOV→RCVN`.
 - Matching is case-insensitive. Replacement/current names remain accepted.
@@ -221,10 +222,10 @@
 
 ## Next safe command
 
-Run the focused and workflow-equivalent suites for the consolidated review-fix
-diff, review/commit/push it, then obtain two independent Codex verdicts and
-resolve all four review threads. Stop before merge unless both reviewers are
-GREEN for the exact PR head SHA.
+Review and commit the second consolidated review-fix diff, run the focused and
+workflow-equivalent suites for that exact SHA, then obtain two new independent
+Codex verdicts and resolve all four GitHub review threads. Stop before merge
+unless both reviewers are GREEN for the exact PR head SHA.
 
 ## Codex verification and Claude availability note
 
@@ -316,12 +317,64 @@ GREEN for the exact PR head SHA.
   is unrelated refactoring with shared-mutable-list risk. These are
   non-actionable for merge and have no unresolved inline thread.
 
+## Independent Codex review of `681b3802bb1a4ec447f434e0ae3afa77c6e1d9cf`
+
+- Exact-SHA local evidence before review: focused `207 passed, 22 skipped`;
+  workflow-equivalent `790 passed, 2 skipped, 3 subtests passed`; blocking
+  flake8 `0`; changed-script compilation and `git diff --check` successful.
+- Contract reviewer `/root/pr161_contract_review` → `NEEDS_CHANGES`:
+  - P1: race-day payout/result recovery incorrectly requested DIFN, which does
+    not carry HR/H1/H6; RACE is the relevant data spec.
+  - P2: a MagicMock wrapper test treated invalid `DIFN + option 2` as valid.
+  - P2: SNPN/HOSN display labels remained inconsistent with the official
+    names.
+  - P2: user-facing text incorrectly described the old IDs as officially
+    abolished rather than as legacy layouts unsupported by jrvltsql.
+- Boundary reviewer `/root/pr161_boundary_review` → `NEEDS_CHANGES`:
+  - P1: `cache rebuild --spec DIFF` deleted an existing cache file before the
+    delegated build command rejected the legacy spec.
+  - P2: worklog STOP conditions still named the superseded Claude gate and an
+    obsolete contributor SHA.
+- Candidate `681b3802...` was rejected and was not pushed. Findings were
+  consolidated before beginning this second repair batch.
+
+### Second red-first evidence (production still at `681b3802...`)
+
+- Cache rebuild test created `cache/nl/DIFF/20240101.v2.bin` with a sentinel,
+  invoked the real CLI, and expected the bytes to survive. Result: exit 1;
+  assertion raised `FileNotFoundError`, proving rejection happened after
+  destructive clearing.
+- Race-day post-phase test isolated operational checks and captured
+  `run_fetch`. Result: exit 1; actual call was
+  `('DIFN', '20260815', '20260815', 1, 'data/test.db')` instead of RACE.
+
+### Second consolidated correction
+
+- `cache_rebuild` now invokes the shared legacy-spec rejection before option
+  checks, CacheManager construction, or clearing. Sentinel regression test is
+  green.
+- Post-race recovery now requests RACE once when either NL_H1 or NL_RA is
+  missing. Scheduler/verification text identifies RACE as the payout source;
+  pre-race setup retains its separate DIFN master update but no longer labels
+  it as payouts/odds. Operational regression test is green.
+- Wrapper option-parameter test now uses valid `SNPN + option 2`.
+- SNPN and HOSN constant/progress labels now use 出走時点情報 and
+  競走馬市場取引価格情報.
+- User-facing error/docs now say that jrvltsql does not support the legacy
+  layout and explicitly avoid claiming that JRA-VAN abolished the old IDs.
+  Internal helper names remain stable and do not change public behavior.
+- Targeted green after this batch: both new regressions `1 passed` each;
+  wrapper/legacy suite `134 passed, 22 skipped`.
+
 ## STOP conditions
 
-- Stop before push if the contributor source branch moves away from
-  `b2a79a70145ddb6427fe03a7c711c5c6e3847c32` without reconciliation.
-- Stop before merge if any retired spelling reaches COM/bridge transmission,
+- Stop before the next push if the contributor source branch moves away from
+  the last fetched remote `18ed1081c007c1651fc8e572c3a9beedb71ef79e`
+  without reconciliation.
+- Stop before merge if any unsupported legacy spelling reaches COM/bridge
+  transmission or causes cache deletion,
   any replacement/current name is incorrectly rejected, CLI tests still fail
-  before exercising their target, Actions is not successful, final Claude
-  review is not GREEN, an unresolved thread exists, tested SHA and PR head
-  differ, or the worktree is dirty.
+  before exercising their target, payout recovery requests a spec that cannot
+  provide H1, Actions is not successful, either final independent Codex review
+  is not GREEN, an unresolved thread exists, tested SHA and PR head differ, or
+  the worktree is dirty.

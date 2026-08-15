@@ -75,7 +75,7 @@ FETCH_NOTE_DATE_FIELDS = (
 
 
 def _reject_retired_data_spec(data_spec: str) -> None:
-    """Stop before any fetch when data_spec was retired in 2023-08.
+    """Stop before any side effect for a legacy layout jrvltsql cannot parse.
 
     黙って落とさず、新しい種別名と理由を出してから終了する。改行を挟まない
     click.echo を使うのは、rich の折り返しでコード名が割れないようにするため。
@@ -421,7 +421,7 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
     console.print(f"  Database:   {db_type}")
 
     # Validate data_spec and option combination
-    # 廃止された種別は「option では取得できません」より先に、廃止である旨を返す。
+    # 非対応の旧仕様種別は「option では取得できません」より先に理由を返す。
     _reject_retired_data_spec(data_spec)
 
     from src.jvlink.constants import is_valid_jvopen_combination, JVOPEN_VALID_COMBINATIONS
@@ -680,6 +680,10 @@ def cache_rebuild(ctx, data_spec, date_from, date_to, jv_option, cache_dir):
     Example:
       jltsql cache rebuild --spec RACE --from 20260301 --to 20260328
     """
+    # Reject before clearing: an unsupported legacy spec must never destroy a
+    # usable cache and then fail in the delegated build command.
+    _reject_retired_data_spec(data_spec)
+
     if jv_option == 2:
         raise click.UsageError(
             "cache rebuild does not support option=2: JVOpen uses --from to "

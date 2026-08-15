@@ -190,7 +190,7 @@ class HistoricalFetcher(BaseFetcher):
             Dictionary of parsed record data with dates <= to_date
 
         Raises:
-            ValueError: If data_spec was retired by the 2023-08 JV-Data revision
+            ValueError: If data_spec selects an unsupported legacy layout
             FetcherError: If fetching fails
 
         Note:
@@ -209,7 +209,7 @@ class HistoricalFetcher(BaseFetcher):
             ...     # Process all records up to 20240630
             ...     pass
         """
-        # 廃止された dataspec は JV-Link に触れる前に弾く。
+        # 非対応の旧仕様 dataspec は JV-Link に触れる前に弾く。
         if is_retired_data_spec(data_spec):
             raise ValueError(retired_data_spec_message(data_spec))
 
@@ -476,7 +476,7 @@ class HistoricalFetcher(BaseFetcher):
             Dictionary of parsed record data with dates <= end_date
 
         Raises:
-            ValueError: If data_spec was retired by the 2023-08 JV-Data revision
+            ValueError: If data_spec selects an unsupported legacy layout
 
         Note:
             Records are filtered client-side to include only those with
@@ -513,7 +513,7 @@ class HistoricalFetcher(BaseFetcher):
             Dictionary of parsed record data
 
         Raises:
-            ValueError: If data_spec was retired by the 2023-08 JV-Data revision
+            ValueError: If data_spec selects an unsupported legacy layout
         """
         # キャッシュヒット時は fetch() を通らないので、ここでも弾く。旧仕様の
         # バイト列が過去のキャッシュに残っていても取り込みに到達させない。
