@@ -8,11 +8,7 @@ from datetime import datetime
 from typing import Iterator, Optional
 
 from src.fetcher.base import BaseFetcher, FetcherError
-from src.jvlink.constants import (
-    build_jvopen_fromtime,
-    supports_range_fromtime,
-    validate_jvopen_combination,
-)
+from src.jvlink.constants import build_jvopen_fromtime, validate_jvopen_combination
 from src.utils.logger import get_logger
 from src.utils.progress import JVLinkProgressDisplay
 
@@ -261,13 +257,10 @@ class HistoricalFetcher(BaseFetcher):
             # jv_init() does not accept service_key parameter
             self.jvlink.jv_init()
 
-            # Build the fromtime. to_date becomes JVOpen's end bound (the
-            # range form) for the dataspecs proven to honour it, which is what
-            # keeps a multi-year setup from downloading everything up to the
-            # run date; the rest fall back to a start-only fromtime because the
-            # range form makes them return zero records with no error. Which is
-            # which lives in src/jvlink/constants.py -- it is a property of the
-            # dataspec, so callers pass --from/--to and nothing else.
+            # Whether to_date becomes JVOpen's end bound follows from the
+            # dataspec, so callers pass --from/--to and nothing else; see
+            # build_jvopen_fromtime in src/jvlink/constants.py for which
+            # dataspecs get which form and why. The form is logged below.
             # Option meanings: 1=通常データ, 2=今週データ, 3/4=セットアップ
             fromtime = build_jvopen_fromtime(data_spec, from_date, to_date, option)
             self._jvd_self_repair_attempts = 0
@@ -282,11 +275,6 @@ class HistoricalFetcher(BaseFetcher):
                 from_date=from_date,
                 to_date=to_date,
                 fromtime=fromtime,
-                fromtime_form=(
-                    "range"
-                    if supports_range_fromtime(data_spec, option)
-                    else "start-only"
-                ),
                 option=option,
                 note=(
                     "option=1: 通常データ（差分）; "

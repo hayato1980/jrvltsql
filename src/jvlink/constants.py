@@ -508,11 +508,13 @@ def validate_jvopen_combination(data_spec: str, option: int) -> None:
 #   RACE  2026-08-08: 範囲形式 167 件 / 開始のみ 876 件（実行当日まで流れる）
 #   SLOP  2026-08-12: 開始のみ 80 件 / 範囲形式は 2022 年窓で 11 ファイルに縮む
 #   WOOD  2026-08-12: 開始のみ 73 件 / 同上
-RANGE_FROMTIME_DATA_SPECS = frozenset({
-    "RACE",  # レースデータ（オッズ・票数を同梱）
-    "SLOP",  # 坂路調教
-    "WOOD",  # ウッドチップ調教
-})
+RANGE_FROMTIME_DATA_SPECS = frozenset(
+    {
+        "RACE",  # レースデータ（オッズ・票数を同梱）
+        "SLOP",  # 坂路調教
+        "WOOD",  # ウッドチップ調教
+    }
+)
 
 # option=2（今週データ）の fromtime は「任意の過去の窓」ではなく現在の開催
 # サイクル内の連続性管理に使われる。終了時刻を付けても窓を選べるようにはならず、

@@ -175,3 +175,40 @@ def test_race_fetch_still_returns_records_under_the_range_form():
 
     assert records
     assert f.jvlink.jv_open.call_args.args[1] == RANGE_2022
+
+
+# --------------------------------------------------------------------------
+# 実行時 Note が「なぜ開始のみなのか」を取り違えないこと
+# --------------------------------------------------------------------------
+
+
+def _notes(data_spec: str, option: int) -> str:
+    """`jltsql fetch` が stderr へ出す Note をまとめて返す."""
+    from src.cli import main as cli_main
+
+    printed = []
+    original = cli_main.err_console
+    cli_main.err_console = MagicMock()
+    cli_main.err_console.print.side_effect = lambda text: printed.append(text)
+    try:
+        cli_main._print_fetch_guardrail_notes(option, data_spec)
+    finally:
+        cli_main.err_console = original
+    return " ".join(printed)
+
+
+def test_range_form_note_says_the_download_is_bounded():
+    assert "サーバから降ってくる量そのものが窓に収まります" in _notes("RACE", 4)
+
+
+def test_start_only_note_blames_the_spec_when_the_spec_is_the_reason():
+    notes = _notes("DIFN", 4)
+    assert "このデータ種別は" in notes
+    assert "option=2" not in notes
+
+
+def test_start_only_note_blames_the_option_under_option2():
+    """RACE は範囲形式が使える種別。option=2 で開始のみになる理由は option の側にある."""
+    notes = _notes("RACE", 2)
+    assert "option=2 の fromtime は" in notes
+    assert "このデータ種別は範囲形式の fromtime で窓に絞れることを実測していない" not in notes
