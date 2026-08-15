@@ -489,9 +489,14 @@ def test_option_4_fetch_failure_blocks_commit_of_the_consuming_chunk(monkeypatch
             "RACE", "19860101", "20221231", option=4, ensure_tables=False
         )
 
-    # The chunk consumed alongside the parse failure must not be committed;
-    # the clean chunk before it stays committed.
-    assert _transaction_calls(processor.database).count("commit") == 1
+    # The clean first chunk commits; the chunk consumed alongside the parse
+    # failure raises before its commit and is rolled back instead.
+    assert _transaction_calls(processor.database) == [
+        "begin_transaction",
+        "commit",
+        "begin_transaction",
+        "rollback",
+    ]
 
 
 def test_option_4_rejection_rolls_back_only_its_own_chunk(tmp_path, monkeypatch):

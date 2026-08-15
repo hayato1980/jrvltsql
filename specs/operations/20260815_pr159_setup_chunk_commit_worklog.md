@@ -139,11 +139,75 @@
 - Candidate is ready to commit. Nothing pushed yet; independent Claude review,
   GitHub Actions, review-thread resolution, and final merge gate remain.
 
+## Iteration: review follow-up on frozen candidate 85c4d3e (2026-08-15)
+
+Two new CodeRabbit findings arrived on frozen candidate
+`85c4d3edfebf99d6d8a3791d74a8361823ef76e0` after push. Both are addressed in
+one minimal local batch (tests + this worklog); no production defect was
+found, so `src/importer/batch.py` is untouched in this iteration. Nothing is
+committed or pushed, and GitHub state is unchanged.
+
+### Finding 1: exact transaction-order assertion
+
+- `test_option_4_fetch_failure_blocks_commit_of_the_consuming_chunk` now
+  asserts the exact transaction order via `_transaction_calls`:
+  `['begin_transaction', 'commit', 'begin_transaction', 'rollback']` — the
+  clean first chunk provably commits and the rejected second chunk provably
+  rolls back without a commit, replacing the weaker `commit count == 1` check.
+- Green on the fixed code:
+  `python3 -m pytest tests/test_batch_processor.py::test_option_4_fetch_failure_blocks_commit_of_the_consuming_chunk -q --no-cov`
+  → 1 passed, exit 0.
+- Red-first re-verified against the parent production code: with
+  `git show 4f4eda7:src/importer/batch.py` swapped into the worktree, the same
+  command fails with `At index 3 diff: 'commit' != 'rollback'` (the parent
+  commits the rejected chunk), pytest exit status 1. `src/importer/batch.py`
+  was then restored from HEAD (`git status` shows only the test file
+  modified).
+
+### Finding 2: 655 versus 656 workflow-equivalent totals reconciled
+
+- The original PR/pre-fix workflow-equivalent suite at
+  `4f4eda761d5361ef08d66b6d0fddd2d0cd11744e` recorded 655 passes (figure as
+  recorded on the PR; not re-run in this iteration). The post-fix candidate
+  suite at `85c4d3edfebf99d6d8a3791d74a8361823ef76e0` observed 656 passes
+  (Codex candidate validation above).
+- Causal difference: exactly one net new test — the red-first regression
+  `test_option_4_fetch_failure_blocks_commit_of_the_consuming_chunk`. The
+  other test change of that candidate strengthened
+  `test_option_4_rejection_rolls_back_only_its_own_chunk` in place without
+  changing the collected count, and the duplicate concurrent-session test was
+  removed before the candidate was frozen. 655 + 1 = 656 is expected, not a
+  discrepancy.
+
+### Independent review status
+
+- Independent Claude review session `af158531-5546-4010-bd10-fee69ec1c3b6`
+  reviewed `85c4d3edfebf99d6d8a3791d74a8361823ef76e0` GREEN.
+- That verdict is superseded by this review-follow-up candidate: the
+  strengthened test changes the tree, so the next candidate SHA requires a
+  fresh independent review before merge.
+- Planned fresh review session: `9cce1b2d-9180-449e-8d34-9b733a2ecfa6`,
+  model `--model fable`, read-only. Fable is retained because the review must
+  independently validate a transaction-ordering and fail-open contract. The
+  reviewed full SHA and verdict will be recorded on the PR.
+
+### Validation commands and results
+
+- `python3 -m pytest tests/test_batch_processor.py -q --no-cov` → 23 passed,
+  exit 0.
+- `git diff --check` → exit 0.
+
+### Changed files
+
+- `tests/test_batch_processor.py` — exact transaction-order assertion.
+- `specs/operations/20260815_pr159_setup_chunk_commit_worklog.md` — this update.
+
 ## Next safe command
 
-Commit the reviewed local diff, rerun the focused/workflow-equivalent checks on
-the resulting full SHA, push it to the PR source branch, and run independent
-Claude review session `af158531-5546-4010-bd10-fee69ec1c3b6` read-only.
+Commit this review-follow-up batch, rerun the focused/workflow-equivalent
+checks on the resulting full SHA, push it to the PR source branch, and run a
+fresh independent read-only Claude review of that SHA in session
+`9cce1b2d-9180-449e-8d34-9b733a2ecfa6`.
 
 ## STOP conditions
 
