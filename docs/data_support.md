@@ -38,7 +38,7 @@ jrvltsql は JRA / 中央競馬専用です。NAR / 地方競馬はこのリポ�
 | 系統 | JV-Link API | option / データ種別 | 運用コマンド | キー / 範囲 | 対応状況 |
 | --- | --- | --- | --- | --- | --- |
 | 蓄積系 通常データ | `JVOpen` | option `1` | `jltsql fetch --spec <SPEC> --option 1` | FromTime 形式の日付範囲 | 対応済み |
-| 今週データ | `JVOpen` | option `2` | `quickstart.bat`, `daily_sync.bat`, `jltsql fetch --option 2` | 今週開催分 | `TOKU`, `RACE`, `TCVN`, `RCVN` に対応 |
+| 今週データ | `JVOpen` | option `2` | `quickstart.bat`, `daily_sync.bat`, `jltsql fetch --option 2` | 今週開催分 | `TOKU`, `RACE`, `SNPN`, `TCVN`, `RCVN` に対応 |
 | セットアップデータ | `JVOpen` | option `3` / `4` | `quickstart.bat`, `jltsql fetch --option 3/4` | 初期構築用の過去範囲 | 下記の蓄積系 spec に対応 |
 | 速報レース・開催情報 | `JVRTOpen` | `0B11`〜`0B17` | `jltsql realtime start --specs <SPEC>` | `YYYYMMDD` | 下記レコードに対応 |
 | 速報オッズ・票数 | `JVRTOpen` | `0B20`, `0B30`〜`0B36` | `jltsql realtime timeseries --spec <SPEC>` | `YYYYMMDDJJRR` | 対応済み。JRA-VAN 側の保持は約1週間 |
@@ -59,7 +59,7 @@ jrvltsql は JRA / 中央競馬専用です。NAR / 地方競馬はこのリポ�
 | `HOSN` | `HOSE` | 競走馬市場取引価格 | `HS` | `NL_HS` | はい | いいえ | はい | 旧名 `HOSE` は受け付けません（下記参照）。 |
 | `HOYU` | - | 馬名の意味由来 | `HY` | `NL_HY` | はい | いいえ | はい | standard / full quickstart に含めています。 |
 | `COMM` | - | 各種解説・コース情報 | `CS` | `NL_CS` | はい | いいえ | はい | full quickstart に含めています。 |
-| `SNPN` | `SNAP` | 出馬表スナップショット | 返却レコードは状況依存 | レコード種別に応じた既存 `NL_*` テーブル | はい | いいえ | はい | validation 上は対応。既定 quickstart では使っていません。旧名 `SNAP` は受け付けません（下記参照）。 |
+| `SNPN` | `SNAP` | 出走時点情報 | `CK` | `NL_CK` | はい | はい | はい | validation 上は対応。既定 quickstart では使っていません。旧名 `SNAP` は受け付けません（下記参照）。 |
 | `O1`〜`O6` | - | 賭式別の確定オッズ | `O1`〜`O6` | `NL_O1`〜`NL_O6` | はい | いいえ | はい | 通常は `RACE` 経由で取得します。投資判断時点のオッズは時系列コマンドを使います。 |
 | `TCVN` | `TCOV` | 特別登録馬情報補填 | 複数のマスタ・レース系レコード | レコード種別に応じた既存 `NL_*` テーブル | いいえ | はい | いいえ | 今週データ更新で使います。旧名 `TCOV` は受け付けません（下記参照）。 |
 | `RCVN` | `RCOV` | レース情報補填 | 複数のマスタ・レース系レコード | レコード種別に応じた既存 `NL_*` テーブル | いいえ | はい | いいえ | 今週データ更新で使います。旧名 `RCOV` は受け付けません（下記参照）。 |

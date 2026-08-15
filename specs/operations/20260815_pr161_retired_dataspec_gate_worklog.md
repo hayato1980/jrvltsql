@@ -211,17 +211,20 @@
 - DONE (Codex): source-branch drift reconciliation, commit, push, exact-SHA
   local verification, and GitHub Actions test/lint success for the first
   pushed candidate `341927c0d62de97be3979672e3e813e3f12a2d9b`.
-- PENDING: CodeRabbit completion, independent Claude Code GREEN review
-  (session `ddf27a69-bc9a-4e68-8cb6-fba082d2e181`), unresolved thread count
-  zero, matching local/remote/PR head SHA, CLEAN merge state, final PR evidence
+- SUPERSEDED by the user's 2026-08-15 follow-up: Claude Code is no longer the
+  final reviewer for this iteration because its account limit remained
+  unavailable; independent Codex review is required instead (see below).
+- PENDING: review-fix commit and push, GitHub Actions success on the resulting
+  full SHA, two independent Codex GREEN reviews, unresolved thread count zero,
+  matching local/remote/PR head SHA, CLEAN merge state, final PR evidence
   comment, and clean worktree.
 
 ## Next safe command
 
-Commit this worklog-only status update, push it, then re-run the required local
-checks and wait for GitHub/CodeRabbit on the resulting full SHA. After Claude
-Code's account limit resets, resume the independent read-only review and stop
-before merge unless it returns GREEN for that exact SHA.
+Run the focused and workflow-equivalent suites for the consolidated review-fix
+diff, review/commit/push it, then obtain two independent Codex verdicts and
+resolve all four review threads. Stop before merge unless both reviewers are
+GREEN for the exact PR head SHA.
 
 ## Codex verification and Claude availability note
 
@@ -258,6 +261,60 @@ before merge unless it returns GREEN for that exact SHA.
   before reading the candidate with `You've hit your session limit · resets
   1:30pm (Asia/Tokyo)`. This is an unavailable review, not a verdict, and is
   not counted as merge evidence. No file changed during the attempt.
+
+## Codex review-fix continuation (user instruction, 2026-08-15)
+
+- At 10:47 JST the user explicitly instructed the iteration to continue using
+  Codex for review. This supersedes the still-unavailable Claude final-review
+  requirement; the earlier Claude implementation/red-first evidence remains
+  part of the history but is not presented as a final verdict.
+- Resume point was clean and synchronized: local HEAD, contributor remote, and
+  PR head all `18ed1081c007c1651fc8e572c3a9beedb71ef79e`; Actions test/lint
+  successful; merge state CLEAN.
+- CodeRabbit's substantive pass on the preceding code candidate produced four
+  unresolved threads, still applicable to the same production diff:
+  1. incorrect TCVN/RCVN descriptions;
+  2. `scripts/fill_empty_postgresql_tables.py` uses `SNPN` with option 2 while
+     the repository validator rejected that pair;
+  3. two changed f-strings had no replacement fields;
+  4. direct wrapper/bridge positive coverage exercised only `DIFN`.
+- Official-source adjudication: JRA-VAN `JV-Data4901.pdf`, section "JVOpen
+  メソッドで指定可能な option と dataspec の関係", lists `SNPN` for option 2.
+  It also defines TCVN as "特別登録馬情報補てん" and RCVN as
+  "レース情報補てん". Therefore the reviewer's proposed `SNPN` option 1 change
+  was rejected as harmful; the actual defect was the repository's incomplete
+  option-2 allow-list and quickstart's duplicate allow-list.
+
+### Red-first evidence on `18ed1081` production
+
+- Test-only change added `SNPN` to the existing option-2 contract and added one
+  quickstart operational-boundary test. Before production edits:
+  - central validator test → `1 failed, 2 passed`; observed
+    `is_valid_jvopen_combination('SNPN', 2) is False`;
+  - quickstart boundary test → `1 failed`; observed status `skipped` with
+    `option=2 ... SNPN に対応していません` and no downstream call;
+  - expanded six-replacement wrapper/bridge positives → `12 passed`, showing
+    the positive harness was valid before production edits.
+
+### Consolidated correction
+
+- Added `SNPN` to `JVOPEN_VALID_COMBINATIONS[2]`; quickstart now reuses that
+  central contract instead of maintaining a divergent local option-2 set.
+- Corrected TCVN/RCVN source and quickstart labels to the official supplemental
+  data names; corrected SNPN documentation to 出走時点情報 / CK and option 2
+  support. The nearby fill-script comment now describes CK rather than
+  unrelated realtime change records.
+- Removed the two review-identified unnecessary f-string prefixes.
+- Parameterized the existing direct wrapper and bridge positive tests over all
+  six replacements with their supported options; no extra test functions or
+  large matrix were added.
+- Targeted green after production changes: central/boundary tests `15 passed`;
+  quickstart operational-boundary test `1 passed`.
+- Review-body-only nitpicks were not used to broaden the patch: the wording
+  regression test remains because it protects the PR's explicit no-alias
+  documentation contract, and the option 1/3/4 list-deduplication suggestion
+  is unrelated refactoring with shared-mutable-list risk. These are
+  non-actionable for merge and have no unresolved inline thread.
 
 ## STOP conditions
 

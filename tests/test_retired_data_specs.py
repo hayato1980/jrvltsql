@@ -32,6 +32,14 @@ from src.jvlink.wrapper import JVLinkWrapper
 
 RETIRED = ("DIFF", "BLOD", "SNAP", "HOSE", "TCOV", "RCOV")
 REPLACEMENTS = ("DIFN", "BLDN", "SNPN", "HOSN", "TCVN", "RCVN")
+REPLACEMENT_OPTIONS = (
+    ("DIFN", 1),
+    ("BLDN", 1),
+    ("SNPN", 2),
+    ("HOSN", 1),
+    ("TCVN", 2),
+    ("RCVN", 2),
+)
 
 
 class TestRetiredDataSpecTable:
@@ -82,7 +90,7 @@ class TestJVOpenCombinations:
     def test_replacements_remain_valid_for_accumulated_options(self, data_spec, option):
         assert is_valid_jvopen_combination(data_spec, option) is True
 
-    @pytest.mark.parametrize("data_spec", ("TCVN", "RCVN"))
+    @pytest.mark.parametrize("data_spec", ("SNPN", "TCVN", "RCVN"))
     def test_change_specs_remain_valid_for_option_2(self, data_spec):
         assert is_valid_jvopen_combination(data_spec, 2) is True
 
@@ -248,13 +256,18 @@ class TestWrapperRejectsBeforeCOM:
         wrapper._jvlink.JVOpen.assert_not_called()
         assert wrapper.is_open() is False
 
-    def test_jv_open_still_reaches_com_for_the_replacement(self):
+    @pytest.mark.parametrize("data_spec,option", REPLACEMENT_OPTIONS)
+    def test_jv_open_still_reaches_com_for_the_replacement(self, data_spec, option):
         wrapper = self._wrapper()
 
-        result, read_count, _, _ = wrapper.jv_open("DIFN", "20240101000000", option=1)
+        result, read_count, _, _ = wrapper.jv_open(
+            data_spec, "20240101000000", option=option
+        )
 
         assert (result, read_count) == (0, 100)
-        wrapper._jvlink.JVOpen.assert_called_once_with("DIFN", "20240101000000", 1)
+        wrapper._jvlink.JVOpen.assert_called_once_with(
+            data_spec, "20240101000000", option
+        )
 
 
 class TestBridgeRejectsBeforeTransmission:
@@ -289,16 +302,17 @@ class TestBridgeRejectsBeforeTransmission:
         bridge._send_command.assert_not_called()
         assert bridge.is_open() is False
 
-    def test_jv_open_still_transmits_for_the_replacement(self):
+    @pytest.mark.parametrize("data_spec,option", REPLACEMENT_OPTIONS)
+    def test_jv_open_still_transmits_for_the_replacement(self, data_spec, option):
         bridge = self._bridge()
 
         code, read_count, download_count, _ = bridge.jv_open(
-            "DIFN", "20240101000000", option=1
+            data_spec, "20240101000000", option=option
         )
 
         assert (code, read_count, download_count) == (0, 100, 5)
         bridge._send_command.assert_called_once()
-        assert bridge._send_command.call_args.args[0]["dataspec"] == "DIFN"
+        assert bridge._send_command.call_args.args[0]["dataspec"] == data_spec
 
 
 # ルートコールバックは設定ファイルを前提条件とする（無ければ init 以外は終了）。

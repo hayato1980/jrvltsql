@@ -73,6 +73,7 @@ except ImportError:
     RICH_AVAILABLE = False
 
 from src.utils.lock_manager import ProcessLock, ProcessLockError
+from src.jvlink.constants import is_valid_jvopen_combination
 
 
 # Windows cp932対策: stdoutをUTF-8に設定した上でConsoleを作成
@@ -1873,7 +1874,7 @@ class QuickstartRunner:
     ]
 
     # 今週データモード: option=2で直近のレースデータのみ取得（高速）
-    # 注意: option=2 は TOKU, RACE, TCVN, RCVN のみ対応
+    # 注意: option=2 は TOKU, RACE, SNPN, TCVN, RCVN のみ対応
     UPDATE_SPECS = [
         ("TOKU", "特別登録馬", 2),
         ("RACE", "レース情報", 2),
@@ -1882,8 +1883,8 @@ class QuickstartRunner:
         # ブロックと NL_DM を埋めるため、定期実行の実経路である update モードにも
         # 含める。未購読環境では下の -111/-114/-115 判定で skipped 扱いになる。
         ("MING", "蓄積系ソフト用マイニング情報", 1),
-        ("TCVN", "調教師変更情報", 2),
-        ("RCVN", "騎手変更情報", 2),
+        ("TCVN", "特別登録馬情報補てん", 2),
+        ("RCVN", "レース情報補てん", 2),
     ]
 
     # JVRTOpenデータスペック（速報系・時系列）
@@ -3282,9 +3283,9 @@ class QuickstartRunner:
             logger.error(details['error_message'])
             return ("failed", details)
 
-        # option=2は特定のデータスペックのみ対応
-        OPTION_2_SUPPORTED_SPECS = {"TOKU", "RACE", "TCVN", "RCVN"}
-        if option == 2 and spec not in OPTION_2_SUPPORTED_SPECS:
+        # option=2 は中央の JVOpen 契約を正本にする。独自 allow-list を持つと
+        # SNPN のような有効な組合せが入口ごとに食い違う。
+        if option == 2 and not is_valid_jvopen_combination(spec, option):
             details['error_type'] = 'invalid_option'
             details['error_message'] = f'option=2 (今週データ) は {spec} に対応していません'
             logger.warning(details['error_message'])

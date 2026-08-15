@@ -363,13 +363,13 @@ class TestJVLinkWrapper:
         assert result == JV_RT_SUCCESS
         assert read_count == 120
 
-        # Test TCVN (調教師変更情報) - option 2 only
+        # Test TCVN (特別登録馬情報補てん) - option 2 only
         mock_com.JVOpen.return_value = (0, 10, 0, "20241231235959")
         result, read_count, _, _ = wrapper.jv_open(DATA_SPEC_TCVN, "20240101000000", option=2)
         assert result == JV_RT_SUCCESS
         assert read_count == 10
 
-        # Test RCVN (騎手変更情報) - option 2 only
+        # Test RCVN (レース情報補てん) - option 2 only
         mock_com.JVOpen.return_value = (0, 15, 0, "20241231235959")
         result, read_count, _, _ = wrapper.jv_open(DATA_SPEC_RCVN, "20240101000000", option=2)
         assert result == JV_RT_SUCCESS

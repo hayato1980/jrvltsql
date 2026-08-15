@@ -86,9 +86,9 @@ DATA_SPEC_MING = "MING"  # データマイニング予想
 DATA_SPEC_WOOD = "WOOD"  # ウッドチップ調教
 DATA_SPEC_COMM = "COMM"  # コメント情報
 
-# Trainer/Jockey Change Specifications (option 2 only)
-DATA_SPEC_TCVN = "TCVN"  # 調教師変更情報
-DATA_SPEC_RCVN = "RCVN"  # 騎手変更情報
+# Non-accumulated supplemental specifications (option 2 only)
+DATA_SPEC_TCVN = "TCVN"  # 特別登録馬情報補てん
+DATA_SPEC_RCVN = "RCVN"  # レース情報補てん
 
 # 2023-08 の JV-Data 仕様変更で置き換えられた dataspec。
 #
@@ -103,8 +103,8 @@ RETIRED_DATA_SPECS = {
     "BLOD": "BLDN",  # 血統情報
     "SNAP": "SNPN",  # 出馬表
     "HOSE": "HOSN",  # 競走馬市場取引価格
-    "TCOV": "TCVN",  # 調教師変更情報
-    "RCOV": "RCVN",  # 騎手変更情報
+    "TCOV": "TCVN",  # 特別登録馬情報補てん
+    "RCOV": "RCVN",  # レース情報補てん
 }
 
 # 仕様変更が行われた年月。拒否メッセージに含める。
@@ -352,12 +352,13 @@ JVOPEN_VALID_COMBINATIONS = {
         "SNPN",          # 出馬表
         "O1", "O2", "O3", "O4", "O5", "O6",  # オッズ
     ],
-    # Option 2 (今週データ): TOKU, RACE, TCVN, RCVN のみ
+    # Option 2 (今週データ): TOKU, RACE, SNPN, TCVN, RCVN のみ
     2: [
         "TOKU",          # 特別登録馬
         "RACE",          # レースデータ
-        "TCVN",          # 調教師変更情報
-        "RCVN",          # 騎手変更情報
+        "SNPN",          # 出走時点情報
+        "TCVN",          # 特別登録馬情報補てん
+        "RCVN",          # レース情報補てん
     ],
     # Option 3, 4 (セットアップ): Option 1と同じ
     3: [

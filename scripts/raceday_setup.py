@@ -61,7 +61,7 @@ def main():
         # 4. Fetch DIFN (latest diff update)
         (base + ["fetch", "--from", from_date, "--to", yesterday,
                  "--spec", "DIFN", "--option", "1", "--db", args.db],
-         f"Fetch DIFN data (payouts, odds)"),
+         "Fetch DIFN data (payouts, odds)"),
     ]
 
     all_ok = True

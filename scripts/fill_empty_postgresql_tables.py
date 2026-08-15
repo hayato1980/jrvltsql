@@ -155,7 +155,7 @@ class EmptyTableFiller:
         # - TOKU: 特別登録          → TK
         #
         # 速報系データ (option=2)
-        # - SNPN: 速報レース詳細    → 変更系 (CC, JC, TC, WE, WH)
+        # - SNPN: 出走時点情報      → CK
         # - HOSN: 市場取引 (新)     → AV
         # - COMM: 各種解説
         # - MING: レース当日発表

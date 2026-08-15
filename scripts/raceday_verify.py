@@ -829,7 +829,7 @@ def run_phase_post(con, args, year, monthday, issues, nl_checks, rt_checks):
     race_date = args.date or date.today().strftime("%Y%m%d")
     if args.fetch:
         if (nl_checks.get("NL_H1  (payouts)     ") or 0) == 0:
-            print(f"\n[AUTO-FETCH] Fetching DIFN (payouts/results)...")
+            print("\n[AUTO-FETCH] Fetching DIFN (payouts/results)...")
             run_fetch("DIFN", race_date, race_date, 1, args.db)
         if (nl_checks.get("NL_RA  (race header) ") or 0) == 0:
             print(f"\n[AUTO-FETCH] Fetching RACE data...")
