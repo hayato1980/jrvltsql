@@ -13,9 +13,7 @@
 - native pywin32 経路の `JVOpen` / `JVGets` 呼出しが公式 COM シグネチャと異なる。
 - 共通パーサが Shift-JIS を全文デコードしてからバイト位置でスライスし、全角文字
   より後ろの項目を破壊する。
-- 速報馬体重 `WH` を、別レコードである天候・馬場変更相当の40バイト構造として
-  読み、公式847バイトの馬体重18頭配列を保存できない。
-- 12レコードの公開長または終端位置が公式現行長より短く、多くは公式配列の1件目
+- 10レコードの公開長または終端位置が公式現行長より短く、多くは公式配列の1件目
   だけを保存して途中に偽のレコード区切りを置いている。
 
 したがって、今回の監査報告そのものは保存してよいが、下記 blocker を直して
@@ -104,28 +102,29 @@ CK の賞金が桁落ちし、馬名には後続数値が混入した。BT は�
 JC は馬名・騎手名より後ろの負担重量・コード類が同じ理由で壊れる。CS は説明本文が
 実質最後の項目なので主要本文への影響は限定的だが、区切り検証はできない。
 
-### B-03 `WH` は馬体重レコードではない構造になっている
+### B-03 解消済み: `WH` 速報馬体重の全展開
 
 公式 `WH` は847バイトで、レース番号、発表時刻、18頭分の
 `馬番 + 馬名 + 馬体重 + 増減符号 + 増減差`（45バイト×18）を持つ。
-`WHParser` は40バイトで、`HenkoID`、天候、芝・ダート馬場状態の前後値を読む。
-これは `WE` 系の内容であり、単なる末尾省略ではない。
-
-`NL_WH` と `RT_WH` schema も同じ40バイト前提なので、0B11 の入力を正しく
-分解できず、後から復元する raw field もない。速報馬体重経路全体の blocker である。
+監査開始時の40バイト実装は誤りだったが、PR #167
+（`d0b4ad3`）で修正済みである。現行 `WHParser` は847バイトとCRLFを厳密検査し、
+18枠をbyte-firstで読み、値のある馬を1頭1行へ展開する。`NL_WH` と `RT_WH` も
+race identityと`Umaban`を複合主キーに持ち、馬名、馬体重、増減符号、増減差を
+保存する。0B11の置換・取消経路、native/standard import、schema migrationは
+`tests/test_wh_official_contract.py`で固定されており、`WE`とは別契約になっている。
 
 ### B-04 現行38種のうち複数が公式配列を途中で切る
 
-明らかに短い公開契約は次の12種である。
+明らかに短い公開契約は、WHとSKの修正後、次の10種である。
 
 ```text
 BN 387/477    BR 455/545    CH 592/3862   DM 48/303
-KS 772/4173   RA 856/1272   RC 241/501    SK 78/208
-TK 727/21657  TM 39/141     WH 40/847     YS 146/382
+KS 772/4173   RA 856/1272   RC 241/501
+TK 727/21657  TM 39/141     YS 146/382
 ```
 
 左が実装上の公開長または終端、右が公式現行長。BN/BR/CH/KS の成績配列、DM/TM の
-18頭配列、TK の300頭配列、RC の3頭分記録、SK の14頭血統、YS の3競走案内などを
+18頭配列、TK の300頭配列、RC の3頭分記録、YS の3競走案内などを
 1件または一部だけ取り、公式レコード内部に `RecordDelimiter` を置くものがある。
 これは「不要列を捨てる」だけではなく、繰返し要素のデータ損失と key collision を
 固定する schema になっている。
@@ -143,7 +142,7 @@ RA には1272バイト分岐が追加されているが、公開定数と fixtur
 | UM | 1577 | 1609 | 現行位置・厳密長/CRLF | 拒否 | 現行のみ可 |
 | BR | 537 | 545 | 新幅だが455まで | version dispatchなし | 両方不可 |
 | HN | 245 | 251 | 現行全位置・厳密長/CRLF | 拒否 | 現行のみ可 |
-| SK | 178 | 208 | 78byte、血統14件中1件 | version dispatchなし | 両方不可 |
+| SK | 178 | 208 | 現行全位置・血統14件・厳密長/CRLF | 拒否 | 現行のみ可 |
 | CK | 6864 | 6870 | 現行offsetだが B-02 で破壊 | version dispatchなし | 両方不可 |
 | HS | 196 | 200 | 現行10byte番号に対応 | version dispatchなし | 現行のみ可 |
 | BT | 6887 | 6889 | 現行offsetだが B-02 で破壊 | version dispatchなし | 両方不可 |
@@ -281,7 +280,7 @@ skip の扱いに関する実運用上の質問が繰り返されている:
 | BR | 545 | partial | 新幅の基本部のみ、公開長455 |
 | BN | 477 | partial | 成績配列の一部のみ、公開長387 |
 | HN | 251 | current-shape | currentのみ、全フィールドの現行位置と長さ/CRLFを厳密検査 |
-| SK | 208 | partial | 14件血統の1件のみ、公開長78 |
+| SK | 208 | current-shape | currentのみ、14件血統と長さ/CRLFを厳密検査 |
 | CK | 6870 | byte-bug | current offsetだが馬名後の全項目がずれる |
 | RC | 501 | partial | 3頭ブロックを途中で終了、公開長241 |
 | HC | 60 | current-shape / weak gate | 現行末尾まで |
@@ -295,7 +294,7 @@ skip の扱いに関する実運用上の質問が繰り返されている:
 | WF | 7215 | current-shape | full配列を展開 |
 | JG | 80 | current-shape / weak gate | 現行末尾まで |
 | WC | 105 | current-shape / delimiter caveat | numeric中心、現行末尾まで |
-| WH | 847 | wrong | 40byteの天候・馬場変更構造 |
+| WH | 847 | current-shape | 18頭を全展開し、現行長/CRLFを厳密検査 |
 | WE | 42 | current-shape / delimiter caveat | 現行末尾まで |
 | AV | 78 | current-shape | byte slice override |
 | JC | 161 | byte-bug | 馬名/騎手名後の項目がずれる |
@@ -438,20 +437,17 @@ findings はこの出力だけではなく個別に再現したものに限定�
 2. **byte-first parser core**
    field ごとに raw byte slice してから cp932 decode する。CK/BT/JC に「全角文字より後ろの
    numeric/text field」の最小 red/green test を置く。
-3. **0B11 / WH full expansion**
-   847byteと18頭配列を実装し、NL/RT schema を展開する。40byte record が受理される現状を
-   red-first で固定し、WE と WH を別契約にする。
-4. **全38種の現行 layout/schema 再生成**
-   12 partial record、HN、RA 配列を公式 Excel から再実装する。偽 delimiter とDB再構築 fixture
+3. **全38種の現行 layout/schema 再生成**
+   残る10 partial recordを公式 Excel から再実装する。偽 delimiter とDB再構築 fixture
    を公式raw扱いしない。
-5. **2023 generation boundary**
+4. **2023 generation boundary**
    staff 推奨の new-only rebuild 方針を維持し、連結 token、cache、raw import の全入口で旧物理
    record を拒否する。7種すべての current positive と old negative を置く。true dual parser を
    選ぶ場合だけ、明示 version dispatcher を別設計する。
-6. **dataspec / updater semantics**
+5. **dataspec / updater semantics**
    O1～O6を JVOpen matrix から除き、単一/連結 public API 契約を統一し、中止 `9` を物理削除
    せず domain state として保存する。
-7. **fixture provenance / resume / forward compatibility**
+6. **fixture provenance / resume / forward compatibility**
    provenance付き raw fixture、未知 record skip policy、JVSkip setup resume を独立して整備する。
 
 各検査・validator の修正では、不正 record/シグネチャが修正前に実際に赤になることを先に
@@ -465,5 +461,5 @@ findings はこの出力だけではなく個別に再現したものに限定�
 - new-only 方針として旧 layout を全入口で拒否: **未達**。
 - 現行4.9.0.1の全38種 parse/schema対応: **未達**。
 - JV-Link public API/状態機械: **未達**。
-- realtime ID/時系列保持区分の定義: **概ね整合**（ただし WH 実体は blocker）。
+- realtime ID/時系列保持区分の定義: **概ね整合**（WH実体はPR #167で解消済み）。
 - コードを仕様準拠としてマージ/リリース: **不可**。
