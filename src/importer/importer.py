@@ -38,6 +38,17 @@ def resolve_standard_table_name(database: BaseDatabase, native_table_name: str) 
             "canonical CHOKYO_DETAIL parent/child contract is available"
         )
     if (
+        native_table_name == "NL_BT"
+        and database.is_connected()
+        and database.table_exists("BLOOD")
+        and not database.table_exists(standard_name)
+    ):
+        raise SchemaMigrationError(
+            "Legacy standard table BLOOD exists but canonical KEITO does not. "
+            "Automatic BT import is refused; rebuild the standard table as KEITO "
+            "and reimport current 6,889-byte source records."
+        )
+    if (
         native_table_name == "NL_SK"
         and database.is_connected()
         and database.table_exists("HANSYOKU_UMA")
@@ -184,9 +195,71 @@ _TK_CHILD_STORAGE_TABLES = frozenset({"NL_TK", "TOKU"})
 _TK_KEY_COLUMNS = ("Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum")
 _TK_ROWS_KEY = "_tk_registered_horse_rows"
 _HY_STORAGE_TABLES = frozenset({"NL_HY", "BAMEIORIGIN"})
-_ORDERED_MASTER_STORAGE_TABLES = (
-    _RC_STORAGE_TABLES | _YS_STORAGE_TABLES | _TK_CHILD_STORAGE_TABLES
+_BT_STORAGE_TABLES = frozenset({"NL_BT", "KEITO"})
+_STRICT_NONADDITIVE_STANDARD_TABLES = frozenset({"KEITO"})
+_LEGACY_STANDARD_PREFLIGHT_NATIVE_TABLES = (
+    "NL_BT",
+    "NL_SK",
+    "NL_BR",
+    "NL_HY",
+    "NL_DM",
+    "NL_TM",
 )
+_ORDERED_MASTER_STORAGE_TABLES = _RC_STORAGE_TABLES | _YS_STORAGE_TABLES | _TK_CHILD_STORAGE_TABLES
+
+
+def verify_bt_storage_schema(database: BaseDatabase, table_name: str) -> bool:
+    """Fail closed unless BT storage preserves every current field and key."""
+    if table_name not in _BT_STORAGE_TABLES:
+        return False
+
+    from src.database.migration import verify_table_schema
+    from src.database.schema import SCHEMAS
+    from src.database.schema_jravan import JRAVAN_SCHEMAS
+
+    schema_sql = SCHEMAS.get(table_name) or JRAVAN_SCHEMAS.get(table_name)
+    if schema_sql is None:
+        raise SchemaMigrationError(f"BT storage schema is undefined: {table_name}")
+    verify_table_schema(database, table_name, schema_sql)
+    return True
+
+
+def preflight_standard_schema_migrations(
+    database: BaseDatabase,
+    native_table_names: set[str],
+) -> None:
+    """Reject every known incompatibility before the first additive ALTER."""
+    from src.database.migration import verify_table_schema
+    from src.database.schema_jravan import JRAVAN_SCHEMAS
+
+    # Alias-only layouts are not reconstructable. Resolve all known pairs before
+    # touching an unrelated table so a later record cannot expose a partial
+    # startup migration.
+    for native_name in _LEGACY_STANDARD_PREFLIGHT_NATIVE_TABLES:
+        resolve_standard_table_name(database, native_name)
+
+    for native_name in native_table_names:
+        standard_name = resolve_standard_storage_table_name(native_name)
+        schema_sql = JRAVAN_SCHEMAS.get(standard_name)
+        if not schema_sql or not database.table_exists(standard_name):
+            continue
+        verify_table_schema(
+            database,
+            standard_name,
+            schema_sql,
+            allow_missing_columns=(standard_name not in _STRICT_NONADDITIVE_STANDARD_TABLES),
+            allow_primary_key_mismatch=(standard_name in _ORDERED_MASTER_STORAGE_TABLES),
+        )
+
+    for child_table in ("CHOKYO_SEISEKI", "KISYU_SEISEKI"):
+        child_schema = JRAVAN_SCHEMAS.get(child_table)
+        if child_schema and database.table_exists(child_table):
+            verify_table_schema(
+                database,
+                child_table,
+                child_schema,
+                allow_missing_columns=True,
+            )
 
 
 def verify_hy_storage_schema(database: BaseDatabase, table_name: str) -> bool:
@@ -657,6 +730,7 @@ _OFFICIAL_ERASE_KEY_COLUMNS = {
     "O6": _MINING_RACE_KEY_COLUMNS,
     "WF": ("Year", "MonthDay"),
     "HY": ("KettoNum",),
+    "BT": ("HansyokuNum",),
 }
 
 _OFFICIAL_ERASE_STORAGE_TABLES = {
@@ -673,6 +747,7 @@ _OFFICIAL_ERASE_STORAGE_TABLES = {
     "O6": {"NL_O6", "RT_O6", "ODDS_SANRENTAN_HEAD"},
     "WF": {"NL_WF", "RT_WF", "WIN5"},
     "HY": {"NL_HY", "BAMEIORIGIN"},
+    "BT": {"NL_BT", "KEITO"},
 }
 
 _STANDARD_ODDS_RACE_KEY_COLUMNS = _MINING_RACE_KEY_COLUMNS
@@ -3276,6 +3351,7 @@ class DataImporter:
         self._jravan_tables_ready = not use_jravan_schema
         self._verified_mining_native_tables: set[str] = set()
         self._verified_hy_tables: set[str] = set()
+        self._verified_bt_tables: set[str] = set()
         self._verified_ck_child_tables: dict[str, tuple[str, str]] = {}
         self._verified_rc_tables: set[str] = set()
         self._verified_ys_tables: set[str] = set()
@@ -3329,7 +3405,7 @@ class DataImporter:
             "WH": "NL_WH",  # 馬体重情報
             "TM": "NL_TM",  # 対戦型データマイニング予想
             "TK": "NL_TK",  # 追切マスター
-            "BT": "NL_BT",  # 調教Bタイム
+            "BT": "NL_BT",  # 系統情報
             "DM": "NL_DM",  # データマスター
             # RT_ tables (速報データ)
             "RT_RA": "RT_RA",  # レース詳細（速報）
@@ -3365,14 +3441,23 @@ class DataImporter:
         from src.database.migration import migrate_table_if_needed, verify_table_schema
         from src.database.schema_jravan import JRAVAN_SCHEMAS
 
-        for table_name in set(self._table_map.values()):
+        native_table_names = set(self._table_map.values())
+        preflight_standard_schema_migrations(self.database, native_table_names)
+        for table_name in native_table_names:
             standard_name = self._get_table_name_for_native(table_name)
             schema_sql = JRAVAN_SCHEMAS.get(standard_name)
             if schema_sql and self.database.table_exists(standard_name):
-                migrate_table_if_needed(self.database, standard_name, schema_sql, commit=commit)
-                # Ordered masters have deliberately non-automatic key migrations.
-                # Verify them only when a matching row is about to be written so
-                # an obsolete unused table cannot block unrelated imports.
+                if standard_name not in _STRICT_NONADDITIVE_STANDARD_TABLES:
+                    migrate_table_if_needed(
+                        self.database,
+                        standard_name,
+                        schema_sql,
+                        commit=commit,
+                    )
+                # Ordered masters receive a complete field/key check only when
+                # a matching row is written. Their existing types and capacities
+                # were checked by preflight; a mismatched key makes the additive
+                # migrator a no-op and remains the dedicated writer's concern.
                 if standard_name not in _ORDERED_MASTER_STORAGE_TABLES:
                     verify_table_schema(self.database, standard_name, schema_sql)
         for child_table in ("CHOKYO_SEISEKI", "KISYU_SEISEKI"):
@@ -3526,6 +3611,9 @@ class DataImporter:
                 if table_name not in self._verified_hy_tables:
                     if verify_hy_storage_schema(self.database, table_name):
                         self._verified_hy_tables.add(table_name)
+                if table_name not in self._verified_bt_tables:
+                    if verify_bt_storage_schema(self.database, table_name):
+                        self._verified_bt_tables.add(table_name)
 
                 if table_name not in self._verified_mining_native_tables:
                     if verify_mining_native_schema(self.database, record, table_name):
@@ -4068,6 +4156,9 @@ class DataImporter:
             if table_name not in self._verified_hy_tables:
                 if verify_hy_storage_schema(self.database, table_name):
                     self._verified_hy_tables.add(table_name)
+            if table_name not in self._verified_bt_tables:
+                if verify_bt_storage_schema(self.database, table_name):
+                    self._verified_bt_tables.add(table_name)
             if table_name not in self._verified_rc_tables:
                 if verify_rc_storage_schema(self.database, table_name):
                     self._verified_rc_tables.add(table_name)

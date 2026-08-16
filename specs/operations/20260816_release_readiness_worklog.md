@@ -1456,3 +1456,213 @@
   filter, exception suppression, forced collection, production-code change, or
   migration behavior change. The final worklog-only commit will be recorded in
   PR metadata rather than adding a self-referential SHA commit.
+### 2026-08-17 — standard-schema BT/HY alias storage iteration
+
+- The preceding CK iteration was squash-merged through PR `#196` as master
+  full SHA `1b66f45629b9ede51fc2f4415e688784b2f55a2c`. Its clean dedicated
+  worktree and local branch were removed after confirming the merged PR and
+  updated `origin/master`.
+- Objective and minimum scope: make standard-schema imports for the already
+  supported current BT and HY records resolve to their existing canonical
+  owner tables (`KEITO` and `BAMEIORIGIN`) instead of resolving to undefined
+  names and silently importing zero rows. Preserve the current official parser,
+  native storage, cancellation, and migration contracts. CK, JG, WC, and WF
+  canonical schema design remain separate iterations because they require new
+  normalized owners or header/child layouts.
+- Repository: `miyamamoto/jrvltsql`. Dedicated worktree:
+  `$WORKSPACE/20260817_jrvltsql_standard_storage`. Branch:
+  `agent/standard-storage-20260817`. Base and initial HEAD:
+  `1b66f45629b9ede51fc2f4415e688784b2f55a2c`. The dependency order remains
+  jrvltsql official-contract fixes and release first, then jrvltsql-nar, then
+  jvlink-mcp-server.
+- No implementation or test claim has been made yet. Next safe action: inspect
+  the current reverse mapping, canonical schema keys/types, BT/HY parser
+  outputs, cancellation behavior, and existing standard-storage tests; then add
+  one grouped red-first contract proving both undefined-owner paths currently
+  fail to store. STOP if either existing canonical table cannot represent the
+  full official parent contract, if a semantic/key mismatch would require data
+  migration beyond alias routing, or if another open PR already implements the
+  same exact change.
+- Initial inspection refined the scope before any implementation. HY is already
+  complete on this base through PR `#195`: the reverse mapping selects
+  `BAMEIORIGIN`, the legacy `MEANING` alias fails closed, both canonical/native
+  schemas use `KettoNum`, and both importers have SQLite and PostgreSQL
+  create/update/delete coverage. It must not be reimplemented from the older
+  audit snapshot.
+- BT hit the recorded STOP condition for alias-only routing. Current official BT
+  is 6,889 bytes and contains `HansyokuNum`, `KeitoId`, `KeitoName`, and the
+  6,800-byte `KeitoEx`; native `NL_BT` retains all fields and keys by
+  `HansyokuNum`. Existing standard `KEITO` omits both `HansyokuNum` and
+  `KeitoEx` and declares no primary key. Mapping `NL_BT` directly to that table
+  would silently discard official data and cannot provide deterministic
+  update/delete behavior. The minimum iteration is therefore one-record scope:
+  define the complete current canonical `KEITO` schema and key, reject legacy
+  partial tables before mutation, select `KEITO` as the reverse owner while
+  retaining `BLOOD` as a legacy lookup alias, and prove both importers on actual
+  storage. Next safe action: complete an independent official/history audit and
+  add the grouped red contract at the unchanged base SHA. STOP on ambiguous
+  deletion semantics, unsafe automatic migration of a populated partial table,
+  or a conflicting open PR.
+- Independent read-only Codex audit on unchanged production/test SHA
+  `1b66f45629b9ede51fc2f4415e688784b2f55a2c` compared the 4.8.0.2 and
+  4.9.0.1 workbooks plus SDK 5.0.0 manifest with the parser, native/standard
+  schemas, mappings, both importers, and tests. It confirmed that the current
+  6,889-byte parser and native `NL_BT` are exact, and that the existing history
+  ledger test already rejects the old 6,887-byte layout. No dual-layout parser
+  is required. The code changes in this iteration must therefore remain on the
+  current layout only.
+- The same audit independently reproduced five BT integrity defects: reverse
+  mapping selects undefined `BLOOD` instead of official `KEITO`; `KEITO` omits
+  `HansyokuNum`, `KeitoEx`, and its key; both importers store `DataKubun=0` as a
+  tombstone instead of deleting by `HansyokuNum`; the parser accepts undefined
+  status values; and the generic schema verifier accepts old/narrow bounded
+  text columns such as `VARCHAR(8)` where current BT requires 10 bytes. In
+  SQLite, standard import reported zero imported/one failed, while native
+  `1 -> 2 -> 0` reported success but retained the zero-status row.
+- Migration must be non-additive for an existing standard `KEITO`: missing
+  official values cannot be reconstructed for old rows. Before any record
+  mutation, keyless/partial/narrow `KEITO` and legacy-only `BLOOD` must fail
+  closed and preserve both rows and schema. `BLOOD -> NL_BT` remains a public
+  lookup alias, while the reverse owner becomes `KEITO`. HY was also rechecked:
+  its official layout, key, canonical/legacy mapping, deletion, and SQLite
+  contracts are already complete (`24 passed, 1 PostgreSQL opt-in skip`) and
+  require no code change in this iteration. PostgreSQL evidence remains a
+  release requirement rather than being inferred from the SQLite result.
+- Next safe action: add one grouped BT official semantic/storage contract and
+  run it against the unchanged implementation to capture red evidence for the
+  mapping/schema/status/deletion/non-additive/capacity failures. Then implement
+  the aggregate repair once. STOP if the capacity check cannot distinguish
+  bounded text from unbounded text on both SQLite and PostgreSQL, a failed
+  migration alters an existing table, or provider-order deletion is flattened.
+- Red-first evidence was captured at the unchanged implementation/base SHA.
+  `pytest -q -o addopts='' --basetemp=$WORKSPACE/pytest_bt_red
+  tests/test_bt_official_contract.py` completed `19 failed, 6 passed, 1
+  skipped`. The failures independently exposed all grouped defect classes:
+  three undefined statuses did not raise; `KEITO` mapping/schema were absent;
+  both standard importers could not store; both native importers retained a
+  tombstone after deletion; incomplete deletes did not fail; partial `KEITO`
+  was not rejected; narrow bounded text passed verification; and both
+  importers wrote into legacy-only `BLOOD`. The six greens covered official
+  status values, native round-trip, and exact/unbounded text acceptance. The
+  skip was the intentionally opt-in PostgreSQL contract. This is the required
+  pre-implementation negative evidence for the repaired checks.
+- The aggregate implementation now selects canonical `KEITO`, preserves the
+  `BLOOD` lookup alias while refusing legacy-only storage, completes the seven
+  standard business fields and `HansyokuNum` key, enforces BT status 0/1/2,
+  applies keyed physical deletion in provider order, and prevents additive
+  mutation of an existing partial `KEITO`. The shared verifier now rejects a
+  bounded CHAR/VARCHAR column narrower than the expected bounded contract while
+  accepting exact, wider, and unbounded text.
+- Pre-candidate verification is green: the grouped SQLite contract completed
+  `25 passed, 1 PostgreSQL opt-in skip`; the broader parser/history/mapping/
+  migration/importer/database selection completed `311 passed, 2 skipped`; and
+  strict MkDocs completed. A disposable PostgreSQL 16 container then ran the
+  complete BT contract `26 passed`, including both importers, native and
+  standard 10-character leading-zero key storage, a 6,800-character
+  explanation, physical deletion, and rejection of a populated narrow-key
+  table without row loss. The dedicated container and schema were removed.
+  Next safe action: commit one review candidate, run one independent Claude
+  Fable and Codex critical review on its full SHA, aggregate any actionable
+  findings, then execute final exact-SHA gates. STOP on any storage mutation
+  before schema rejection, review blocker, or PostgreSQL/SQLite divergence.
+- Candidate `af99773de6d5f1e3b7afd7fabf00d3b5b84932a2` was reviewed read-only by
+  Claude Code `2.1.233` with `--model fable`, session
+  `b1064e56-4d66-41af-9e99-130d59de7bf7`. Fable was selected because this
+  iteration modifies a fail-closed schema validator and migration ordering.
+  Claude returned GREEN after independently replaying the original 19 reds,
+  SQLite/PostgreSQL BT storage and deletion, parser boundaries, all declared
+  schemas, and full tests. It reported only the existing SQLite ResourceWarning
+  flake and minor coverage/documentation notes.
+- A separate fresh Codex critical review returned `NEEDS_CHANGES` on the same
+  clean exact SHA with two independently reproduced P1 findings that Claude's
+  table did not cover. First, the eager standard migration loop can ALTER and
+  commit a safely additive column in one table before discovering an
+  incompatible capacity, partial `KEITO`, or legacy-only `BLOOD`. Both
+  importers, both auto-commit modes, and `import_single_record` can therefore
+  fail while leaving unrelated schema mutated. Second, the capacity parser
+  conflates truly unbounded text with bounded spellings it does not recognize;
+  `NVARCHAR(8)`, `NCHAR(8)`, `CHAR VARYING(8)`, and `VARCHAR2(8)` all passed a
+  `VARCHAR(10)` contract. The Codex findings are accepted despite Claude's
+  GREEN because they have concrete false-green and mutation reproductions.
+- The existing grouped regression was extended rather than adding one test per
+  reviewer hypothesis. Red-first execution on the unchanged candidate completed
+  `10 failed, 23 passed, 1 skipped`: four unrecognized bounded spellings did not
+  raise; both importers in both auto-commit modes added `RACE.YoubiCD` before
+  rejecting an existing narrow `RecordSpec`; and both importers altered that
+  unrelated `RACE` before rejecting legacy-only `BLOOD`. Existing positive
+  cases, original BT behavior, and exact/unbounded text remained green. The
+  aggregate repair must distinguish bounded/unbounded declarations and perform
+  a read-only compatibility/legacy preflight across all existing standard
+  tables before the first additive ALTER.
+- The aggregated repair now parses any declared lossless-text type with a
+  numeric capacity (including national/variant spellings), preserves a distinct
+  unknown-bounded result instead of treating it as unbounded, and adds an
+  `allow_missing_columns` mode used only for read-only preflight. Both importers
+  first validate every existing standard table, strict canonical table,
+  coupled child, and known legacy/canonical pair; only after that entire
+  phase succeeds can the existing additive migration loop execute.
+- Post-repair grouped SQLite verification completed `33 passed, 1 PostgreSQL
+  opt-in skip`; the affected parser/history/mapping/migration/importer/database
+  selection completed `319 passed, 2 skipped`. A fresh disposable PostgreSQL
+  16 run completed the expanded contract `34 passed`, now including catalog
+  equality before/after mixed missing-column plus incompatible-capacity failure
+  for DataImporter auto-commit and OptimizedDataImporter caller-owned
+  transaction paths. The PostgreSQL schema and container were removed. Next
+  safe action: run mechanical checks, commit this single aggregated review
+  repair, then perform one exact-SHA final gate/review. STOP if any existing
+  declared schema becomes a false positive or full-suite/resource handling is
+  not clean enough for a repeatable release gate.
+- After rebasing onto prerequisite PR `#197` merge SHA
+  `755cf5a77d54e8a346ca6539b74841272fa5ae0b`, clean candidate
+  `4022f82eeddbf1c968e09fc5ba94cd2c17ce5110` passed the complete local suite
+  (`2,464 passed, 113 skipped, 15 subtests passed`) and disposable PostgreSQL
+  16 BT contract (`34 passed`). Test-gate, fatal lint, compileall, strict
+  MkDocs, and public-document checks also passed, but this candidate was not
+  accepted because the final independent Codex review found one remaining P1.
+- The remaining P1 was an explicit ordered-master preflight exclusion. An
+  existing `RECORD` with its official primary key but a narrow `RecordSpec`
+  and missing additive `Hondai` bypassed preflight; both importers and both
+  commit modes added the missing column, and `import_single_record` could also
+  store BT while retaining the incompatible existing type. This contradicted
+  the documented all-existing-table preflight contract.
+- Red-first evidence on unchanged `4022f82eeddbf1c968e09fc5ba94cd2c17ce5110`
+  extended the existing grouped regression rather than adding a new test per
+  path. The ordinary-table cases remained green while all six ordered-master
+  paths failed their expected rejection (`6 failed, 6 passed, 30 deselected`):
+  DataImporter and OptimizedDataImporter with both commit modes, plus both
+  DataImporter single-record modes.
+- The final aggregate repair now gives ordered masters a read-only existing
+  type/capacity preflight with missing columns allowed. Legacy key mismatches
+  remain non-blocking for unrelated records: additive migration already treats
+  them as a no-op, while the dedicated writer owns the complete field/key and
+  row-order checks when a matching record arrives.
+  Next safe action: rerun the grouped, affected, PostgreSQL, full, packaging,
+  and exact-SHA independent-review gates once. STOP on any ordered-master false
+  positive, schema mutation before rejection, failed gate, or review finding.
+- A first strict-key implementation was rejected before commit because four
+  existing RC/TK contracts correctly require a legacy ordered-master key to
+  remain non-blocking for unrelated imports. The retained preflight therefore
+  allows only that key mismatch while still rejecting incompatible existing
+  types and capacities; the additive migrator independently makes mismatched
+  keys a no-op. This preserves lazy dedicated-writer rejection without startup
+  mutation. The affected RC/YS/TK/migration/BT selection then passed `199
+  passed, 10 skipped`; the complete SQLite BT contract passed `41 passed, 1
+  skipped`; and disposable PostgreSQL 16 passed all `42` BT tests, including
+  ordinary and ordered-master catalog equality after rejection for both
+  importer paths. The disposable database was removed.
+- Final clean code candidate `ffd5f3acbe4df171a01c64d6b1ed787c8abb4907`
+  passed the complete local suite (`2,472 passed, 113 skipped, 15 subtests
+  passed`) and a fresh disposable PostgreSQL 16 BT contract (`42 passed`).
+  Test-gate validation, fatal/new-test lint, compileall, strict MkDocs,
+  wheel/sdist build, distribution-content exclusion, public-document scan,
+  retired-document absence, `git diff --check`, generated-artifact cleanup,
+  container cleanup, and clean-tree checks all passed.
+- The final independent Codex follow-up review of that exact SHA returned GREEN
+  with no P0/P1/P2 finding. It independently confirmed the ordered-master
+  rejection across both importers, both commit modes, single-record import,
+  legacy-key-only no-op behavior, dedicated-writer rejection, and the combined
+  legacy-key plus narrow-type case without schema or BT-row mutation. The final
+  worklog-only descendant is recorded in PR metadata instead of creating a
+  self-referential commit loop. Next safe action: push that clean descendant,
+  open the BT PR, request the one-time GitHub auxiliary review, and merge only
+  after all exact-head checks succeed and unresolved threads are zero.

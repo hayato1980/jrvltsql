@@ -223,6 +223,15 @@ def _definition_type(column_definition: str) -> str:
     return tokens[1]
 
 
+def _bounded_text_capacity(declared_type: str) -> Optional[int]:
+    """Return a declared text limit, None if unbounded, or -1 if unknown."""
+    normalized = re.sub(r"\s+", " ", declared_type.strip().upper())
+    if not _is_lossless_text_type(normalized) or "(" not in normalized:
+        return None
+    match = re.search(r"\(\s*(\d+)(?:\s+(?:BYTE|CHAR))?\s*\)\s*$", normalized)
+    return int(match.group(1)) if match else -1
+
+
 def _get_existing_column_types(db: BaseDatabase, table_name: str) -> Dict[str, str]:
     """Return actual declared types keyed by lower-cased column name."""
     if db.get_db_type() == "postgresql":
@@ -409,18 +418,36 @@ def migrate_all_tables(db: BaseDatabase, schemas: Dict[str, str]) -> int:
     return migrated
 
 
-def verify_table_schema(db: BaseDatabase, table_name: str, schema_sql: str) -> None:
+def verify_table_schema(
+    db: BaseDatabase,
+    table_name: str,
+    schema_sql: str,
+    *,
+    allow_missing_columns: bool = False,
+    allow_primary_key_mismatch: bool = False,
+) -> None:
     """Verify required columns and primary key after migration/creation.
 
     Extra legacy columns are allowed because the default migration policy is
-    additive. Missing required columns, a primary-key mismatch, or a temporal
-    or numeric column where lossless text is required are unsafe: imports must
-    stop instead of writing records against an obsolete layout.
+    additive. A primary-key mismatch, a temporal or numeric column where
+    lossless text is required, or an insufficient declared text capacity are
+    unsafe. ``allow_missing_columns`` and ``allow_primary_key_mismatch`` are
+    reserved for a read-only preflight immediately before an additive
+    migration; normal verification still requires every expected column and
+    key. The latter permits legacy ordered masters whose additive migrator will
+    refuse to alter a mismatched key and whose dedicated writer verifies the
+    complete schema before storing a matching record.
     """
     targets = _migration_targets(db)
     if targets != (db,):
         for target in targets:
-            verify_table_schema(target, table_name, schema_sql)
+            verify_table_schema(
+                target,
+                table_name,
+                schema_sql,
+                allow_missing_columns=allow_missing_columns,
+                allow_primary_key_mismatch=allow_primary_key_mismatch,
+            )
         return
 
     if not db.table_exists_strict(table_name):
@@ -459,16 +486,36 @@ def verify_table_schema(db: BaseDatabase, table_name: str, schema_sql: str) -> N
         and existing_types.get(column)
         and not _is_lossless_text_type(existing_types[column])
     )
+    expected_capacities = {
+        column.lower(): capacity
+        for column, definition in expected_definitions.items()
+        if (capacity := _bounded_text_capacity(_definition_type(definition))) is not None
+    }
+    insufficient_capacities = sorted(
+        f"{column} existing={existing_types[column]} minimum={minimum}"
+        for column, minimum in expected_capacities.items()
+        if column in existing_lower
+        and existing_types.get(column)
+        and _is_lossless_text_type(existing_types[column])
+        and (actual := _bounded_text_capacity(existing_types[column])) is not None
+        and actual < minimum
+    )
 
     problems = []
-    if missing_columns:
+    if missing_columns and not allow_missing_columns:
         problems.append(f"missing columns={missing_columns}")
-    if expected_pk_lower and existing_pk_lower != expected_pk_lower:
+    if (
+        expected_pk_lower
+        and existing_pk_lower != expected_pk_lower
+        and not allow_primary_key_mismatch
+    ):
         problems.append(f"primary key existing={existing_pk}, expected={expected_pk}")
     if unknown_text_types:
         problems.append(f"unknown column types={unknown_text_types}")
     if incompatible_text_types:
         problems.append(f"incompatible column types={incompatible_text_types}")
+    if insufficient_capacities:
+        problems.append(f"insufficient column capacities={insufficient_capacities}")
     if problems:
         raise SchemaMigrationError(
             f"Schema verification failed for {table_name}: " + "; ".join(problems)
