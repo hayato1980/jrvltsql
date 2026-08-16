@@ -24,7 +24,10 @@ Primary Keys Implemented:
 Race-related Tables:
     NL_RA, RT_RA: PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum)
     NL_SE, RT_SE: PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, Umaban)
-    NL_RC: PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, RecInfoKubun)
+    NL_RC: PRIMARY KEY (
+        RecInfoKubun, Year, MonthDay, JyoCD, Kaiji, Nichiji,
+        RaceNum, TokuNum, SyubetuCD, Kyori, TrackCD
+    )
     NL_TK: PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, KettoNum)
     NL_YS: PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji)
 
@@ -1045,10 +1048,11 @@ SCHEMAS = {
             TokuNum TEXT,
             Hondai TEXT,
             GradeCD TEXT,
-            SyubetuCD_TrackCD TEXT,
+            SyubetuCD TEXT,
             Kyori INTEGER,
+            TrackCD TEXT,
             RecKubun TEXT,
-            RecTime REAL,
+            RecTime TEXT,
             TenkoCD TEXT,
             SibaBabaCD TEXT,
             DirtBabaCD TEXT,
@@ -1058,13 +1062,32 @@ SCHEMAS = {
             RecUmaSexCD1 TEXT,
             RecUmaChokyosiCode1 TEXT,
             RecUmaChokyosiName1 TEXT,
-            RecUmaFutan1 REAL,
+            RecUmaFutan1 TEXT,
             RecUmaKisyuCode1 TEXT,
             RecUmaKisyuName1 TEXT,
             RecUmaKettoNum2 TEXT,
             RecUmaBamei2 TEXT,
-            RecordDelimiter TEXT,
-            PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, RecInfoKubun)
+            RecUmaUmaKigoCD2 TEXT,
+            RecUmaSexCD2 TEXT,
+            RecUmaChokyosiCode2 TEXT,
+            RecUmaChokyosiName2 TEXT,
+            RecUmaFutan2 TEXT,
+            RecUmaKisyuCode2 TEXT,
+            RecUmaKisyuName2 TEXT,
+            RecUmaKettoNum3 TEXT,
+            RecUmaBamei3 TEXT,
+            RecUmaUmaKigoCD3 TEXT,
+            RecUmaSexCD3 TEXT,
+            RecUmaChokyosiCode3 TEXT,
+            RecUmaChokyosiName3 TEXT,
+            RecUmaFutan3 TEXT,
+            RecUmaKisyuCode3 TEXT,
+            RecUmaKisyuName3 TEXT,
+            Crlf TEXT,
+            PRIMARY KEY (
+                RecInfoKubun, Year, MonthDay, JyoCD, Kaiji, Nichiji,
+                RaceNum, TokuNum, SyubetuCD, Kyori, TrackCD
+            )
         )
     """,
     "NL_SE": """

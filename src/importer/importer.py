@@ -119,6 +119,115 @@ def translate_standard_field_names(record: dict, table_name: str) -> dict:
     return translated
 
 
+_RC_STORAGE_TABLES = frozenset({"NL_RC", "RECORD"})
+_RC_KEY_COLUMNS = (
+    "RecInfoKubun",
+    "Year",
+    "MonthDay",
+    "JyoCD",
+    "Kaiji",
+    "Nichiji",
+    "RaceNum",
+    "TokuNum",
+    "SyubetuCD",
+    "Kyori",
+    "TrackCD",
+)
+
+
+def verify_rc_storage_schema(database: BaseDatabase, table_name: str) -> bool:
+    """Fail closed unless RC storage has every field and the official key."""
+    if table_name not in _RC_STORAGE_TABLES:
+        return False
+
+    from src.database.migration import verify_table_schema
+    from src.database.schema import SCHEMAS
+    from src.database.schema_jravan import JRAVAN_SCHEMAS
+
+    schema_sql = SCHEMAS.get(table_name) or JRAVAN_SCHEMAS.get(table_name)
+    if schema_sql is None:
+        raise SchemaMigrationError(f"RC storage schema is undefined: {table_name}")
+    verify_table_schema(database, table_name, schema_sql)
+    return True
+
+
+def apply_rc_batch(
+    database: BaseDatabase,
+    table_name: str,
+    rows: list[dict],
+    *,
+    commit_batch: bool,
+    optimized: bool,
+) -> int:
+    """Atomically apply RC upserts/deletes in provider order."""
+    if table_name not in _RC_STORAGE_TABLES:
+        raise SchemaMigrationError(f"Unsupported RC storage table: {table_name}")
+    if not rows:
+        return 0
+
+    for row in rows:
+        missing = [column for column in _RC_KEY_COLUMNS if row.get(column) in (None, "")]
+        if missing:
+            raise SchemaMigrationError(f"RC record has incomplete official key: {missing}")
+        # The current format uses 1 for ordinary rows and 0 for deletion.
+        # Before Ver.2.1.3, RC also used 2 for a non-delete row; the 2005
+        # transition unified 1/2 to 1 without changing the 501-byte layout.
+        if row.get("DataKubun") not in {"0", "1", "2"}:
+            raise SchemaMigrationError(
+                f"RC record has unsupported DataKubun: {row.get('DataKubun')!r}"
+            )
+
+    def begin_if_owned() -> None:
+        if commit_batch:
+            begin = getattr(database, "begin_transaction", None)
+            if begin is not None:
+                begin()
+
+    def rollback_or_invalidate() -> None:
+        try:
+            database.rollback()
+        except DatabaseError:
+            try:
+                database.invalidate_connection()
+            except Exception as disconnect_error:
+                logger.error(
+                    "Failed to invalidate database after RC rollback failure",
+                    table=table_name,
+                    error=str(disconnect_error),
+                )
+            raise
+
+    def write_upserts(upserts: list[dict]) -> None:
+        if not upserts:
+            return
+        if optimized and hasattr(database, "insert_many_optimized"):
+            database.insert_many_optimized(table_name, upserts)
+        else:
+            database.insert_many(table_name, upserts, use_replace=True)
+
+    try:
+        begin_if_owned()
+        pending_upserts: list[dict] = []
+        for row in rows:
+            if row["DataKubun"] != "0":
+                pending_upserts.append(row)
+                continue
+            write_upserts(pending_upserts)
+            pending_upserts = []
+            where = " AND ".join(f"{column} = ?" for column in _RC_KEY_COLUMNS)
+            database.execute(
+                f"DELETE FROM {table_name} WHERE {where}",
+                tuple(row[column] for column in _RC_KEY_COLUMNS),
+            )
+        write_upserts(pending_upserts)
+        if commit_batch:
+            database.commit()
+    except DatabaseError:
+        rollback_or_invalidate()
+        raise
+    return len(rows)
+
+
 def _expanded_record_fingerprint(record: dict, table_name: str) -> Optional[tuple]:
     """Identify duplicate expanded rows that share one official wide record."""
     if table_name not in {"BATAIJYU", "MINING", "TAISENGATA_MINING"}:
@@ -910,6 +1019,7 @@ class DataImporter:
         self._batches_processed = 0
         self._jravan_tables_ready = not use_jravan_schema
         self._verified_mining_native_tables: set[str] = set()
+        self._verified_rc_tables: set[str] = set()
 
         # Map record types to table names
         # Note: Table names match schema.py table definitions (e.g. NL_RA, not NL_RA_RACE)
@@ -935,7 +1045,7 @@ class DataImporter:
             "BN": "NL_BN",  # 生産者マスター
             "HN": "NL_HN",  # 繁殖馬マスター
             "SK": "NL_SK",  # 産駒マスター
-            "RC": "NL_RC",  # レースコメント
+            "RC": "NL_RC",  # レコードマスタ
             "CC": "NL_CC",  # コース変更
             "TC": "NL_TC",  # タイムコメント
             "CS": "NL_CS",  # コメントショート
@@ -992,7 +1102,11 @@ class DataImporter:
             schema_sql = JRAVAN_SCHEMAS.get(standard_name)
             if schema_sql and self.database.table_exists(standard_name):
                 migrate_table_if_needed(self.database, standard_name, schema_sql, commit=commit)
-                verify_table_schema(self.database, standard_name, schema_sql)
+                # RECORD has a deliberately non-automatic key migration. Verify
+                # it only when an RC row is actually about to be written so an
+                # obsolete unused table cannot block unrelated standard imports.
+                if standard_name not in _RC_STORAGE_TABLES:
+                    verify_table_schema(self.database, standard_name, schema_sql)
         for child_table in ("CHOKYO_SEISEKI", "KISYU_SEISEKI"):
             child_schema = JRAVAN_SCHEMAS.get(child_table)
             if child_schema and self.database.table_exists(child_table):
@@ -1248,6 +1362,10 @@ class DataImporter:
         if not batch:
             return
 
+        if table_name not in self._verified_rc_tables:
+            if verify_rc_storage_schema(self.database, table_name):
+                self._verified_rc_tables.add(table_name)
+
         verified_ch_result_table = None
         if _ch_result_table_name(table_name) is not None:
             try:
@@ -1289,7 +1407,10 @@ class DataImporter:
             prepared_ks: list[tuple[dict, str, list[dict]]] = []
             for original_record, record in zip(batch, clean_batch, strict=True):
                 converted_record = self._convert_record(record, table_name)
-                if self._has_complete_primary_key(table_name, converted_record):
+                if (
+                    table_name in _RC_STORAGE_TABLES
+                    or self._has_complete_primary_key(table_name, converted_record)
+                ):
                     converted_batch.append(converted_record)
                     coupled = prepare_ch_coupled_rows(
                         self.database,
@@ -1318,6 +1439,19 @@ class DataImporter:
                     )
 
             if not converted_batch:
+                return
+
+            if table_name in _RC_STORAGE_TABLES:
+                rows = apply_rc_batch(
+                    self.database,
+                    table_name,
+                    converted_batch,
+                    commit_batch=auto_commit,
+                    optimized=False,
+                )
+                self._records_imported += rows
+                if rows:
+                    self._batches_processed += 1
                 return
 
             if prepared_ks:
@@ -1377,6 +1511,7 @@ class DataImporter:
             if (
                 _ch_result_table_name(table_name) is not None
                 or _ks_result_table_name(table_name) is not None
+                or table_name in _RC_STORAGE_TABLES
             ):
                 # Coupled master writes must never enter the parent-only fallback.
                 raise
@@ -1470,6 +1605,9 @@ class DataImporter:
             return False
 
         try:
+            if table_name not in self._verified_rc_tables:
+                if verify_rc_storage_schema(self.database, table_name):
+                    self._verified_rc_tables.add(table_name)
             if table_name not in self._verified_mining_native_tables:
                 if verify_mining_native_schema(self.database, record, table_name):
                     self._verified_mining_native_tables.add(table_name)
@@ -1495,7 +1633,10 @@ class DataImporter:
                 return True
             clean_record = self._record_for_table(record, table_name)
             converted_record = self._convert_record(clean_record, table_name)
-            if not self._has_complete_primary_key(table_name, converted_record):
+            if (
+                table_name not in _RC_STORAGE_TABLES
+                and not self._has_complete_primary_key(table_name, converted_record)
+            ):
                 self._records_failed += 1
                 logger.warning(
                     "Skipping record with incomplete primary key",
@@ -1503,6 +1644,18 @@ class DataImporter:
                     primary_key=get_table_primary_key_columns(table_name),
                 )
                 return False
+            if table_name in _RC_STORAGE_TABLES:
+                rows = apply_rc_batch(
+                    self.database,
+                    table_name,
+                    [converted_record],
+                    commit_batch=auto_commit,
+                    optimized=False,
+                )
+                self._records_imported += rows
+                if rows:
+                    self._batches_processed += 1
+                return rows == 1
             coupled = prepare_ch_coupled_rows(self.database, record, table_name)
             if coupled is not None:
                 result_table, result_rows = coupled
