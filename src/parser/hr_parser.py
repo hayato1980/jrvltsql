@@ -8,6 +8,8 @@ JV-Data仕様書 Ver.4.9.0.1に基づく払戻レコードのパース
 """
 
 from typing import Dict, Optional
+
+from src.parser.base import validate_fixed_record
 from src.utils.logger import get_logger
 
 
@@ -40,11 +42,7 @@ class HRParser:
     @staticmethod
     def decode_field(data: bytes) -> str:
         """バイトデータをデコードして文字列に変換"""
-        try:
-            # cp932でデコード、空白を除去
-            return data.decode("cp932", errors="replace").strip()
-        except Exception:
-            return ""
+        return data.decode("cp932", errors="strict").strip()
 
     def parse(self, data: bytes) -> Optional[Dict[str, str]]:
         """
@@ -57,12 +55,7 @@ class HRParser:
             フィールド名をキーとした辞書、エラー時はNone
         """
         try:
-            # レコード長チェック（最小限のデータがあるかどうか）
-            if len(data) < 100:
-                self.logger.warning(
-                    f"HRレコード長不足: expected>={self.RECORD_LENGTH}, actual={len(data)}"
-                )
-                return None
+            validate_fixed_record(data, self.RECORD_TYPE, self.RECORD_LENGTH)
 
             # フィールド抽出
             result = {}

@@ -4,12 +4,12 @@
 
 Tests that parsers correctly handle:
 1. JRA standard records (proper field extraction)
-2. Full-struct vs flat records (H1/H6 28955-byte structs vs 317-byte per-combination)
+2. Official full physical records and rejection of repository reconstructions
 3. Edge cases (short records, empty fields, Japanese text)
 
-Key finding: JV-Link returns full JV-Data structs (e.g., H1 = 28,955 bytes
-with arrays for all bet type combinations), but our parsers also handle
-per-combination flat records (H1 = 317 bytes). Both formats are tested here.
+JV-Link returns full JV-Data structs (for example, H1 = 28,955 bytes with
+arrays for all bet type combinations). Repository-generated per-combination
+buffers are not provider records and must not enter the default parser path.
 """
 
 import json
@@ -134,13 +134,10 @@ class TestH1Parser:
 
     H1 is the full 28,955-byte H1 struct (JV_H1_HYOSU_ZENKAKE),
     containing arrays for all bet combinations (28 tansho, 153 umaren, etc.).
-    Our current parser expects 317-byte flat records with single entries per bet type.
-
-    This is a known format mismatch documented in issue #027.
     """
 
-    def test_h1_flat_record_parse(self, factory):
-        """H1 flat record (317 bytes) parses correctly with current parser."""
+    def test_h1_repository_flat_record_is_rejected(self, factory):
+        """The repository-only 317-byte reconstruction is rejected."""
         data = make_h1_record_flat(
             jyo_cd="05",
             tan_uma="03",
@@ -149,11 +146,7 @@ class TestH1Parser:
         parser = factory.get_parser("H1")
         result = parser.parse(data)
 
-        assert result is not None
-        assert isinstance(result, dict)  # Flat returns single dict
-        assert result["RecordSpec"] == "H1"
-        assert result["TanUma"] == "03"
-        assert result["TanHyo"] == "00000012345"
+        assert result is None
 
     def test_h1_full_record_size(self):
         """Full H1 record is 28,955 bytes."""
@@ -261,7 +254,8 @@ class TestAllParsersBasic:
         data = record_type.encode('cp932')
         data += b'1'  # DataKubun
         data += b'20260101'  # MakeDate
-        data += b' ' * (record_len - len(data))
+        data += b' ' * (record_len - len(data) - 2)
+        data += b'\r\n'
 
         # Should not raise
         result = parser.parse(data)
@@ -284,15 +278,15 @@ class TestAllParsersBasic:
             pass  # Acceptable to raise on empty data
 
     @pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
-    def test_parser_handles_short_data(self, factory, record_type):
-        """Parser handles data shorter than expected without crashing."""
+    def test_parser_rejects_short_data(self, factory, record_type):
+        """A short physical record is rejected rather than partially parsed."""
         parser = factory.get_parser(record_type)
         short_data = record_type.encode('cp932') + b'1' + b'20260101'
-        # Should not raise (may return None or partial data)
         try:
             result = parser.parse(short_data)
-        except Exception:
-            pytest.fail(f"{record_type} parser crashed on short data")
+        except ValueError:
+            return
+        assert result is None
 
 
 def test_wf_parser_preserves_all_official_payout_slots(factory):

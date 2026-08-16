@@ -18,20 +18,12 @@ from src.parser.bn_parser import BNParser
 from src.parser.br_parser import BRParser
 from src.parser.ch_parser import CHParser
 from src.parser.dm_parser import DMParser
-from src.parser.h1_parser import H1Parser
-from src.parser.h6_parser import H6Parser
 from src.parser.hc_parser import HCParser
 from src.parser.hn_parser import HNParser
 from src.parser.hs_parser import HSParser
 from src.parser.hy_parser import HYParser
 from src.parser.jg_parser import JGParser
 from src.parser.ks_parser import KSParser
-from src.parser.o1_parser import O1Parser
-from src.parser.o2_parser import O2Parser
-from src.parser.o3_parser import O3Parser
-from src.parser.o4_parser import O4Parser
-from src.parser.o5_parser import O5Parser
-from src.parser.o6_parser import O6Parser
 from src.parser.ra_parser import RAParser
 from src.parser.rc_parser import RCParser
 from src.parser.se_parser import SEParser
@@ -49,20 +41,12 @@ PARSER_MAP = {
     "BR": (BRParser, BRParser.RECORD_LENGTH),
     "CH": (CHParser, CHParser.RECORD_LENGTH),
     "DM": (DMParser, DMParser.RECORD_LENGTH),
-    "H1": (H1Parser, 317),   # Fixture files use flat format (317 bytes)
-    "H6": (H6Parser, 78),    # Fixture files use flat format (78 bytes)
     "HC": (HCParser, 60),
     "HN": (HNParser, 251),
     "HS": (HSParser, 200),
     "HY": (HYParser, 123),
     "JG": (JGParser, 80),
     "KS": (KSParser, KSParser.RECORD_LENGTH),
-    "O1": (O1Parser, 107),    # Fixture files use legacy compact format (107 bytes)
-    "O2": (O2Parser, 66),     # Fixture files use legacy compact format (66 bytes)
-    "O3": (O3Parser, 70),     # Fixture files use legacy compact format (70 bytes)
-    "O4": (O4Parser, 66),     # Fixture files use legacy compact format (66 bytes)
-    "O5": (O5Parser, 68),     # Fixture files use legacy compact format (68 bytes)
-    "O6": (O6Parser, 70),     # Fixture files use legacy compact format (70 bytes)
     "RA": (RAParser, RAParser.RECORD_LENGTH),
     "RC": (RCParser, RCParser.RECORD_LENGTH),
     "SE": (SEParser, 463),
@@ -72,7 +56,10 @@ PARSER_MAP = {
     "WF": (WFParser, 169),  # Historical fixture uses the obsolete compact layout.
     "YS": (YSParser, YSParser.RECORD_LENGTH),
 }
-EXPANDED_RECORD_TYPES = {"DM", "TM", "O1", "O2", "O3", "O4", "O5", "O6"}
+# The old O1-O6 fixture files were reconstructed from already-expanded SQL
+# rows, not preserved provider records. They cannot prove a physical parser
+# contract; complete current layouts are covered in test_time_series.py.
+EXPANDED_RECORD_TYPES = {"DM", "TM"}
 LEGACY_RECONSTRUCTED_LENGTHS = {
     "BN": 387,
     "BR": 455,

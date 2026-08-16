@@ -285,6 +285,19 @@
 
 ## Audit iteration: fixed-record envelope
 
+- Continuation started after PR #191 merged as
+  `a04733e640c67ad5d9c27860a6253c16c9fce850`. The current dedicated worktree
+  is `$WORKSPACE/20260816_jrvltsql_fixed_record`, branch
+  `agent/fixed-record-envelope-20260816`, based on that exact `origin/master`.
+  Only the fixed-record implementation/test diff was transferred from the old
+  audit worktree; its first current-base commit is
+  `3c958876e9761b9650948f5811c9aca009ef5e07`.
+- This is a fail-closed validator change, so the planned independent coding
+  review uses Claude Code 2.1.226 with `--model fable --effort high` in session
+  `81f08480-ef14-435c-9a06-1f7592fbfac5` for this worktree and iteration. The
+  first read-only attempt hit the subscription session limit before producing
+  a review, so it is not evidence; resume this same session after the reported
+  20:10 JST reset rather than starting a new one.
 - Audited all 38 current record IDs against their current physical lengths,
   record identifiers, CP932 decoding, and CRLF terminators. Several custom
   parsers and inherited fixed-field parsers accepted adjacent or truncated
@@ -296,29 +309,176 @@
   correctly classified as invalid blank domain payloads rather than envelope
   defects.
 - Added a shared fixed-record validator and applied it to every current parser.
-  H1/H6 accept only their exact full official physical record and their exact
-  repository compatibility-row shape; no intermediate, empty, short, or
-  oversized shape is accepted.
-- Green evidence on the uncommitted aggregate candidate:
+  Empty, short, oversized, wrong-ID, non-CRLF, and whole-record-invalid CP932
+  inputs are rejected before persistence. A later independent review found
+  that the H1/H6 repository reconstructions were still incorrectly included as
+  accepted lengths; the grouped correction is recorded below.
+- Historical green evidence on the pre-rebase aggregate candidate, retained
+  only as development evidence and not as a gate for the current SHA:
   - official record/parser/storage/metadata selection: 1,167 passed,
     47 skipped;
   - current/retired data-spec matrix and cancellation-state storage:
     278 passed, 20 skipped;
   - CI syntax/undefined-name selection: zero findings;
   - `git diff --check`: clean.
+- The first full current-base suite on implementation commit
+  `3c958876e9761b9650948f5811c9aca009ef5e07` was deliberately treated as a
+  gate and failed: 73 failed, 2,375 passed, 90 skipped. Most failures exposed
+  an older broad parser fixture that supplied approximate lengths or omitted
+  CRLF while still expecting success; one old robustness assertion explicitly
+  expected oversized HR input to parse. Those expectations contradicted the
+  new physical-envelope contract. The two CLI failures did not reproduce in
+  isolation or with their preceding module and were not attributed to this
+  change without evidence.
+- Updated that existing fixture to derive each positive sample from the
+  parser's current declared physical length, terminate every fixed record with
+  CRLF, and keep only the already-required domain payload population. The
+  oversized HR expectation now rejects trailing bytes like RA and SE. The
+  focused parser/envelope selection passed 482 tests, then the complete suite
+  passed 2,448 tests with 90 environment-specific skips, 15 subtests, and only
+  three pre-existing pytest return-value warnings. The previously observed CLI
+  failures were green in the complete rerun.
+- On clean full SHA `7b6c853cf5eb86aa9c2bad184eb2df2ebda846d6`, the
+  independent length/factory parity check plus the focused parser/envelope
+  selection passed 483 tests. The complete suite then passed 2,449 tests with
+  90 environment-specific skips, 15 subtests, and the same three pre-existing
+  warnings. This is pre-repair development evidence and is non-gating because
+  that SHA still accepted the repository-only H1/H6 layouts. Fatal flake8
+  syntax/undefined-name checks reported zero, and mypy with imports skipped
+  reported zero issues in all 38 changed parser files.
+- Repository-wide mypy is not green: the direct workflow command reports 79
+  pre-existing errors in 20 files. The workflow's `continue-on-error` setting
+  makes the job look successful, so neither PR #191 nor this iteration treats
+  that status as a zero-error type gate. PR #191 received a public evidence
+  correction. This debt remains explicit for the release audit rather than
+  being misreported or silently attributed to the fixed-record change.
+- A local distribution rebuild was attempted on the exact SHA but the current
+  environment lacks the `build` module. That missing optional local tool is
+  not waived as release evidence: wheel/sdist generation plus the content gate
+  must run in the PR workflow on the final pushed SHA.
 - A separate static pass found an obsolete `RT_RC` route that is not part of
   the official current realtime record list. Real jockey changes use the
   current `JC` route; the stale route is incompatible with normal `RC` parser
   dispatch. It will be removed with a dedicated red-first regression after the
   two already-developed iterations are split and merged.
 
+- PR #192 was opened for this iteration. Candidate
+  `a8b36412e32116f44c55594178e78694ec7e58b6` passed GitHub Linux tests,
+  lint, distribution build/content checks, and the Windows launcher job in run
+  `31937860098`; performance was the expected skipped job. Its worktree was
+  clean and unresolved review threads were zero, but that candidate was not
+  merged because independent review found two data-integrity blockers.
+- Existing PR heads #173 (`2cb09402bb1cc71f83543b43dab6b4e84534fea1`)
+  and #174 (`100d568f8b9cbf3bccf6dba7e5415da7c7cf544b`) were compared again with
+  `master` `a04733e640c67ad5d9c27860a6253c16c9fce850`. Their parser/schema intent
+  is fully represented by #175 through #183, and #174's remaining metadata
+  intent is represented more safely by #191's executable-schema mapping. The
+  focused replacement evidence was 262 passed, 10 skipped, and 3 subtests.
+  Courteous evidence-based comments thanked the contributor, identified the
+  replacement PRs, and explained why merging either stale head would regress
+  the normalized storage work; both PRs were then closed as superseded.
+- A fresh mechanical extraction of the official 4.9.0.1 format worksheet found
+  exactly 38 current record types. Every parser `RECORD_LENGTH` matches its
+  official physical length. Comparing 4.8.0.2 with 4.9.0.1 found exactly seven
+  changed physical lengths (BR, BT, CK, HN, HS, SK, and UM), all matching the
+  implementation. H1 remains 28,955 bytes and H6 remains 102,890 bytes in both
+  official versions; the repository-only 317/78-byte reconstructions are not
+  provider layouts.
+- The independent Codex review of exact SHA
+  `a8b36412e32116f44c55594178e78694ec7e58b6` reproduced both blockers. The
+  default factory accepted the two repository-only vote reconstructions, so a
+  provider record truncated to either exact synthetic length could be stored.
+  Whole-record strict CP932 validation also missed a valid two-byte sequence
+  split across adjacent fixed fields; field decoders using replacement mode
+  then persisted U+FFFD or an empty value instead of rejecting the row.
+- Red-first proof on that implementation: the new focused regression reported
+  six failures. Two showed H1/H6 synthetic lengths returning parsed data; four
+  showed AV, BaseParser/BT, H1, and H6 accepting a CP932 pair split between the
+  final byte of `MakeDate` and the first byte of the following physical field.
+  The whole raw record decoded strictly, proving the missing check was the
+  field boundary rather than generic invalid encoding.
+- The grouped repair removes the synthetic H1/H6 layouts from the provider
+  parsers and deletes their production parsing branches. Every field decoder
+  that previously used replacement mode now decodes its fixed byte slice
+  strictly. BaseParser re-raises a field UnicodeDecodeError rather than
+  converting it into a partial row. The H1/H6 and O1-O6 repository
+  reconstructions are no longer labelled or exercised as provider vote
+  records; the broader reconstructed fixture suite remains a release-blocking
+  follow-up and is not described as repaired here. Post-repair, the six red
+  cases pass. Those replaced cases are three H1 flat tests, two H6 flat tests,
+  and `test_sqlite_standard_vote_flat_compatibility_layouts`. Extending the
+  same boundary contract to every parser whose decoder changed gives 98 passed
+  in the complete 38-type envelope matrix. The affected
+  parser/fixture/storage selection reports 395 passed with 20
+  environment-specific skips. A scan of production parsers finds no remaining
+  replacement-mode decoder or synthetic flat-length branch.
+- The complete local suite initially stopped during collection because the
+  new scratch Python 3.12 environment did not yet contain the optional
+  PostgreSQL driver or dotenv test dependency; no test executed in that run.
+  After installing the repository's test/optional dependencies into that
+  external environment, the same suite completed with 2,443 passed, 90
+  environment-specific skips, 15 subtests passed, and the same three existing
+  pytest return-value warnings. Workflow-equivalent fatal flake8 checks report
+  zero, changed-parser mypy with imported modules skipped reports zero, and
+  `git diff --check` is clean. Repo-wide all-rule lint/type debt remains
+  distinct from this candidate and is not reported as green.
+- GitHub workflow run `31939754174` on exact SHA
+  `1efd998b66d416bc4c2763deeadaadfe5ff1e386` ran the workflow's configured
+  subset and reported 944 passed. It is distinct from, and does not replace,
+  the local full-suite result of 2,443 passed on the same SHA.
+- Codex independently expanded the official SDK 5.0.0 Python structures into
+  46,985 scalar leaves across 94 structures and 93 repeated templates. All 38
+  current record lengths were gap/overlap free and matched both the executable
+  parser declarations and JV-Data 4.9.0.1. The 4.8.0.2 to 4.9.0.1 physical
+  changes are UM 1577, BR 537, HN 245, SK 178, CK 6864, HS 196, and BT 6887;
+  current N-layout dispatch rejects all seven previous lengths. The source
+  SHA-256 values used were `6a567f10b601115eca350571f36d27d9d28bd2d3835ea72b5bc057711155d4a7`
+  for JV-Data 4.8.0.2, `23bafd375f704acbdd696b5032ac1619f17d47e882587d6e7954b610527a8234`
+  for JV-Data 4.9.0.1, and
+  `8994f985fce846f1b4fcbc3ddf2a5c6394c586a458478346891222b3b61e4ee3`
+  for the SDK structure.
+- A warning-strict local audit on exact SHA
+  `1efd998b66d416bc4c2763deeadaadfe5ff1e386` reported 3 failed, 2,455
+  passed, 84 skipped, and 15 subtests. The three failures are pytest functions
+  returning non-None values in `test_key_generation`,
+  `test_fetch_time_series_method`, and `test_list_methods`; this is explicit
+  red evidence for the separate test-truth iteration, not a green result for
+  this candidate.
+- The official-contract coverage audit found release blockers outside this
+  iteration: HY assigns the official KettoNum/Bamei/Origin spans to the wrong
+  fields and primary key; CK omits 988 of 1,729 official leaves; standard
+  schema routing cannot store BT, CK, HY, JG, WC, or WF; executable metadata
+  disagrees with 70 of 78 schemas; and the current real-data E2E harness has
+  invalid call signatures, no PostgreSQL path, and no fail-closed fresh
+  download/EOF/close evidence. These require separate red-first PRs before a
+  release.
+- Claude Code 2.1.233 resumed the same Fable session
+  `81f08480-ef14-435c-9a06-1f7592fbfac5` after its 20:10 JST reset and
+  independently reviewed clean exact SHA
+  `1efd998b66d416bc4c2763deeadaadfe5ff1e386` read-only. Fable was retained
+  because this fail-closed boundary has high rollback cost. It confirmed the
+  official source hashes, all 38 current lengths, removal of H1 317/H6 78,
+  strict fixed-field CP932 boundaries, and no official-leaf boundary split.
+  It classified two remaining PR-local blockers: the new 38-type gate was not
+  in the workflow whitelist, and the existing oversized-record test also had
+  an invalid delimiter. The grouped follow-up adds the gate to CI and makes
+  the oversized regression retain a valid CRLF delimiter. CK, HY, the six
+  standard-schema routes, the broader CI contract gap, and real-data E2E were
+  independently classified as downstream release blockers.
+- Before the grouped follow-up commit, the current-record and parser selection
+  passed 511 tests with coverage disabled, workflow YAML parsed successfully,
+  fatal flake8 syntax/undefined-name checks reported zero, and
+  `git diff --check` was clean. This is development evidence; the same focused
+  selection and the workflow-configured suite must be bound to the pushed full
+  SHA before merge.
+
 ## Next safe action
 
-- Complete PR #191 at its final exact SHA with proportional local tests, strict
-  docs, disclosure/distribution checks, aggregated review findings, unresolved
-  threads zero, green Linux and Windows checks, and a clean worktree. Merge it before
-  rebasing the fixed-record envelope iteration onto the resulting
-  `origin/master`. Then repair the fail-open real-data E2E harness and remove
-  the obsolete realtime route as separate red-first iterations. Stop before
-  version changes or authenticated acquisition until all audit iterations are
+- Run the focused envelope/parser/workflow checks for the grouped PR #192
+  follow-up, commit and push once, and bind replacement checks to the resulting
+  full SHA. Reply to and resolve both review threads with exact evidence. Merge
+  only when required checks are green, unresolved threads are zero, and the
+  worktree is clean. Start the test-truth and compact official-oracle work from
+  the latest merged `origin/master`; stop before version changes or
+  authenticated acquisition until all release-blocking audit iterations are
   merged.

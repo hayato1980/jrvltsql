@@ -13,6 +13,38 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def validate_fixed_record(
+    record: bytes,
+    record_type: str,
+    expected_lengths: int | Tuple[int, ...],
+) -> None:
+    """Validate a complete fixed-length JV-Data physical record.
+
+    Unknown lengths, a mismatched record ID, a non-CRLF terminator, and bytes
+    that are not valid CP932 are rejected before any field can be persisted.
+    """
+
+    lengths = (
+        (expected_lengths,)
+        if isinstance(expected_lengths, int)
+        else tuple(expected_lengths)
+    )
+    if len(record) not in lengths:
+        raise ValueError(
+            f"{record_type} record length mismatch: "
+            f"expected={lengths}, actual={len(record)}"
+        )
+    expected_type = record_type.encode("ascii")
+    if record[:2] != expected_type:
+        raise ValueError(
+            f"Record type mismatch: expected {record_type}, "
+            f"got {record[:2]!r}"
+        )
+    if record[-2:] != b"\r\n":
+        raise ValueError(f"{record_type} record delimiter must be CRLF")
+    record.decode(ENCODING_JVDATA, errors="strict")
+
+
 @dataclass
 class FieldDef:
     """Field definition for fixed-length record parsing.
@@ -126,9 +158,13 @@ class BaseParser(ABC):
         if not record:
             raise ValueError("Empty record")
 
+        record_length = getattr(self, "RECORD_LENGTH", None)
+        if record_length is not None:
+            validate_fixed_record(record, self.record_type, record_length)
+
         # JV-Data positions and lengths are byte-based. Decode only after
         # slicing so CP932 multibyte text cannot shift later field offsets.
-        actual_type = record[:2].decode(ENCODING_JVDATA, errors="replace")
+        actual_type = record[:2].decode(ENCODING_JVDATA, errors="strict")
         if actual_type != self.record_type:
             raise ValueError(
                 f"Record type mismatch: expected {self.record_type}, got {actual_type}"
@@ -140,6 +176,10 @@ class BaseParser(ABC):
             try:
                 value = self._extract_field(record, field_def)
                 result[field_def.name] = value
+            except UnicodeDecodeError:
+                # A fixed-width field boundary may split an otherwise valid
+                # whole-record CP932 sequence. Never persist a partial row.
+                raise
             except Exception as e:
                 logger.warning(
                     f"Failed to parse field {field_def.name}",
@@ -164,7 +204,7 @@ class BaseParser(ABC):
         """
         end = field_def.start + field_def.length
         raw_value = record[field_def.start:end].decode(
-            ENCODING_JVDATA, errors="replace"
+            ENCODING_JVDATA, errors="strict"
         )
 
         # Strip whitespace

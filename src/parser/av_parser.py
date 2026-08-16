@@ -2,7 +2,7 @@
 
 from typing import List
 
-from src.parser.base import BaseParser, FieldDef
+from src.parser.base import BaseParser, FieldDef, validate_fixed_record
 
 
 class AVParser(BaseParser):
@@ -14,15 +14,13 @@ class AVParser(BaseParser):
 
     @staticmethod
     def decode_field(data: bytes) -> str:
-        try:
-            return data.decode("cp932", errors="replace").strip()
-        except Exception:
-            return ""
+        return data.decode("cp932", errors="strict").strip()
 
     def parse(self, record: bytes) -> dict:
         """Parse AV by byte offsets because Bamei is a multibyte cp932 field."""
         if not record:
             raise ValueError("Empty record")
+        validate_fixed_record(record, self.record_type, self.RECORD_LENGTH)
         if self.decode_field(record[0:2]) != self.record_type:
             raise ValueError(
                 f"Record type mismatch: expected {self.record_type}, "

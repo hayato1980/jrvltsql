@@ -96,7 +96,7 @@ def make_h6_record_flat(
     toroku_tosu="12", syusso_tosu="10",
     kumi="010203", hyo="00000010000", ninki="0001",
 ) -> bytes:
-    """Create flat H6 record (78 bytes)."""
+    """Create the former 78-byte repository reconstruction for rejection tests."""
     data = bytearray(78)
     data[0:2] = _pad("H6", 2)
     data[2:3] = _pad(data_kubun, 1)
@@ -239,52 +239,29 @@ class TestH1FullStructExpansion:
         assert counts_05 == counts_09
 
 
-class TestH1FlatParsing:
-    """Test H1 flat (317 byte) record parsing."""
+class TestH1RepositoryOnlyFlatLayout:
+    """The former 317-byte reconstruction is not provider JV-Data."""
 
-    def test_flat_returns_dict(self):
-        """Flat record returns a single dict, not a list."""
-        data = make_h1_record_flat()
-        result = H1Parser().parse(data)
-        assert isinstance(result, dict)
-
-    def test_flat_contains_tan_fields(self):
-        """Flat record has TanUma, TanHyo fields."""
-        data = make_h1_record_flat(tan_uma="05", tan_hyo="00000099000")
-        result = H1Parser().parse(data)
-        assert result["TanUma"] == "05"
-        assert result["TanHyo"] == "00000099000"
-
-    def test_flat_all_total_fields(self):
-        """Flat record has all 14 total fields."""
-        data = make_h1_record_flat()
-        result = H1Parser().parse(data)
-        for name in _TOTAL_NAMES:
-            assert name in result
+    def test_flat_layout_is_rejected(self):
+        assert H1Parser().parse(make_h1_record_flat()) is None
 
 
 class TestH1EdgeCases:
     """Edge cases for H1 parser."""
 
-    def test_empty_data_returns_flat_parse(self):
-        """Empty bytes falls back to flat parse (returns dict with empty fields)."""
-        result = H1Parser().parse(b"")
-        # H1 parser attempts flat parse as fallback even for empty data
-        assert isinstance(result, dict)
-        assert result["RecordSpec"] == ""
+    def test_empty_data_is_rejected(self):
+        """Empty bytes are not a physical record."""
+        assert H1Parser().parse(b"") is None
 
-    def test_short_data_attempts_flat_parse(self):
-        """Data shorter than flat format still attempts flat parse."""
+    def test_short_data_is_rejected(self):
+        """Data shorter than the declared flat layout is rejected."""
         data = b"H1" + b" " * 50
-        result = H1Parser().parse(data)
-        assert isinstance(result, dict)
-        assert result["RecordSpec"] == "H1"
+        assert H1Parser().parse(data) is None
 
-    def test_between_flat_and_full_size(self):
-        """Data between flat (317) and full (28955) is parsed as flat."""
+    def test_between_flat_and_full_size_is_rejected(self):
+        """An unknown length between the two declared layouts is rejected."""
         data = b"H1" + b" " * 500
-        result = H1Parser().parse(data)
-        assert isinstance(result, dict)
+        assert H1Parser().parse(data) is None
 
     def test_all_empty_entries_returns_header_only(self):
         """Full struct with no valid entries returns header row."""
@@ -393,43 +370,29 @@ class TestH6FullStructExpansion:
         assert len(rows) == 100
 
 
-class TestH6FlatParsing:
-    """Test H6 flat (78 byte) record parsing."""
+class TestH6RepositoryOnlyFlatLayout:
+    """The former 78-byte reconstruction is not provider JV-Data."""
 
-    def test_flat_returns_dict(self):
-        """Flat H6 record returns a single dict."""
-        data = make_h6_record_flat()
-        result = H6Parser().parse(data)
-        assert isinstance(result, dict)
-
-    def test_flat_fields_correct(self):
-        """Flat H6 fields are correctly parsed."""
-        data = make_h6_record_flat(kumi="030201", hyo="00000077000", ninki="0010")
-        result = H6Parser().parse(data)
-        assert result["SanrentanKumi"] == "030201"
-        assert result["SanrentanHyo"] == "00000077000"
-        assert result["SanrentanNinki"] == "0010"
+    def test_flat_layout_is_rejected(self):
+        assert H6Parser().parse(make_h6_record_flat()) is None
 
 
 class TestH6EdgeCases:
     """Edge cases for H6 parser."""
 
-    def test_empty_data_returns_dict(self):
-        """Empty bytes returns dict with empty fields (flat parse fallback)."""
-        result = H6Parser().parse(b"")
-        assert isinstance(result, dict)
+    def test_empty_data_is_rejected(self):
+        """Empty bytes are not a physical record."""
+        assert H6Parser().parse(b"") is None
 
     def test_short_data(self):
-        """Short data attempts flat parse."""
+        """Short data is rejected."""
         data = b"H6" + b" " * 50
-        result = H6Parser().parse(data)
-        assert result is None or isinstance(result, dict)
+        assert H6Parser().parse(data) is None
 
     def test_between_flat_and_full(self):
-        """Data between 78 and 102890 bytes is parsed as flat."""
+        """Data between 78 and 102890 bytes is rejected."""
         data = b"H6" + b" " * 200
-        result = H6Parser().parse(data)
-        assert result is None or isinstance(result, dict)
+        assert H6Parser().parse(data) is None
 
 
 
