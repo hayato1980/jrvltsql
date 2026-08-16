@@ -85,7 +85,7 @@ Workout/Training Tables:
     NL_WC: PRIMARY KEY (ChokyoDate, ChokyoTime, KettoNum, Course)
 
 Horse Name Table:
-    NL_HY: PRIMARY KEY (Bamei)
+    NL_HY: PRIMARY KEY (KettoNum)
 
 Benefits with PRIMARY KEY constraints:
 - INSERT OR REPLACE will update existing records instead of duplicating
@@ -707,11 +707,10 @@ SCHEMAS = {
             RecordSpec TEXT,
             DataKubun TEXT,
             MakeDate TEXT,
+            KettoNum TEXT,
             Bamei TEXT,
-            Field5 TEXT,
-            Field6 TEXT,
-            Field7 TEXT,
-            PRIMARY KEY (Bamei)
+            Origin TEXT,
+            PRIMARY KEY (KettoNum)
         )
     """,
     "NL_JG": """

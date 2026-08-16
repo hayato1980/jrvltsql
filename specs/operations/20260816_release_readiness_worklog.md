@@ -1001,3 +1001,154 @@
   gates, commit and push one clean candidate, then perform the single final
   exact-SHA gate (checks, unresolved threads, review evidence, and clean
   worktree) before merging PR #194.
+
+## Iteration: HY official semantics and storage contract (2026-08-17 JST)
+
+- Objective and minimum scope: correct only the HY record's current official
+  field semantics and its native plus standard-schema persistence contract.
+  The required official byte layout is `KettoNum` at 12-21, `Bamei` at 22-57,
+  and `Origin` at 58-121, with the horse registration number as the durable
+  identity. CK expansion, unrelated standard routes, global metadata repair,
+  and the strict fresh-acquisition release gate remain separate iterations.
+- Repository: `miyamamoto/jrvltsql`.
+- Worktree: `/home/keiba/scratch/20260817_jrvltsql_hy_official`.
+- Branch: `agent/hy-official-20260817`.
+- Base / initial HEAD / `origin/master` full SHA:
+  `3a0b108cfca22d9c2741aed96942178f4d475f90`.
+- Dependency and production state: PR #194 merged as
+  `3a0b108cfca22d9c2741aed96942178f4d475f90`; the release remains v1.6.10 and
+  no version, tag, release lock, or support statement changes in this
+  iteration. The dependency order remains HY, CK, remaining standard routes,
+  metadata integrity, strict fresh acquisition/storage E2E, documentation and
+  open-PR audit, then the jrvltsql release before downstream NAR and MCP work.
+- Official evidence remains the pinned SDK 5.0.0 Python structure source with
+  SHA-256
+  `8994f985fce846f1b4fcbc3ddf2a5c6394c586a458478346891222b3b61e4ee3`
+  and the merged official manifest generated from it. Proprietary source and
+  provider records are not copied into the repository.
+- Red-first requirement: before changing parser/schema/import code, add the
+  smallest paired contract that fails on the current implementation for all
+  three semantic fields, the native primary key, the standard BAMEIORIGIN
+  owner/schema, and SQLite/PostgreSQL-equivalent round-trip behavior. A passing
+  parser-only test is insufficient. Do not infer a data migration or silently
+  preserve the old misnamed columns without an explicit compatibility
+  decision supported by schema-migration behavior.
+- STOP conditions: do not merge if either storage mode drops HY, if duplicate
+  horse identifiers do not deterministically upsert, if the schema migration
+  can destroy existing rows, if official byte boundaries are not independently
+  bound, or if any required test/review/thread/clean-worktree gate is missing.
+- Next safe action: inspect the merged HY parser, native schema, standard
+  BAMEIORIGIN schema/routing, importer mappings, migration behavior, and all HY
+  tests; then write and execute the grouped red contract before implementation.
+
+### HY implementation and pre-candidate verification (2026-08-17 JST)
+
+- Read-only comparison against the pinned SDK 5.0.0 manifest confirmed the
+  complete 123-byte `JV_HY_BAMEIORIGIN` layout: the 11-byte record header,
+  `KettoNum` 12-21, `Bamei` 22-57, `Origin` 58-121, and `crlf` 122-123. The
+  previous parser incorrectly exposed the registration number as `Bamei` and
+  the two following official fields as anonymous `Field5`/`Field6`; the native
+  schema consequently used the misnamed value as its primary key, while the
+  standard BAMEIORIGIN schema had no durable identity and the reverse mapping
+  selected an absent legacy table name.
+- Red-first evidence before implementation: the grouped parser, schema,
+  routing, migration-safety, SQLite round-trip/upsert, and PostgreSQL-equivalent
+  contract produced `12 failed, 4 passed, 1 skipped`. This demonstrated that
+  the new checks could reject the old implementation rather than only blessing
+  a green path.
+- Implemented the official parser names and boundaries; made `KettoNum` the
+  native and BAMEIORIGIN primary key; added `Bamei` and `Origin` to the standard
+  schema; selected canonical BAMEIORIGIN for HY standard storage while keeping
+  MEANING as a lookup-only compatibility alias; and made legacy-only MEANING
+  storage fail closed without changing existing rows. Existing obsolete native
+  and keyless BAMEIORIGIN schemas are also rejected without destructive
+  migration.
+- SQLite verification after the implementation: `16 passed, 1 skipped` in
+  `tests/test_hy_official_contract.py`, covering both `DataImporter` and
+  `OptimizedDataImporter`, native and standard schema, deterministic upsert,
+  and all fail-closed row-preservation paths.
+- Real PostgreSQL verification used a disposable PostgreSQL 16 container bound
+  only to `127.0.0.1:55440`, with a unique test schema. With
+  `JLTSQL_RUN_POSTGRESQL_INTEGRATION=1` and the PostgreSQL extra installed, the
+  same contract completed `17 passed in 0.47s`; both importers stored and
+  updated the official HY row in native NL_HY and standard BAMEIORIGIN. The
+  fixture dropped its schema and the disposable container was stopped and
+  auto-removed; a subsequent container-name lookup was empty. No shared KPS or
+  production database was mutated.
+- Broader affected verification on CPython 3.12 covered the HY contract,
+  reconstructed binary fixtures, current-record validation, the official
+  manifest oracle, mappings, indexes, all schemas, migrations, and both
+  importers: `336 passed, 1 skipped in 2.77s`. The skip was the explicitly
+  gated PostgreSQL case already executed separately above.
+- Local mechanical gates passed: `scripts/validate_test_gate.py` (`TEST GATE
+  PASS`), fatal flake8 E9/F63/F7/F82 (`0`), Ruff and Black for the new contract,
+  and `git diff --check`.
+- Implementation commit full SHA
+  `02484d516376ed7469d744ee64c8cab484905612` was created from full base SHA
+  `3a0b108cfca22d9c2741aed96942178f4d475f90`. Its exact-SHA verification passed:
+  the affected selection produced `336 passed, 1 skipped in 2.70s`; the
+  explicitly enabled disposable PostgreSQL path produced `17 passed in 0.53s`;
+  the test gate, fatal flake8, new-test Ruff/Black, and committed-diff check all
+  passed. The exact-SHA PostgreSQL container and test schema were removed.
+- This worklog evidence update is intentionally documentation-only, so its own
+  resulting commit cannot self-record its SHA. The final candidate full SHA and
+  any GitHub checks/review evidence will be recorded in the PR, as required by
+  the no-self-reference rule. Next safe action: commit this evidence-only
+  update, push one PR, then run the single final gate on the resulting PR head
+  and resolve all review threads before merge. STOP if the implementation diff
+  changes, the final exact-SHA gate fails, or the worktree is not clean.
+
+### PR #195 critical-review repair (2026-08-17 JST)
+
+- PR #195 was opened at full candidate SHA
+  `76b0c66f14fc3b856c676d8d6eeb6be9f24beb32`. Its initial Actions run
+  `31957369681` completed successfully for the Linux full test and distribution
+  job, fatal lint, and Windows launcher contract; the performance job was the
+  expected zero-step PR skip. CodeRabbit was rate-limited and did not perform a
+  review, so its neutral status is not counted as review evidence.
+- A read-only independent Codex critical review used `gpt-5.6-sol` at `xhigh`
+  on that exact clean candidate. This choice followed the user's authorized
+  substitute for an unavailable external reviewer and was appropriate because
+  status-dependent deletion and actual-schema verification are fail-open data
+  integrity boundaries. The review returned `NEEDS_CHANGES` with two P1s and
+  one documentation correction; it made no file or GitHub changes.
+- Independent re-reading of both official JV-Data 4.8.0.2 and 4.9.0.1
+  workbooks confirmed that HY is unchanged across those versions: its only
+  statuses are `1` for the supplied value and `0` for deletion, and
+  `KettoNum` is the deletion/storage key. The initial PR accepted arbitrary
+  status values and treated `0` as a successful tombstone upsert. Both
+  importers reproduced the defect in native NL_HY and standard BAMEIORIGIN.
+- The same review constructed a partial legacy native table containing all
+  current columns but `PRIMARY KEY (Bamei)`. Both importers reported complete
+  success while allowing one horse to occupy multiple rows and one shared name
+  to replace a different horse. The prior obsolete-table test exercised only
+  `SchemaManager`, so its statement that all fail-closed paths were covered was
+  premature. The schema module header also still named the obsolete key.
+- Red-first review contract, run before the repair, produced `9 failed, 15
+  passed, 1 skipped`. The failures separately proved rejection was absent for
+  status `2`, all four SQLite native/standard plus importer deletion paths,
+  both obsolete native importer paths, and both current-column/wrong-key native
+  paths.
+- Implemented strict HY status `0/1` validation; provider-order keyed deletion
+  by `KettoNum` for NL_HY and BAMEIORIGIN through the shared erase path; cached
+  actual-schema verification before every HY upsert or delete in both
+  importers; and corrected the schema header key. Verification rejects missing
+  columns or any primary key other than `KettoNum` with
+  `SchemaMigrationError`, before mutation.
+- Post-repair SQLite contract: `24 passed, 1 skipped in 0.78s`. Explicitly
+  enabled disposable PostgreSQL 16 verification, including create, upsert, all
+  four keyed-deletion paths, wrong-schema safety contracts, and cleanup:
+  `25 passed in 1.11s`. The unique schema and loopback-only container were
+  removed after the run.
+- Broader affected verification covered the expanded record erase machinery
+  and realtime cancellation distinction in addition to the prior parser,
+  schema, mapping, migration, importer, reconstructed-fixture, and official
+  oracle selection: `457 passed, 21 skipped, 12 subtests passed in 7.18s`.
+  The skips are explicit live/PostgreSQL gates; the HY PostgreSQL gate was run
+  separately above. The fail-closed CI test gate, fatal flake8, new-contract
+  Ruff/Black, and `git diff --check` also passed.
+- Current review repair remains uncommitted and therefore is not final evidence.
+  Next safe action: commit/push one aggregated review repair, then perform one
+  exact-SHA critical verification and GitHub final gate. STOP if any deletion
+  leaves a tombstone, any malformed schema changes a row, or the PR head lacks
+  clean exact-SHA evidence.
