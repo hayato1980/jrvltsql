@@ -5,14 +5,14 @@
 ローカルのPostgreSQLに接続してテーブル作成・データ挿入をテストします。
 
 使用方法:
-    python tests/test_postgresql.py
+    JLTSQL_RUN_POSTGRESQL_INTEGRATION=1 pytest tests/test_postgresql.py
 
-環境変数:
-    PGHOST: ホスト名 (デフォルト: localhost)
-    PGPORT: ポート番号 (デフォルト: 5432)
-    PGDATABASE: データベース名 (デフォルト: keiba_test)
-    PGUSER: ユーザー名 (デフォルト: postgres)
-    PGPASSWORD: パスワード (デフォルト: postgres)
+環境変数（scripts/setup_pg_test_db.py と同一契約。POSTGRES_* が PG* より優先）:
+    POSTGRES_HOST / PGHOST: ホスト名 (デフォルト: localhost)
+    POSTGRES_PORT / PGPORT: ポート番号 (デフォルト: 5432)
+    POSTGRES_DB / PGDATABASE: データベース名 (デフォルト: jltsql_test)
+    POSTGRES_USER / PGUSER: ユーザー名 (デフォルト: jltsql)
+    POSTGRES_PASSWORD / PGPASSWORD: パスワード (デフォルト: 空)
 """
 
 import os
@@ -21,9 +21,114 @@ from pathlib import Path
 
 import pytest
 
+RUN_POSTGRESQL_INTEGRATION = (
+    os.environ.get("JLTSQL_RUN_POSTGRESQL_INTEGRATION") == "1"
+)
+postgresql_integration = pytest.mark.skipif(
+    not RUN_POSTGRESQL_INTEGRATION,
+    reason="set JLTSQL_RUN_POSTGRESQL_INTEGRATION=1 to run live PostgreSQL tests",
+)
+
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+from scripts.setup_pg_test_db import postgresql_test_config, setup_test_database  # noqa: E402
+
+LIVE_POSTGRESQL_ENV = (
+    "POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD",
+    "PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD",
+)
+_DEFAULT_LIVE_CONFIG = {
+    "host": "localhost",
+    "port": 5432,
+    "database": "jltsql_test",
+    "user": "jltsql",
+    "password": "",
+    "connect_timeout": 5,
+}
+
+
+@pytest.mark.parametrize(
+    ("environ", "expected"),
+    [
+        ({}, _DEFAULT_LIVE_CONFIG),
+        (
+            {"PGHOST": "pg.internal", "PGPORT": "6543", "PGDATABASE": "legacy db",
+             "PGUSER": "legacy", "PGPASSWORD": "legacy-value"},
+            {**_DEFAULT_LIVE_CONFIG, "host": "pg.internal", "port": 6543,
+             "database": "legacy db", "user": "legacy", "password": "legacy-value"},
+        ),
+        (
+            {"PGDATABASE": "legacy db", "POSTGRES_DB": "primary_db", "POSTGRES_USER": "primary"},
+            {**_DEFAULT_LIVE_CONFIG, "database": "primary_db", "user": "primary"},
+        ),
+    ],
+    ids=["defaults", "pg-variables", "postgres-variables-win"],
+)
+def test_live_postgresql_config_contract_is_shared(monkeypatch, environ, expected):
+    """Every live PostgreSQL entry point resolves one env/default contract."""
+    from tests import test_e2e_comprehensive, test_metadata_application
+
+    for name in LIVE_POSTGRESQL_ENV:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
+
+    assert postgresql_test_config() == expected
+    assert test_e2e_comprehensive.postgresql_test_config is postgresql_test_config
+    assert test_metadata_application.postgresql_test_config is postgresql_test_config
+
+
+def test_setup_pg_test_db_uses_shared_contract_connect_timeout_and_quoted_identifier(
+    monkeypatch, capsys
+):
+    """The bootstrap script uses psycopg3 connect_timeout and a quoted CREATE DATABASE."""
+    import psycopg
+
+    executed = []
+    connect_kwargs = {}
+
+    class _Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, statement, params=None):
+            executed.append((statement, params))
+
+        def fetchone(self):
+            return None
+
+    class _Connection:
+        def cursor(self):
+            return _Cursor()
+
+        def close(self):
+            pass
+
+    def _connect(**kwargs):
+        connect_kwargs.update(kwargs)
+        return _Connection()
+
+    for name in LIVE_POSTGRESQL_ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("POSTGRES_DB", 'weird"db')
+    monkeypatch.setenv("POSTGRES_PASSWORD", "password-value")
+    monkeypatch.setattr(psycopg, "connect", _connect)
+
+    assert setup_test_database() is True
+    assert connect_kwargs["dbname"] == "postgres"
+    assert connect_kwargs["password"] == "password-value"
+    assert connect_kwargs["connect_timeout"] == 5
+    assert "timeout" not in connect_kwargs
+    assert connect_kwargs["user"] == "jltsql"
+    create_statement = executed[-1][0]
+    assert isinstance(create_statement, psycopg.sql.Composed)
+    assert create_statement.as_string(None) == 'CREATE DATABASE "weird""db"'
+    assert "password-value" not in capsys.readouterr().out
 
 
 def test_normalize_blank_numeric_insert_values():
@@ -263,15 +368,15 @@ PostgreSQLに接続できませんでした。以下を確認してください:
 3. 接続設定:
 
    環境変数で設定するか、デフォルト値を使用:
-   - PGHOST=localhost
-   - PGPORT=5432
-   - PGDATABASE=keiba_test
-   - PGUSER=postgres
-   - PGPASSWORD=postgres
+   - POSTGRES_HOST / PGHOST=localhost
+   - POSTGRES_PORT / PGPORT=5432
+   - POSTGRES_DB / PGDATABASE=jltsql_test
+   - POSTGRES_USER / PGUSER=jltsql
+   - POSTGRES_PASSWORD / PGPASSWORD=(空)
 
    テスト用データベースを作成:
    > psql -U postgres
-   postgres=# CREATE DATABASE keiba_test;
+   postgres=# CREATE DATABASE jltsql_test;
    postgres=# \\q
 
 4. psqlへのパス:
@@ -284,6 +389,7 @@ PostgreSQLに接続できませんでした。以下を確認してください:
 """)
 
 
+@postgresql_integration
 def test_connection():
     """PostgreSQL接続テスト"""
     print("=" * 60)
@@ -291,14 +397,7 @@ def test_connection():
     print("=" * 60)
 
     # 設定を取得
-    config = {
-        "host": os.environ.get("PGHOST", "localhost"),
-        "port": int(os.environ.get("PGPORT", 5432)),
-        "database": os.environ.get("PGDATABASE", "keiba_test"),
-        "user": os.environ.get("PGUSER", "postgres"),
-        "password": os.environ.get("PGPASSWORD", "postgres"),
-        "connect_timeout": 5,
-    }
+    config = postgresql_test_config()
 
     print(f"\n接続設定:")
     print(f"  Host: {config['host']}")
@@ -316,7 +415,7 @@ def test_connection():
         print(f"  [ERROR] ドライバーがインストールされていません: {e}")
         print(f"\n  インストール方法:")
         print('    pip install "psycopg[binary]"')
-        pytest.skip("PostgreSQL driver not available")
+        pytest.fail(f"PostgreSQL integration was requested but no driver is available: {e}")
 
     # 接続テスト
     print(f"\n接続テスト...")
@@ -330,21 +429,23 @@ def test_connection():
     except Exception as e:
         print(f"  [ERROR] 接続失敗: {e}")
         print_installation_guide()
-        pytest.skip("PostgreSQL driver not available")
+        raise
 
     # バージョン確認
     print(f"\nPostgreSQLバージョン...")
     try:
         result = db.fetch_one("SELECT version()")
-        if result:
-            # pg8000はリストを返す、psycopgはdictを返す
-            if isinstance(result, (list, tuple)):
-                version = result[0]
-            else:
-                version = result.get("version", result)
-            print(f"  {version}")
+        assert result
+        # pg8000はリストを返す、psycopgはdictを返す
+        if isinstance(result, (list, tuple)):
+            version = result[0]
+        else:
+            version = result.get("version", result)
+        assert version
+        print(f"  {version}")
     except Exception as e:
         print(f"  [ERROR] バージョン取得失敗: {e}")
+        raise
 
     # テーブル作成テスト
     print(f"\nテーブル作成テスト...")
@@ -364,7 +465,7 @@ def test_connection():
     except Exception as e:
         print(f"  [ERROR] テーブル作成失敗: {e}")
         db.disconnect()
-        pytest.skip("PostgreSQL driver not available")
+        raise
 
     # データ挿入テスト
     print(f"\nデータ挿入テスト...")
@@ -386,7 +487,7 @@ def test_connection():
     except Exception as e:
         print(f"  [ERROR] データ挿入失敗: {e}")
         db.disconnect()
-        pytest.skip("PostgreSQL driver not available")
+        raise
 
     # データ読み取りテスト
     print(f"\nデータ読み取りテスト...")
@@ -397,6 +498,7 @@ def test_connection():
 
         # 全行取得
         rows = db.fetch_all("SELECT name, value FROM test_jltsql ORDER BY value")
+        assert len(rows) == 4
         print(f"  全行数: {len(rows)}")
         for r in rows:
             print(f"    {r}")
@@ -404,7 +506,7 @@ def test_connection():
     except Exception as e:
         print(f"  [ERROR] データ読み取り失敗: {e}")
         db.disconnect()
-        pytest.skip("PostgreSQL driver not available")
+        raise
 
     # クリーンアップ
     print(f"\nクリーンアップ...")
@@ -413,6 +515,7 @@ def test_connection():
         print(f"  [OK] テストテーブル削除完了")
     except Exception as e:
         print(f"  [WARNING] クリーンアップ失敗: {e}")
+        raise
 
     # 切断
     db.disconnect()
@@ -423,20 +526,14 @@ def test_connection():
     print("=" * 60)
 
 
+@postgresql_integration
 def test_schema_creation():
     """スキーマ作成テスト (NL_RAテーブル)"""
     print("\n" + "=" * 60)
     print("スキーマ作成テスト (NL_RAテーブル)")
     print("=" * 60)
 
-    config = {
-        "host": os.environ.get("PGHOST", "localhost"),
-        "port": int(os.environ.get("PGPORT", 5432)),
-        "database": os.environ.get("PGDATABASE", "keiba_test"),
-        "user": os.environ.get("PGUSER", "postgres"),
-        "password": os.environ.get("PGPASSWORD", "postgres"),
-        "connect_timeout": 5,
-    }
+    config = postgresql_test_config()
 
     try:
         from src.database.postgresql_handler import PostgreSQLDatabase
@@ -448,8 +545,7 @@ def test_schema_creation():
         # NL_RAスキーマを取得してPostgreSQL用に変換
         sqlite_schema = SCHEMAS.get("NL_RA", "")
         if not sqlite_schema:
-            print("  [ERROR] NL_RAスキーマが見つかりません")
-            pytest.skip("PostgreSQL driver not available")
+            pytest.fail("NL_RA schema is missing")
 
         # SQLiteスキーマをPostgreSQL用に変換
         pg_schema = sqlite_schema
@@ -479,9 +575,10 @@ def test_schema_creation():
         print(f"  [ERROR] スキーマ作成テスト失敗: {e}")
         import traceback
         traceback.print_exc()
-        pytest.skip("PostgreSQL driver not available")
+        raise
 
 
+@postgresql_integration
 def test_table_exists_and_column_lookups_respect_search_path():
     """search_path が非 public スキーマを指す環境で、table_exists() /
     migration.py の既存カラム・主キー取得が正しいテーブルを解決すること。
@@ -493,26 +590,16 @@ def test_table_exists_and_column_lookups_respect_search_path():
     2. 複数スキーマに同名テーブルがある場合、current_schema() だけでは
        search_path の優先順位どおりに一意特定できなかった。
     """
-    config = {
-        "host": os.environ.get("PGHOST", "localhost"),
-        "port": int(os.environ.get("PGPORT", 5432)),
-        "database": os.environ.get("PGDATABASE", "keiba_test"),
-        "user": os.environ.get("PGUSER", "postgres"),
-        "password": os.environ.get("PGPASSWORD", "postgres"),
-        "connect_timeout": 5,
-    }
+    config = postgresql_test_config()
 
-    try:
-        from src.database.postgresql_handler import PostgreSQLDatabase
-        from src.database.migration import (
-            _get_existing_columns,
-            _get_existing_primary_key_columns,
-        )
+    from src.database.postgresql_handler import PostgreSQLDatabase
+    from src.database.migration import (
+        _get_existing_columns,
+        _get_existing_primary_key_columns,
+    )
 
-        db = PostgreSQLDatabase(config)
-        db.connect()
-    except Exception:
-        pytest.skip("PostgreSQL driver not available")
+    db = PostgreSQLDatabase(config)
+    db.connect()
 
     schema_a = "jltsql_test_search_path_a"
     schema_b = "jltsql_test_search_path_b"
@@ -556,17 +643,3 @@ def test_table_exists_and_column_lookups_respect_search_path():
         db.execute("SET search_path TO public")
         db.commit()
         db.disconnect()
-
-
-if __name__ == "__main__":
-    success = True
-
-    # 基本接続テスト
-    if not test_connection():
-        success = False
-    else:
-        # スキーマ作成テスト
-        if not test_schema_creation():
-            success = False
-
-    sys.exit(0 if success else 1)

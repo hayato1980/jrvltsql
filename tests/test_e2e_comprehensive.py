@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.setup_pg_test_db import postgresql_test_config
 from src.database.schema import SCHEMAS, SchemaManager
 from src.database.sqlite_handler import SQLiteDatabase
 
@@ -30,7 +31,12 @@ try:
     from src.database.postgresql_handler import PostgreSQLDatabase
     POSTGRESQL_AVAILABLE = True
 except ImportError:
+    PostgreSQLDatabase = None
     POSTGRESQL_AVAILABLE = False
+
+RUN_POSTGRESQL_INTEGRATION = (
+    os.environ.get("JLTSQL_RUN_POSTGRESQL_INTEGRATION") == "1"
+)
 
 
 class TestAllTablesCreation(unittest.TestCase):
@@ -149,12 +155,10 @@ class TestSQLiteAllTables(unittest.TestCase):
         # Create tables first
         results = self.schema_manager.create_all_tables()
 
-        # Test with working NL tables only
-        test_tables = ['NL_RA', 'NL_BN', 'NL_CC']  # Using tables we know work
+        test_tables = ['NL_RA', 'NL_BN', 'NL_CC']
 
         for table_name in test_tables:
-            if not results.get(table_name, False):
-                continue  # Skip if table creation failed
+            self.assertTrue(results[table_name], f"Failed to create {table_name}")
 
             # Just verify table exists and can be queried
             # Don't insert data as we don't know the exact column structure
@@ -166,12 +170,10 @@ class TestSQLiteAllTables(unittest.TestCase):
         # Create tables first
         results = self.schema_manager.create_all_tables()
 
-        # Test with working RT tables only
-        test_tables = ['RT_RA', 'RT_AV', 'RT_CC', 'RT_O1']  # Using tables we know work
+        test_tables = ['RT_RA', 'RT_AV', 'RT_CC', 'RT_O1']
 
         for table_name in test_tables:
-            if not results.get(table_name, False):
-                continue  # Skip if table creation failed
+            self.assertTrue(results[table_name], f"Failed to create {table_name}")
 
             # Just verify table exists and can be queried
             # Don't insert data as we don't know the exact column structure
@@ -179,27 +181,22 @@ class TestSQLiteAllTables(unittest.TestCase):
             self.assertIsNotNone(result, f"Should be able to query {table_name}")
 
 
-@unittest.skipUnless(POSTGRESQL_AVAILABLE, "PostgreSQL not available")
+@unittest.skipUnless(
+    RUN_POSTGRESQL_INTEGRATION,
+    "set JLTSQL_RUN_POSTGRESQL_INTEGRATION=1 to run live PostgreSQL tests",
+)
 class TestPostgreSQLAllTables(unittest.TestCase):
     """Test all tables in PostgreSQL database."""
 
     def setUp(self):
         """Set up PostgreSQL test database."""
-        # Try to connect to local test database
-        pg_config = {
-            'host': os.getenv('POSTGRES_HOST', 'localhost'),
-            'port': int(os.getenv('POSTGRES_PORT', 5432)),
-            'database': os.getenv('POSTGRES_DB', 'jltsql_test'),
-            'user': os.getenv('POSTGRES_USER', 'postgres'),
-            'password': os.getenv('POSTGRES_PASSWORD', 'postgres')
-        }
+        pg_config = postgresql_test_config()
 
-        try:
-            self.db = PostgreSQLDatabase(pg_config)
-            self.db.connect()
-            self.schema_manager = SchemaManager(self.db)
-        except Exception as e:
-            self.skipTest(f"PostgreSQL not available: {e}")
+        if not POSTGRESQL_AVAILABLE:
+            self.fail("PostgreSQL integration was requested but no driver is available")
+        self.db = PostgreSQLDatabase(pg_config)
+        self.db.connect()
+        self.schema_manager = SchemaManager(self.db)
 
     def tearDown(self):
         """Clean up."""
@@ -241,8 +238,7 @@ class TestPostgreSQLAllTables(unittest.TestCase):
         ]
 
         for table_name in test_tables:
-            if not results.get(table_name, False):
-                continue  # Skip if table creation failed
+            self.assertTrue(results[table_name], f"Failed to create {table_name}")
 
             # Verify table exists and can be queried
             result = self.db.fetch_all(f'SELECT * FROM {table_name}')
