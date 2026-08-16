@@ -21,6 +21,8 @@ HYO_INFO4: kumi(6) + hyo(11) + ninki(4) = 21
 """
 
 from typing import Dict, List, Optional, Union
+from uuid import uuid4
+
 from src.utils.logger import get_logger
 
 
@@ -50,6 +52,14 @@ class H6Parser:
         except Exception:
             return ""
 
+    @staticmethod
+    def decode_fixed_flags(data: bytes) -> str:
+        """Decode positional one-byte flags without shifting blank entries."""
+        try:
+            return data.decode("cp932", errors="replace")
+        except Exception:
+            return " " * len(data)
+
     def _parse_header(self, data: bytes) -> Dict[str, str]:
         """Parse common header fields (first 50 bytes)."""
         h = {}
@@ -65,7 +75,7 @@ class H6Parser:
         h["TorokuTosu"] = self.decode_field(data[27:29])
         h["SyussoTosu"] = self.decode_field(data[29:31])
         h["HatubaiFlag"] = self.decode_field(data[31:32])
-        h["HenkanUma"] = self.decode_field(data[32:50])
+        h["HenkanUma"] = self.decode_fixed_flags(data[32:50])
         return h
 
     def parse(self, data: bytes) -> Optional[Union[Dict[str, str], List[Dict[str, str]]]]:
@@ -92,10 +102,13 @@ class H6Parser:
     def _parse_full(self, data: bytes) -> List[Dict[str, str]]:
         """Parse full 102,890-byte struct into multiple rows."""
         header = self._parse_header(data)
+        header["_physical_record_id"] = uuid4().hex
 
         # Parse HyoTotal[2] × 11 bytes at position 102866
         total_hyo = self.decode_field(data[102866:102877])
         henkan_hyo = self.decode_field(data[102877:102888])
+        header["SanrentanHyoTotal"] = total_hyo
+        header["SanrentanHenkanHyoTotal"] = henkan_hyo
 
         rows = []
         # HyoSanrentan[4896] × 21 bytes starting at position 50
@@ -113,8 +126,6 @@ class H6Parser:
             row["SanrentanKumi"] = kumi
             row["SanrentanHyo"] = hyo
             row["SanrentanNinki"] = ninki
-            row["SanrentanHyoTotal"] = total_hyo
-            row["SanrentanHenkanHyoTotal"] = henkan_hyo
             rows.append(row)
 
         return rows if rows else [header]
