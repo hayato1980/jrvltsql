@@ -403,6 +403,37 @@ class TestQuickstartUpdateSpecs:
             }
         ]
 
+    @pytest.mark.parametrize(
+        "data_spec,expected_type,expected_message",
+        (
+            ("O1", "invalid_dataspec", "four-character"),
+            ("RACEDIFF", "retired_dataspec", "DIFN"),
+        ),
+    )
+    def test_progress_fetch_reports_precise_dataspec_error_before_database(
+        self, tmp_path, monkeypatch, data_spec, expected_type, expected_message
+    ):
+        from scripts.quickstart import QuickstartRunner
+
+        runner = QuickstartRunner(
+            {
+                "db_path": str(tmp_path / "quickstart.db"),
+                "from_date": "20260101",
+                "to_date": "20260102",
+            }
+        )
+        monkeypatch.setattr(
+            runner,
+            "_create_database",
+            lambda: pytest.fail("database setup must not run for an invalid dataspec"),
+        )
+
+        status, details = runner._fetch_single_spec_with_progress(data_spec, option=1)
+
+        assert status == "skipped"
+        assert details["error_type"] == expected_type
+        assert expected_message in details["error_message"]
+
 
 class TestAnalyzeErrorJVInitCodes:
     """_analyze_error must classify JVInit/JVOpen error codes per the official
