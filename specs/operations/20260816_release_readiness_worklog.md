@@ -1152,3 +1152,271 @@
   exact-SHA critical verification and GitHub final gate. STOP if any deletion
   leaves a tombstone, any malformed schema changes a row, or the PR head lacks
   clean exact-SHA evidence.
+
+## Iteration: CK complete official layout and native storage (2026-08-17 JST)
+
+- Objective and minimum scope: replace CK's representative/opaque extraction
+  with a complete, gap-free current-layout parse and lossless native storage for
+  every official leaf. Preserve provider order for `DataKubun=0/1/2`, reject
+  the obsolete 6,864-byte layout, and use normalized child tables where one
+  PostgreSQL row would exceed the database column limit. Canonical standard
+  `CHOKYO_DETAIL` routing remains the immediately following independent
+  standard-schema iteration; other record types and release changes are out of
+  scope here.
+- Repository: `miyamamoto/jrvltsql`.
+- Worktree: `/home/keiba/scratch/20260817_jrvltsql_ck_official`.
+- Branch: `agent/ck-official-20260817`.
+- Base / initial HEAD / `origin/master` full SHA:
+  `9f2e2a8c11bae32a76e850c13aa0e112f75ef67a`.
+- Dependency and production state: PR #195 merged as
+  `9f2e2a8c11bae32a76e850c13aa0e112f75ef67a`; release remains v1.6.10. No
+  version, tag, release lock, distribution, or support statement changes are
+  authorized in this iteration.
+- Official evidence: pinned SDK 5.0.0 structure source SHA-256
+  `8994f985fce846f1b4fcbc3ddf2a5c6394c586a458478346891222b3b61e4ee3`,
+  official JV-Data 4.9.0.1 workbook SHA-256
+  `23bafd375f704acbdd696b5032ac1619f17d47e882587d6e7954b610527a8234`,
+  and official 4.8.0.2 workbook SHA-256
+  `6a567f10b601115eca350571f36d27d9d28bd2d3835ea72b5bc057711155d4a7`.
+  The current record is 6,870 bytes and 1,729 expanded scalar leaves; the older
+  official record is 6,864 bytes because the breeder code/name area changed.
+- Initial observed gap: the current parser reads only the first of six ranks in
+  each of 69 horse count blocks, only the first of four running-style counts,
+  one opaque 1,220-byte block from each of two 2-block jockey/trainer sections,
+  and one opaque 60-byte block from each owner/breeder 2-block section. This
+  omits 988 official leaves and cannot be represented losslessly by the current
+  single-table schema.
+- Design constraint: PostgreSQL cannot hold the complete 1,729-leaf record in
+  one row. The parser contract must expose all leaves deterministically, while
+  native persistence uses an official-key parent plus bounded normalized child
+  rows with explicit block/rank identity. No opaque packed field may be treated
+  as equivalent to leaf-level storage.
+- Red-first requirement: before implementation, add a compact oracle-driven
+  contract that fills first/middle/last sentinels for every repeat family,
+  asserts exact expanded leaf cardinality and no unread byte span, proves
+  current code fails, and covers create/update/delete plus SQLite/PostgreSQL
+  reconnect readback and malformed-schema no-mutation behavior.
+- STOP conditions: do not merge if any official CK leaf is neither stored nor
+  explicitly validated metadata, if old/current layouts can be confused, if
+  child rows can outlive or mismatch their parent, if `DataKubun=0` leaves a
+  tombstone, if a PostgreSQL column-limit assumption is untested, or if exact
+  candidate SHA/review/thread/clean-worktree gates are incomplete.
+- Next safe action: independently derive the complete recursive CK leaf and
+  repeat model from the pinned manifest/workbooks, choose the smallest
+  PostgreSQL-safe normalized schema, and write the grouped red contract before
+  changing parser/importer/schema code.
+- Red-first contract executed at unchanged base full SHA
+  `9f2e2a8c11bae32a76e850c13aa0e112f75ef67a`:
+  `uv run pytest -q tests/test_ck_official_contract.py
+  --basetemp=/home/keiba/scratch/pytest_ck_red --no-cov` returned
+  `9 failed, 1 passed`. The old parser accepted blank/3/9 `DataKubun`, exposed
+  none of the required 70 horse, four professional, or four owner/breeder
+  normalized rows, and the schema/importers had no child-table contract. Both
+  importers therefore inserted the parent when every required child table was
+  absent instead of failing before mutation. The previous 6,864-byte shape was
+  already rejected. This is the required observed red for the new CK integrity
+  check; implementation had not changed when it was captured.
+- The independent design cross-check rejected the tentative wide professional
+  rows because they would make validation and querying unnecessarily opaque.
+  The final native representation preserves keyed `NL_CK` as a compatibility
+  parent and adds two bounded children: `NL_CK_CHAKU` has 278 dimensioned rows
+  with `Count1..Count6` (only the four-value running-style row has NULL 5/6),
+  and `NL_CK_RUIKEI` has eight actor/period summary rows. The children store
+  1,666 count leaves plus 32 summary leaves. The remaining 31 leaves are in the
+  parent or, for CRLF, strictly validated before parse. This three-table shape
+  stays below PostgreSQL's column limit and preserves all 1,729 official leaves.
+- `CKStorageVersion` is importer-owned completion metadata. Additive migration
+  leaves existing parent rows NULL; only a fully validated parent+278+8 write
+  sets it to 1 at the end of the transaction. Existing partial rows cannot be
+  reconstructed from the old representative columns because 988 leaves were
+  never stored. They require current `SNPN` reimport, and complete consumers
+  must verify marker 1 plus the two per-key child cardinalities.
+- The current 6,870-byte parser strictly validates record type, physical length,
+  CRLF, CP932 boundaries, DataKubun `0/1/2`, the seven official key fields, and
+  every numeric payload leaf. A delete validates the envelope and key but does
+  not invent a requirement that the official raw body be blank; it emits no
+  child rows and deletes the exact parent key. The old 6,864-byte shape remains
+  explicitly rejected rather than being guessed by length. Native owner and
+  breeder compatibility column names retain their existing offset meanings;
+  canonical SDK names belong to the separate standard-schema iteration.
+- Both importers now use the same ordered prepare/apply contract. Before any
+  mutation they require exact child columns/types/nullability, composite primary
+  and parent keys, named CHECK bodies, and `ON DELETE CASCADE`; input rows must
+  contain the exact ordered 278/8 dimensions and cannot forge the completion
+  marker. Parent upsert with a NULL marker, exact child replacement, and the
+  final marker update occur in one transaction. Standard-name CK storage fails
+  explicitly until a canonical `CHOKYO_DETAIL` parent/child design is merged.
+- A second validator red was observed after the initial implementation:
+  `test_ck_child_schema_is_never_additively_repaired` failed because the generic
+  `SchemaManager.create_table` silently added a missing `Count6` column and
+  reported success while the required CHECK remained absent. The strict child
+  tables are now excluded from additive repair. A paired create-all red also
+  failed with `assert True is False` when `ck_chaku_domain` was replaced by
+  `CHECK(TRUE)`; create-all now runs the dedicated coupled verifier and reports
+  both children unavailable. Both red tests pass after the repair.
+- The broader parser selection exposed three false-green generic CK tests whose
+  positive fixture left every CK domain field blank. The strict parser correctly
+  rejected it at `Year must contain only ASCII digits`. The fixture now contains
+  a valid current-layout header/key and digits in every official numeric region;
+  the three existing tests pass without weakening production validation.
+- SQLite CK contract after the repairs: `36 passed, 6 skipped in 1.41s`; the six
+  skips are the explicitly gated PostgreSQL cases. A disposable PostgreSQL 16
+  container bound only to `127.0.0.1:55439` then ran the entire contract with
+  the PostgreSQL extra: `42 passed in 2.41s`. This covered both importers,
+  reconnect readback, ordered 1/0/2 replacement, final 278/8 row counts, exact
+  deletion, direct database constraint enforcement, and malformed
+  CHECK/FK/PK/nullability/column contracts preserving the legacy parent. The
+  unique schemas were dropped by fixtures and the auto-remove container was
+  stopped; a subsequent container-name lookup was empty.
+- Broader affected verification covering the CK contract, current-record gate,
+  every schema, migrations, comprehensive E2E schema creation, both importers,
+  parser/factory compatibility, expanded storage, and table mappings completed
+  `700 passed, 28 skipped in 5.00s`. The skips are explicit environment/live
+  gates; CK's PostgreSQL path was executed separately above. `docs/data_support.md`
+  now documents the current 6,870-byte three-table native contract, old-layout
+  rejection, completion marker/reimport requirement, and explicit lack of CK
+  standard-name storage rather than implying a partial table is complete.
+- Strict MkDocs built the public documentation successfully. Wheel and sdist
+  built from the working candidate, the content gate passed both artifacts,
+  `schema_ck.py` was present, and tracked `specs/` plus official oracle inputs
+  remained absent from distributions. The repository test-gate self-check,
+  compileall, fatal Ruff `E9/F63/F7/F82`, full Ruff and Black for all new Python
+  files, and `git diff --check` also pass. Existing all-rule Ruff debt in large
+  legacy modules is unchanged and is not substituted for the fatal gate.
+- The aggregated implementation was committed as full SHA
+  `a0604c99e5379ecc18d5edc1032ce1a9cf9c72f6` on unchanged base
+  `9f2e2a8c11bae32a76e850c13aa0e112f75ef67a`. Its clean exact-SHA full local
+  suite completed `2428 passed, 92 skipped, 15 subtests passed in 52.97s`;
+  exact disposable PostgreSQL CK verification completed `42 passed in 2.24s`.
+  The test-gate self-check, fatal/new-file lint and formatting, compileall,
+  strict docs, two-artifact distribution-content gate, and clean-tree check all
+  passed on that SHA. The exact PostgreSQL schema/container was removed.
+- An independent read-only Codex critical review used `gpt-5.6-sol` at `xhigh`
+  on clean exact SHA `a0604c99e5379ecc18d5edc1032ce1a9cf9c72f6` and returned
+  `NEEDS_CHANGES` with two P1 fail-open findings. It independently confirmed
+  all CK offsets/repeats against the pinned manifest and found no other parser,
+  storage, history, ordering, marker, or standard-mode blocker.
+- P1 one: PostgreSQL constraint verification checked expected names and token
+  substrings rather than constraint semantics. Keeping every token inside
+  `CHECK (TRUE OR (...))` let both importers accept the malformed schema and
+  replace the preserved parent. The added real PostgreSQL regression failed for
+  both importers with `DID NOT RAISE SchemaMigrationError`; the review's
+  independent fake-catalog probe also accepted a weak count-shape OR check.
+  The repair now verifies constraint type and validated state, the exact ordered
+  local/remote FK columns, referenced parent, and cascade action. It evaluates
+  PostgreSQL's actual `pg_get_expr` CHECK expressions against the full 278 valid
+  CK dimensions plus metric boundary, invalid entity/period/family cases, and
+  paired count/summary NULL-shape positives and negatives. Tautological domain,
+  weak count shape, NOT VALID, RESTRICT, and wrong FK order are all rejected.
+- P1 two: the public single-table creation API excluded strict children from
+  additive repair but still ran only the generic column/PK verifier. A complete
+  SQLite child with `ck_chaku_domain CHECK(TRUE)` therefore returned `True`.
+  The new regression failed exactly at `assert True is False`. A dedicated
+  single-child verifier now validates the selected child and parent without
+  requiring the sibling that may not yet have been created; create-all retains
+  the full coupled verifier.
+- Post-review repair verification is currently uncommitted: the three SQLite
+  schema regressions pass; the complete disposable PostgreSQL 16 CK contract,
+  including both importers and all new malformed constraints, completes
+  `51 passed in 2.22s`; and the broader affected selection completes
+  `701 passed, 36 skipped in 4.67s`. The container and all test schemas were
+  removed. The stale E2E introduction was also corrected from 78/45 to the
+  already asserted 80 total/47 native tables. Next safe action: finish
+  mechanical checks, commit this one aggregated review repair, then run one
+  clean exact-SHA final review/gate. STOP on any false-green schema result,
+  failed test, container residue, source drift, or dirty final worktree.
+- The first aggregated review repair was committed as full SHA
+  `812bbd8105496075ff036782527becf5fef9332b`. Its clean exact-SHA full local
+  suite completed `2429 passed, 100 skipped, 15 subtests passed in 52.35s`;
+  the disposable PostgreSQL contract completed `51 passed in 3.26s`; and all
+  exact mechanical/docs/distribution/clean gates passed. The container and
+  schemas were removed.
+- The continued `gpt-5.6-sol` `xhigh` review of exact SHA `812bbd8105496075ff036782527becf5fef9332b`
+  returned `NEEDS_CHANGES` with one remaining P1 and one P2 before root changed
+  the tree. The P1 demonstrated that finite truth samples alone were not an
+  equivalence proof: canonical `ck_chaku_domain OR EntityKubun='EVIL'` passed
+  verification and PostgreSQL stored the invalid child. The new real-PostgreSQL
+  `extra-domain-value` regression preserves that red. The P2 showed an otherwise
+  canonical `DEFERRABLE INITIALLY DEFERRED` FK was accepted, changing enforcement
+  timing inside caller-owned transactions.
+- The second aggregated repair does not grow the sample list around `EVIL`.
+  Instead it parses the PostgreSQL-canonical expression into a complete
+  structural signature of allowed equality/ANY/range/NULL atoms and exact
+  AND/OR/NOT counts, rejects every unrecognized atom/operator, and then evaluates
+  the expression across the complete equivalence classes induced by that fixed
+  vocabulary: 2,400 entity/period/metric/bucket combinations, all 16 count-shape
+  combinations, and all 384 actor/period/six-nullability summary combinations.
+  Structure prevents new literals/predicates; the truth table prevents regrouping
+  the same atoms into different semantics. The FK catalog gate now also requires
+  non-deferrable, initially immediate, `MATCH SIMPLE`, and `ON UPDATE NO ACTION`
+  in addition to the previously exact keys/parent/delete action/validation.
+- Current second-review repair remains uncommitted. SQLite CK verification is
+  `37 passed, 18 skipped`; disposable PostgreSQL 16 is `55 passed in 3.92s`,
+  including the preserved EVIL and deferrable reds for both importers; broader
+  affected verification is `701 passed, 40 skipped in 4.84s`. The container was
+  removed. Next safe action: finish formatting/mechanical checks, commit the
+  aggregated structural repair once, and run one final exact-SHA review/gate.
+  STOP if structural signature or exhaustive equivalence validation can be
+  bypassed, canonical PostgreSQL is rejected, or final evidence is not clean.
+- The second aggregated repair was committed as full SHA
+  `e7064e5416ed6a15b8062d4176f8ecf5dee39d9c`. Its clean exact-SHA full local
+  suite completed `2429 passed, 104 skipped, 15 subtests passed in 50.01s`;
+  disposable PostgreSQL 16 completed `55 passed in 4.02s`; and the test gate,
+  fatal/new-file lint, compileall, strict MkDocs, wheel/sdist content gate,
+  prohibited-public-document scan, retired-document absence, and clean-tree
+  checks passed. The test container was removed.
+- The continued independent `gpt-5.6-sol` `xhigh` Codex review returned
+  `NEEDS_CHANGES` on clean exact SHA
+  `e7064e5416ed6a15b8062d4176f8ecf5dee39d9c`. It confirmed the prior
+  extra-domain and deferrability repairs, CK parser/storage/docs, and the
+  recorded PostgreSQL/focused suites, then found two remaining enforcement
+  gaps. First, the PostgreSQL `ANY(ARRAY[...])` signature lowercased quoted
+  values and extracted literals from an otherwise unvalidated array body; the
+  behavior cases also sampled only one member of each two-value class. A
+  computed second member and a case-changed second member were therefore both
+  accepted as equivalent while rejecting a valid official child row. Second,
+  canonical FK catalog definitions were accepted when SQLite FK enforcement,
+  PostgreSQL internal FK triggers, or PostgreSQL's session trigger mode had
+  been disabled.
+- Red-first evidence for this final aggregated repair was captured before
+  implementation. With SQLite FK enforcement disabled, both importers failed
+  the new expectation with `DID NOT RAISE SchemaMigrationError` (`2 failed`).
+  In disposable PostgreSQL 16, computed/case-changed array members failed the
+  expectation for both importers (`4 failed`), disabled FK triggers failed for
+  both (`2 failed`), and non-enforcing session trigger mode failed for both
+  (`2 failed`). In every case the old verifier allowed import instead of
+  refusing before parent mutation.
+- The repair preserves quoted-literal case, requires every PostgreSQL array
+  member to match the complete canonical text-or-integer literal grammar, and
+  evaluates every member of each official entity/period class including
+  case-changed negative representatives. SQLite now requires
+  `PRAGMA foreign_keys=1`. PostgreSQL now requires session trigger mode
+  `origin` plus the exact four active internal FK triggers, split two on the
+  parent and two on the child, in addition to the existing exact constraint
+  metadata. The paired regressions now pass for both importers: SQLite
+  `2 passed`; PostgreSQL malformed-contract matrix `24 passed`; complete CK
+  contract `39 passed, 26 skipped` without PostgreSQL and `65 passed` with
+  PostgreSQL 16. Next safe action: commit this single aggregated repair, remove
+  the disposable database container, then run one clean exact-SHA full and
+  PostgreSQL gate followed by one final independent review. STOP on any
+  parser/signature ambiguity, inactive FK path, failed test, dirty tree, or
+  review finding.
+- The final enforcement repair was committed as full SHA
+  `5c0d86c1b4097a5636ef3cd2960ff9891b2868f2`. On that clean exact SHA, the
+  complete local suite passed `2431 passed, 112 skipped, 15 subtests passed in
+  52.57s`; the complete disposable PostgreSQL 16 CK contract passed `65 passed
+  in 5.09s`; and the test gate, fatal/new-file lint, compileall, `git diff
+  --check`, strict MkDocs, wheel/sdist build and content gate, public-document
+  scan, retired-document absence, container cleanup, and clean-tree checks all
+  passed. The final independent `gpt-5.6-sol` `xhigh` Codex review of that exact
+  SHA returned `GREEN` with no correctness, data-integrity, or release blocker.
+- PR `#196` was opened from the same exact code SHA with the above evidence.
+  GitHub Actions `test`, `lint`, and `windows-batch-syntax` passed; the optional
+  performance job was intentionally skipped; and CodeRabbit completed. Copilot
+  was requested once but explicitly reported that its review quota was
+  exhausted, so it supplied no review evidence. This evidence closes the CK
+  native-complete-storage iteration only. The repository release remains **not
+  ready** until the remaining official-contract/storage iterations, final
+  documentation and open-PR audit, actual fresh acquisition, and SQLite plus
+  PostgreSQL persistence/readback gates are complete. No 64-bit SDK support
+  claim is made without an installed-SDK end-to-end run.
