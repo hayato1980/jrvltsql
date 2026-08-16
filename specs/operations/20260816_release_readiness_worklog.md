@@ -759,3 +759,245 @@
   jobs pass. The compact official oracle and known HY, CK, standard-schema,
   metadata, obsolete-route, and strict fresh E2E blockers remain separate
   required iterations after this PR.
+
+## Official 38-record oracle iteration start
+
+- Objective and minimum scope: add a compact, mechanically validated oracle
+  derived from the official current JV-Data layout, make the deterministic CI
+  collect it, label reconstructed database fixtures truthfully, and add the
+  current and historical physical-length regressions needed to expose known
+  specification gaps. Storage mapping is deliberately outside this physical
+  oracle PR: HY, CK, standard-schema routing, metadata, and fresh live E2E are
+  repaired in the following independent iterations rather than being made
+  green by encoding the current implementation's assumptions here.
+- Repository: `miyamamoto/jrvltsql`.
+- Dedicated worktree:
+  `/home/keiba/scratch/20260816_jrvltsql_official_oracle`.
+- Branch: `agent/official-oracle-20260816`.
+- Base and initial HEAD:
+  `8baf34a79783370f17ac8430151cd212a496965e` (latest fetched
+  `origin/master`, squash merge of PR #193).
+- Dependency order: PR #193's fail-closed whole-tree CI is merged first; this
+  oracle iteration is based on that merge and must itself merge before HY/CK
+  and storage-routing implementation iterations use its contracts.
+- Prior production/release reference remains version `1.6.10`; no release or
+  release-lock mutation is authorized by this iteration alone.
+- Initial state is clean. Existing independent audit evidence reports 38
+  current record lengths matching official SDK 5.0.0, 94 structures, 93
+  repeated templates, and 46,985 recursively expanded scalar leaves with no
+  official-layout gap or overlap. The implementation must reproduce or encode
+  that evidence from repository-tracked inputs rather than relying on a local
+  scratch-only report.
+- Initial safe action: inventory tracked official-spec inputs and current
+  contract tests, then design one compact physical manifest/validator with
+  red-first tests for missing spans, overlap, incorrect repeat count, unknown
+  nested structures, source provenance, and inspection failure. Leaf-to-storage
+  disposition and nonexistent storage targets belong to the following schema
+  implementation iteration because they require model/storage decisions beyond
+  the official byte layout.
+- STOP conditions: do not copy or redistribute proprietary provider samples;
+  do not invent offsets from current parser code as the oracle; do not mark a
+  known HY/CK/storage mismatch green by reproducing the implementation's own
+  assumptions; do not claim 64-bit support; do not merge if the oracle cannot
+  identify its official source/version/hash or if any required contract remains
+  unresolved.
+- Red-first evidence: before adding the oracle implementation or manifest,
+  `tests/test_official_jvdata_oracle.py` failed during collection with
+  `ModuleNotFoundError: scripts.official_jvdata_oracle`. No oracle assertion
+  ran, so this is an explicit missing-inspection red rather than a parser
+  failure. The paired validator negatives and official-manifest assertions
+  must turn green only after the independent extractor, tracked manifest, and
+  provenance are present.
+- Implemented `scripts/official_jvdata_oracle.py` as a reviewed-AST extractor
+  for the SDK's scalar, nested, and fixed-repeat grammar. It produces only
+  derived names, one-based byte spans, widths, repeat counts/strides, source
+  identity, and aggregate counts; it does not copy SDK source or provider
+  records. The validator fails closed on unreadable input, incomplete source
+  identity, bad spans, gaps, overlap, invalid repeat definitions, unknown or
+  cyclic structures, nested-width mismatch, count mismatch, and root-length
+  mismatch.
+- The tracked SDK 5.0.0 manifest identifies source SHA-256
+  `8994f985fce846f1b4fcbc3ddf2a5c6394c586a458478346891222b3b61e4ee3`
+  and independently expands to 38 root records, 94 structures, 93 repeat
+  templates, and 46,985 scalar leaves. Regeneration from that exact official
+  source is byte-for-byte identical to the tracked JSON, and the validator
+  reports `OFFICIAL ORACLE PASS`.
+- Added a physical-layout history ledger backed by official workbook SHA-256
+  `6a567f10b601115eca350571f36d27d9d28bd2d3835ea72b5bc057711155d4a7`
+  for 4.8.0.2 and
+  `23bafd375f704acbdd696b5032ac1619f17d47e882587d6e7954b610527a8234`
+  for 4.9.0.1. It records the 2003 SE, BR, and BN length changes; the 2023 UM,
+  BR, HN, SK, CK, HS, and BT changes; the PR-to-BR identifier transition; and
+  the 2006 UM same-length semantic split. The latter is explicitly marked as
+  requiring generation provenance because record length cannot distinguish
+  the old 80-byte English-name interpretation from the current 60+1+19 byte
+  fields.
+- `test_current_record_validation.py` now derives all 38 current lengths and
+  every historical rejection case from these official manifests instead of a
+  second hand-maintained matrix. The factory still accepts only the current N
+  layout; it rejects every ledgered previous physical length, including both
+  pre-2003 and 4.8.0.2 generations where applicable.
+- Additional validator negatives were proven red before implementation:
+  self-reference produced only aggregate count mismatches rather than a cycle
+  error; missing artifact/version provenance passed; and Boolean leaf counts
+  were accepted as integers. The red run was 3 failed and 13 passed after the
+  earlier cycle/history red run of 2 failed and 11 passed. All are now explicit
+  failures with paired complete-manifest green coverage.
+- Focused green evidence after implementation is 124 passed across the oracle
+  and current-record validation modules. Direct CLI validation passes; source
+  regeneration is byte-identical; all three official source hashes were
+  independently recomputed. The whole-tree CI command merged in PR #193
+  collects `tests/test_official_jvdata_oracle.py` automatically because it
+  collects all `tests/test_*.py` outside only the explicit integration/E2E
+  directories. The reconstructed database fixtures were already truthfully
+  renamed and documented by PR #193, so no second relocation is needed here.
+- A broader affected-contract run under isolated CPython 3.12.11 passed 209
+  tests covering the oracle, all current/legacy physical record validation, and
+  reconstructed database-row fixtures. The fail-closed CI self-check reports
+  `TEST GATE PASS`; Ruff reports no findings on the three changed Python files;
+  isolated fatal flake8 reports zero; Black is clean; JSON parsing and
+  `git diff --check` pass. The host's unqualified `python3` is 3.10 and cannot
+  import `tomllib`, so it was not treated as project evidence after that
+  precondition failure; all accepted local evidence uses the required 3.12
+  runtime.
+- The first clean local candidate was
+  `9374c8df1f19cd84a638a0a14f3613cb16a65502`. Exact-SHA focused evidence was
+  209 passed, `TEST GATE PASS`, fatal flake8 zero, and a clean worktree. It was
+  not pushed because the grouped critical review had not yet completed.
+- Started a new Claude Code session
+  `365b9699-b517-405f-b567-b6c87fd77266` with `--model fable --effort high` for
+  a read-only critical review of that candidate. Fable was selected because a
+  validator can create false release confidence if it fails open. The request
+  stopped at the service session limit before any review content or source
+  inspection ran; it is not review evidence and must be resumed in the same
+  session after the next 01:10 JST reset before merge.
+- While that external review was unavailable, Codex independently challenged
+  the generic validator rather than waiting idle. A single grouped negative
+  matrix proved 10 fail-open shapes red on the first candidate: empty manifests,
+  non-string source identities, non-string field names, missing scalar/repeat
+  decoders, missing direct/repeated nested targets, a root without `head`, and
+  a root redirected to a non-root structure. The run was 10 failed and 16
+  passed. The validator now rejects each shape directly, while the paired
+  complete fixture and official manifest remain green; the broader affected
+  selection is 219 passed with the CI self-check and fatal lint still green.
+- A separate search found a `BameiEng VARCHAR(80)` declaration and tested the
+  hypothesis that the 2006 UM change remained unfixed. It belongs to the
+  distinct `HANSYOKU`/HN contract, whose current official English-name field is
+  80 bytes. The `UMA`/UM standard table is correctly 60 bytes with the 1-byte
+  flag and 19-byte reserve, so no UM schema change is warranted from that
+  search result.
+- PR #194 was opened from the first pushed candidate
+  `798d4210e00edeb654417eaeaa5f81d6f399e144`. GitHub Actions run
+  `31951212329` executed on that exact SHA and passed the fail-closed CI
+  self-check, Linux deterministic tree (2,322 passed, 79 explicit environment
+  skips, 14 slow deselections, and 15 passing subtests), distribution content,
+  Windows launcher, and fatal lint gates. The optional tokenless coverage
+  upload could not publish but its configured non-gating step and job
+  completed successfully; it is not counted as test evidence. The performance
+  job was a zero-step PR skip by workflow design.
+- The first grouped GitHub review identified three actionable fail-open or
+  incompleteness classes: inferring a repeat stride from only two evaluations,
+  accepting a same-prefix root with an arbitrary field renamed `head`, and
+  comparing history sets without constraining duplicate or extra entries.
+  Two related review nits identified unbounded per-byte gap diagnostics and
+  unreviewed constructor keyword arguments. These findings were aggregated
+  before modifying the candidate.
+- Before the grouped repair, the new negative matrix produced 10 failures and
+  23 passes. Seven failures directly reproduced the review findings; three
+  additional failures were expected-value drift after the synthetic positive
+  fixture was corrected to contain the real common header contract. A separate
+  complete-header semantic negative then produced 1 failure and 33 passes,
+  demonstrating that width and name checks alone still admitted a false
+  header. These are the required red results for this inspector change.
+- The extractor now accepts repeat starts only when they are provably affine in
+  the loop variable, rejects loop-dependent widths and constructor keyword
+  arguments, and reports a contiguous gap as one bounded range. Manifest
+  validation requires the exact 8-byte date and 11-byte common record-header
+  field contracts, and every root must begin at byte 1 with that nested header.
+  The history tests require exact cardinality in addition to exact identity
+  sets, so duplicate or unreviewed entries cannot disappear under set
+  comparison. Paired positive and negative coverage is 34 passed in the oracle
+  module alone.
+- Regeneration with the repaired extractor from the same official source
+  produced 38 records, 94 structures, and 46,985 expanded leaves and was
+  byte-for-byte identical to the tracked manifest; both files had SHA-256
+  `437a21ea582315f807609dbee809c581518b31d6b48bddc96fd57b92c84e366a`.
+  The affected CPython 3.12 selection passed 227 tests. The fail-closed CI
+  self-check reports `TEST GATE PASS`; Ruff, Black, isolated fatal flake8, and
+  `git diff --check` all pass. Pytest emitted best-effort temporary-directory
+  cleanup warnings during the gate self-tests, but no test or gate failed and
+  no repository artifact was created.
+- Claude Code session `365b9699-b517-405f-b567-b6c87fd77266` remains the same
+  Fable session for this iteration. Its prior request reached the account
+  session limit before communication or inspection; therefore it is still not
+  review evidence. Resume that session against the final pushed full SHA after
+  the 01:10 JST reset and do not merge PR #194 before its grouped critical
+  review is complete.
+- A final Codex fail-open pass after the first review repair found that Python
+  equality allowed Boolean `manifest_schema_version` to impersonate integer
+  version 1, source SHA validation stringified a non-string 64-digit integer,
+  and field decoder calls could silently ignore unreviewed keyword arguments.
+  The three new tests produced the required red result of 3 failed and 34
+  passed on candidate `3f3905666248776565bc8cb7fdbebafadcd009f7` before the
+  implementation changed.
+- Manifest validation now requires the schema version to be a non-Boolean
+  integer and the source SHA-256 to be a lowercase 64-character string. The
+  extractor rejects keywords on scalar/nested slice calls and repeat `range`
+  calls, including nested slice calls, so a newly introduced argument cannot
+  be silently discarded. The paired oracle module is 37 passed. Regeneration
+  from the exact official source still expands 38 records, 94 structures, and
+  46,985 leaves and remains byte-for-byte identical with SHA-256
+  `437a21ea582315f807609dbee809c581518b31d6b48bddc96fd57b92c84e366a`.
+- Known findings remain release blockers rather than oracle exceptions: HY
+  field/primary-key semantics, CK omitted repeats, six standard-schema storage
+  routes, schema metadata integrity, obsolete routes, and strict fresh
+  acquisition-to-SQLite/PostgreSQL evidence. No support statement, version,
+  tag, or release lock changed in this iteration.
+- Next safe action: run fatal lint, the fail-closed CI self-check, and the
+  affected parser/fixture contracts; commit a clean candidate; obtain one
+  grouped Fable critical review and GitHub review on that exact candidate; then
+  fix any independently reproduced findings together before merge.
+- On 2026-08-17 the user explicitly authorized a Codex critical agent as the
+  substitute review gate when the same Claude Code session remained blocked by
+  its account limit. A read-only reviewer ran with `gpt-5.6-sol` at `xhigh`
+  reasoning because this iteration changes an inspector whose failure mode is
+  false release confidence. It reviewed exact full SHA
+  `857533a3c1f29b899d2ce34fb076dc9c44afef09` and returned `NEEDS_CHANGES`.
+  The independently reproduced grouped findings were: Boolean AST constants
+  accepted as integer layout expressions; unreviewed `SetDataB` method shapes
+  and non-`b` slice sources accepted; and official manifest/history fixtures
+  structurally validated without binding every official fact and provenance
+  field. The reviewer also independently confirmed the three official source
+  hashes, all 38 current lengths, all 10 physical history changes, the PR-to-BR
+  transition, the UM same-length semantic split, and distribution exclusion of
+  `specs/`, the oracle fixtures, and the extraction script.
+- Before changing the inspector implementation, the grouped regression matrix
+  was run against the implementation at full SHA
+  `857533a3c1f29b899d2ce34fb076dc9c44afef09`. It produced the required red
+  result of 19 failed and 2 passed: four Boolean arithmetic paths, seven
+  method/source-buffer paths, one same-shape manifest drift, and seven history
+  content/provenance drifts failed to say no; the two already-covered
+  nested/range keyword branches remained green.
+- The extractor now excludes Boolean constants from both integer evaluators,
+  requires exactly one synchronous direct `@classmethod SetDataB(cls, b)` with
+  one unconditional constructor return, and requires every scalar or nested
+  slice to read that reviewed byte parameter. The official manifest and history
+  ledger are now bound in CI by canonical JSON SHA-256 in addition to the
+  readable semantic assertions; strict ledger schema-version typing prevents
+  `True` from impersonating version 1. All 21 grouped negative/paired cases are
+  green, and the complete oracle plus current-record selection is 166 passed.
+  Ruff, Black, and `git diff --check` pass.
+- Regeneration after the grouped repair from the pinned official SDK source is
+  still byte-for-byte identical to the tracked manifest: 38 records, 94
+  structures, 46,985 expanded leaves, raw-file SHA-256
+  `437a21ea582315f807609dbee809c581518b31d6b48bddc96fd57b92c84e366a`.
+  The broader affected selection on CPython 3.12.11 is 251 passed, the
+  repository fail-closed self-check reports `TEST GATE PASS`, and isolated
+  fatal flake8 reports zero findings.
+  A broader pre-existing packaging condition remains for release audit: the
+  sdist ships some tests whose excluded script/fixture dependencies are absent.
+  It is not a PR #194-specific oracle defect and was not mixed into this repair.
+- Next safe action: run the affected broader selection and CI-equivalent local
+  gates, commit and push one clean candidate, then perform the single final
+  exact-SHA gate (checks, unresolved threads, review evidence, and clean
+  worktree) before merging PR #194.
