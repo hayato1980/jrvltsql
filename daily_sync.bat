@@ -79,15 +79,24 @@ echo Date range: %FROM_DATE% - %TO_DATE%
 echo DB type:    %DB_TYPE%
 echo.
 
-if /I "%DB_TYPE%"=="postgresql" (
-    if "%POSTGRES_PASSWORD%"=="" (
-        echo [ERROR] POSTGRES_PASSWORD is required for PostgreSQL sync.
-        exit /b 1
-    )
-    set "DB_ARGS=--db-type postgresql --pg-host %POSTGRES_HOST% --pg-port %POSTGRES_PORT% --pg-database %POSTGRES_DATABASE% --pg-user %POSTGRES_USER% --pg-password %POSTGRES_PASSWORD%"
-) else (
-    set "DB_ARGS=--db-type sqlite"
+if /I not "%DB_TYPE%"=="postgresql" goto :sqlite_db_args
+
+REM Keep the password out of the process command line. Disable delayed
+REM expansion while copying it so a literal exclamation mark is preserved.
+setlocal DisableDelayedExpansion
+if not defined POSTGRES_PASSWORD (
+    echo [ERROR] POSTGRES_PASSWORD is required for PostgreSQL sync.
+    exit /b 1
 )
+set "PGPASSWORD=%POSTGRES_PASSWORD%"
+setlocal EnableDelayedExpansion
+set "DB_ARGS=--db-type postgresql --pg-host "!POSTGRES_HOST!" --pg-port "!POSTGRES_PORT!" --pg-database "!POSTGRES_DATABASE!" --pg-user "!POSTGRES_USER!""
+goto :db_args_ready
+
+:sqlite_db_args
+set "DB_ARGS=--db-type sqlite"
+
+:db_args_ready
 
 set "EXTRA_ARGS="
 if "%INCLUDE_TIMESERIES%"=="1" set "EXTRA_ARGS=!EXTRA_ARGS! --include-timeseries --timeseries-from-date %FROM_DATE% --timeseries-to-date %TO_DATE%"
@@ -106,21 +115,51 @@ if "%INCLUDE_TIMESERIES%"=="0" if "%INCLUDE_REALTIME%"=="0" (
 )
 
 if defined PYTHON (
+    if not exist "%PYTHON%" (
+        echo [ERROR] PYTHON must be a full path to python.exe.
+        exit /b 1
+    )
+    "%PYTHON%" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo [ERROR] PYTHON must point to Python 3.12 or later.
+        exit /b 1
+    )
     "%PYTHON%" %SYNC_SCRIPT% !SYNC_ARGS!
     set "SCRIPT_EXIT_CODE=!errorlevel!"
     goto :check_result
 )
 
-if exist "%~dp0venv32\Scripts\python.exe" (
-    "%~dp0venv32\Scripts\python.exe" %SYNC_SCRIPT% !SYNC_ARGS!
+if defined VIRTUAL_ENV (
+    if not exist "%VIRTUAL_ENV%\Scripts\python.exe" (
+        echo [ERROR] VIRTUAL_ENV must point to Python 3.12 or later.
+        exit /b 1
+    )
+    "%VIRTUAL_ENV%\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo [ERROR] VIRTUAL_ENV must point to Python 3.12 or later.
+        exit /b 1
+    )
+    "%VIRTUAL_ENV%\Scripts\python.exe" %SYNC_SCRIPT% !SYNC_ARGS!
     set "SCRIPT_EXIT_CODE=!errorlevel!"
     goto :check_result
 )
 
+if exist "%~dp0venv32\Scripts\python.exe" (
+    "%~dp0venv32\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel!==0 (
+        "%~dp0venv32\Scripts\python.exe" %SYNC_SCRIPT% !SYNC_ARGS!
+        set "SCRIPT_EXIT_CODE=!errorlevel!"
+        goto :check_result
+    )
+)
+
 if exist "%~dp0.venv\Scripts\python.exe" (
-    "%~dp0.venv\Scripts\python.exe" %SYNC_SCRIPT% !SYNC_ARGS!
-    set "SCRIPT_EXIT_CODE=!errorlevel!"
-    goto :check_result
+    "%~dp0.venv\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel!==0 (
+        "%~dp0.venv\Scripts\python.exe" %SYNC_SCRIPT% !SYNC_ARGS!
+        set "SCRIPT_EXIT_CODE=!errorlevel!"
+        goto :check_result
+    )
 )
 
 py -3.12-32 --version >nul 2>&1
@@ -130,14 +169,21 @@ if !errorlevel!==0 (
     goto :check_result
 )
 
-py --version >nul 2>&1
+py -3.12 --version >nul 2>&1
+if !errorlevel!==0 (
+    py -3.12 %SYNC_SCRIPT% !SYNC_ARGS!
+    set "SCRIPT_EXIT_CODE=!errorlevel!"
+    goto :check_result
+)
+
+py -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
 if !errorlevel!==0 (
     py %SYNC_SCRIPT% !SYNC_ARGS!
     set "SCRIPT_EXIT_CODE=!errorlevel!"
     goto :check_result
 )
 
-python --version >nul 2>&1
+python -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
 if !errorlevel!==0 (
     python %SYNC_SCRIPT% !SYNC_ARGS!
     set "SCRIPT_EXIT_CODE=!errorlevel!"

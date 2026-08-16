@@ -12,7 +12,7 @@ Test Coverage:
 4. Bulk metadata application
 5. Error handling (non-existent tables, missing metadata)
 
-Note: DuckDB is not supported (32-bit Python required for JV-Link).
+Note: DuckDB is outside this project's supported database matrix.
 """
 
 import os
@@ -92,6 +92,35 @@ def test_hs_metadata_matches_market_price_schema():
     assert "競走馬市場取引価格" in metadata["description"]
     assert metadata["primary_key"] == ["血統登録番号", "主催者・市場コード", "市場開始日"]
     assert {"血統登録番号", "主催者・市場コード", "市場開始日", "取引価格"} <= column_names
+
+
+def test_sk_metadata_describes_all_three_generation_lineage_slots():
+    """SK metadata must target every executable physical schema column."""
+
+    expected_lineage_columns = {
+        "FNum",
+        "MNum",
+        "FFNum",
+        "FMNum",
+        "MFNum",
+        "MMNum",
+        "FFFNum",
+        "FFMNum",
+        "FMFNum",
+        "FMMNum",
+        "MFFNum",
+        "MFMNum",
+        "MMFNum",
+        "MMMNum",
+    }
+    metadata = TABLE_METADATA["NL_SK"]
+    metadata_types = {
+        column["name"]: column["type"] for column in metadata["columns"]
+    }
+
+    assert expected_lineage_columns <= set(metadata_types)
+    assert metadata_types == get_table_column_types("NL_SK")
+    assert metadata["primary_key"] == get_table_primary_key_columns("NL_SK")
 
 
 class TestSQLiteMetadata(unittest.TestCase):

@@ -10,8 +10,8 @@ CI では実行できません。COM API（JV-Link）が必要なため、GUI �
 | 項目 | 要件 |
 |------|------|
 | OS | Windows 10 / 11 |
-| Python | 32-bit Python 3.12 (`py -3.12-32` or an explicit `PYTHON` environment variable) |
-| JV-Link | インストール済み、サービスキー設定済み |
+| Python | 32-bit Python 3.12 以上（リリース検証済み経路） |
+| JV-Link | 32-bit 版をインストール済み、サービスキー設定済み |
 | 実行方法 | **RDP/VNC でログインし、コマンドプロンプトから実行**（SSH不可） |
 
 ## テストスクリプト一覧
@@ -19,7 +19,6 @@ CI では実行できません。COM API（JV-Link）が必要なため、GUI �
 | スクリプト | 内容 | 所要時間目安 |
 |-----------|------|-------------|
 | `e2e_jra_smoke.py` | JRA: 1日分データ取得→パース→DB格納→SQLクエリ検証 | 2-5分 |
-| `e2e_nar_smoke.py` | NAR: 1日分データ取得→パース→DB格納→SQLクエリ検証 | 2-5分 |
 | `e2e_error_recovery.py` | エラーリカバリ（-502等）の動作確認 | 1-3分 |
 | `e2e_edge_cases.py` | 異常レース検証（中止、取消、除外、少頭数、震災期間等） | 1分 |
 
@@ -39,19 +38,16 @@ cd <jrvltsql checkout>
 py -3.12-32 tests\e2e\e2e_jra_smoke.py 2>&1 | tee data\e2e_jra_result.txt
 ```
 
-### 4. NAR スモークテスト実行
+公式SDK 5.0.0にはx64版もありますが、jrvltsqlの64-bit実行経路は未検証です。
+x64をリリース対応済みとするには、別途実SDKでこのE2Eを完走する必要があります。
 
-```cmd
-py -3.12-32 tests\e2e\e2e_nar_smoke.py 2>&1 | tee data\e2e_nar_result.txt
-```
-
-### 5. エラーリカバリテスト実行
+### 4. エラーリカバリテスト実行
 
 ```cmd
 py -3.12-32 tests\e2e\e2e_error_recovery.py 2>&1 | tee data\e2e_error_result.txt
 ```
 
-### 6. 異常レース・エッジケース検証（既存DB使用）
+### 5. 異常レース・エッジケース検証（既存DB使用）
 
 ```cmd
 py -3.12-32 tests\e2e\e2e_edge_cases.py 2>&1 | tee data\e2e_edge_result.txt

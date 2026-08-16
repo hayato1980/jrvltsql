@@ -102,28 +102,61 @@ echo Includes:           normal data + official TS_O1/TS_O2 odds
 echo.
 
 set "PYTHON_CMD="
-if defined PYTHON set "PYTHON_CMD=%PYTHON%"
-if not defined PYTHON_CMD if exist "%~dp0venv32\Scripts\python.exe" set "PYTHON_CMD="%~dp0venv32\Scripts\python.exe""
-if not defined PYTHON_CMD if exist "%~dp0.venv\Scripts\python.exe" set "PYTHON_CMD="%~dp0.venv\Scripts\python.exe""
+if defined PYTHON (
+    if not exist "%PYTHON%" (
+        echo [ERROR] PYTHON must be a full path to python.exe.
+        exit /b 1
+    )
+    "%PYTHON%" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo [ERROR] PYTHON must point to Python 3.12 or later.
+        exit /b 1
+    )
+    set "PYTHON_CMD="!PYTHON!""
+)
+if not defined PYTHON_CMD if defined VIRTUAL_ENV (
+    if not exist "%VIRTUAL_ENV%\Scripts\python.exe" (
+        echo [ERROR] VIRTUAL_ENV must point to Python 3.12 or later.
+        exit /b 1
+    )
+    "%VIRTUAL_ENV%\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo [ERROR] VIRTUAL_ENV must point to Python 3.12 or later.
+        exit /b 1
+    )
+    set "PYTHON_CMD="!VIRTUAL_ENV!\Scripts\python.exe""
+)
+if not defined PYTHON_CMD if exist "%~dp0venv32\Scripts\python.exe" (
+    "%~dp0venv32\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel!==0 set "PYTHON_CMD="%~dp0venv32\Scripts\python.exe""
+)
+if not defined PYTHON_CMD if exist "%~dp0.venv\Scripts\python.exe" (
+    "%~dp0.venv\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel!==0 set "PYTHON_CMD="%~dp0.venv\Scripts\python.exe""
+)
 if not defined PYTHON_CMD (
     py -3.12-32 --version >nul 2>&1
     if !errorlevel!==0 set "PYTHON_CMD=py -3.12-32"
 )
 if not defined PYTHON_CMD (
-    py -32 --version >nul 2>&1
+    py -3.12 --version >nul 2>&1
+    if !errorlevel!==0 set "PYTHON_CMD=py -3.12"
+)
+if not defined PYTHON_CMD (
+    py -32 -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
     if !errorlevel!==0 set "PYTHON_CMD=py -32"
 )
 if not defined PYTHON_CMD (
-    py --version >nul 2>&1
+    py -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
     if !errorlevel!==0 set "PYTHON_CMD=py"
 )
 if not defined PYTHON_CMD (
-    python --version >nul 2>&1
+    python -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
     if !errorlevel!==0 set "PYTHON_CMD=python"
 )
 if not defined PYTHON_CMD (
     echo [ERROR] Python not found.
-    echo Please install Python 3.10+ or create venv32/.venv in this repository.
+    echo Please install Python 3.12+ with the same bitness as JV-Link.
     exit /b 1
 )
 

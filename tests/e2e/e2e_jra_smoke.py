@@ -11,6 +11,8 @@
 実行方法 (GUI セッションのある Windows 実機上):
   cd <jrvltsql checkout>
   py -3.12-32 tests\\e2e\\e2e_jra_smoke.py
+
+x64経路は実SDKでのE2Eが完了するまでリリース検証済みとは扱わない。
 """
 
 import io

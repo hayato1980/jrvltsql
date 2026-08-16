@@ -23,48 +23,89 @@ if not "%~1"=="" (
     )
 )
 
-REM Prefer repo-local interpreters first so Windows collectors can run
-REM without relying on global PATH state.
-if exist "%~dp0venv32\Scripts\python.exe" (
-    set "PYTHON=%~dp0venv32\Scripts\python.exe"
+set "PYTHON_CMD="
+
+REM An explicit interpreter permits a bounded x64 validation. Automatic
+REM discovery keeps the release-validated 32-bit path first.
+if defined PYTHON (
+    if not exist "%PYTHON%" (
+        echo ERROR: PYTHON must be a full path to python.exe.
+        exit /b 1
+    )
+    "%PYTHON%" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo ERROR: PYTHON must point to Python 3.12 or later.
+        exit /b 1
+    )
+    set "PYTHON_CMD="!PYTHON!""
     goto :run
+)
+
+if defined VIRTUAL_ENV (
+    if not exist "%VIRTUAL_ENV%\Scripts\python.exe" (
+        echo ERROR: VIRTUAL_ENV must point to Python 3.12 or later.
+        exit /b 1
+    )
+    "%VIRTUAL_ENV%\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo ERROR: VIRTUAL_ENV must point to Python 3.12 or later.
+        exit /b 1
+    )
+    set "PYTHON_CMD="!VIRTUAL_ENV!\Scripts\python.exe""
+    goto :run
+)
+
+if exist "%~dp0venv32\Scripts\python.exe" (
+    "%~dp0venv32\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel!==0 (
+        set "PYTHON_CMD="%~dp0venv32\Scripts\python.exe""
+        goto :run
+    )
 )
 
 if exist "%~dp0.venv\Scripts\python.exe" (
-    set "PYTHON=%~dp0.venv\Scripts\python.exe"
-    goto :run
+    "%~dp0.venv\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel!==0 (
+        set "PYTHON_CMD="%~dp0.venv\Scripts\python.exe""
+        goto :run
+    )
 )
 
-REM First try: explicit PYTHON environment variable
-if defined PYTHON (
-    goto :run
-)
-
-REM Prefer regular py launcher; JLTSQL now supports bridge-based JRA access
-REM and no longer requires a global 32-bit Python install.
-py --version >nul 2>&1
+py -3.12-32 --version >nul 2>&1
 if !errorlevel!==0 (
-    set "PYTHON=py"
+    set "PYTHON_CMD=py -3.12-32"
+    goto :run
+)
+
+py -3.12 --version >nul 2>&1
+if !errorlevel!==0 (
+    set "PYTHON_CMD=py -3.12"
+    goto :run
+)
+
+py -3 -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+if !errorlevel!==0 (
+    set "PYTHON_CMD=py -3"
     goto :run
 )
 
 REM Fallback: python in PATH
-python --version >nul 2>&1
+python -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
 if !errorlevel!==0 (
-    set "PYTHON=python"
+    set "PYTHON_CMD=python"
     goto :run
 )
 
 REM No Python found
 echo ERROR: Python not found
-echo Please install Python 3.10+ or create venv32/.venv in this repository.
+echo Please install Python 3.12+ with the same bitness as JV-Link.
 echo Download: https://www.python.org/downloads/
 pause
 exit /b 1
 
 :run
-echo Using Python: %PYTHON%
-"%PYTHON%" scripts/quickstart.py %*
+echo Using Python: %PYTHON_CMD%
+%PYTHON_CMD% scripts/quickstart.py %*
 set SCRIPT_EXIT_CODE=!errorlevel!
 goto :check_result
 
@@ -72,7 +113,7 @@ goto :check_result
 echo.
 if !SCRIPT_EXIT_CODE! neq 0 (
     echo ============================================================
-    echo   Setup Failed (Exit Code: !SCRIPT_EXIT_CODE!)
+    echo   Setup Failed ^(Exit Code: !SCRIPT_EXIT_CODE!^)
     echo ============================================================
     echo.
     echo   Please check the error messages above.
@@ -116,7 +157,7 @@ echo   CLI commands:
 echo     jltsql status   - Check database status
 echo     jltsql fetch    - Fetch additional data
 echo     quickstart.bat --yes --include-timeseries - Fill SQLite TS_O1/TS_O2 odds
-echo     quickstart_postgres_timeseries.bat  - PostgreSQL setup + TS_O1/TS_O2
+echo     quickstart_timeseries.bat --db postgresql  - PostgreSQL + TS_O1/TS_O2
 echo     jltsql --help   - Other commands
 echo.
 echo   For Claude Code / Claude Desktop users:

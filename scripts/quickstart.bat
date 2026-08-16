@@ -9,22 +9,65 @@ echo.
 
 cd /d "%~dp0.."
 
-REM Try Python from PATH first, then the py launcher.
-set PYTHON=python
-where python >nul 2>&1
-if errorlevel 1 (
-    set PYTHON=py
+REM Automatic discovery keeps the release-validated 32-bit path first.
+set "PYTHON_CMD="
+if defined PYTHON (
+    if not exist "%PYTHON%" (
+        echo [ERROR] PYTHON must be a full path to python.exe.
+        exit /b 1
+    )
+    "%PYTHON%" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo [ERROR] PYTHON must point to Python 3.12 or later.
+        exit /b 1
+    )
+    set "PYTHON_CMD="!PYTHON!""
+)
+if not defined PYTHON_CMD if defined VIRTUAL_ENV (
+    if not exist "%VIRTUAL_ENV%\Scripts\python.exe" (
+        echo [ERROR] VIRTUAL_ENV must point to Python 3.12 or later.
+        exit /b 1
+    )
+    "%VIRTUAL_ENV%\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo [ERROR] VIRTUAL_ENV must point to Python 3.12 or later.
+        exit /b 1
+    )
+    set "PYTHON_CMD="!VIRTUAL_ENV!\Scripts\python.exe""
+)
+if not defined PYTHON_CMD if exist "%~dp0..\venv32\Scripts\python.exe" (
+    "%~dp0..\venv32\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel!==0 set "PYTHON_CMD="%~dp0..\venv32\Scripts\python.exe""
+)
+if not defined PYTHON_CMD if exist "%~dp0..\.venv\Scripts\python.exe" (
+    "%~dp0..\.venv\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel!==0 set "PYTHON_CMD="%~dp0..\.venv\Scripts\python.exe""
+)
+if not defined PYTHON_CMD (
+    py -3.12-32 --version >nul 2>&1
+    if !errorlevel!==0 set "PYTHON_CMD=py -3.12-32"
+)
+if not defined PYTHON_CMD (
+    py -3.12 --version >nul 2>&1
+    if !errorlevel!==0 set "PYTHON_CMD=py -3.12"
+)
+if not defined PYTHON_CMD (
+    py -3 -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel!==0 set "PYTHON_CMD=py -3"
+)
+if not defined PYTHON_CMD (
+    python -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    if !errorlevel!==0 set "PYTHON_CMD=python"
 )
 
-%PYTHON% --version >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Python not found. Install Python 3.10+ and try again.
+if not defined PYTHON_CMD (
+    echo [ERROR] Python not found. Install Python 3.12+ and try again.
     pause
     exit /b 1
 )
 
 echo [1/5] Environment check...
-%PYTHON% --version
+%PYTHON_CMD% --version
 echo.
 
 REM ============================================================
@@ -37,14 +80,14 @@ if exist "config\s3_credentials.enc" (
     echo.
     set /p DOWNLOAD_S3="  Download cache from S3 now? [Y/n]: "
     if /i not "!DOWNLOAD_S3!"=="n" (
-        echo   Syncing cache from S3 (S3 -> local)...
-        %PYTHON% -m src.cli.main cache sync --download
+        echo   Syncing cache from S3 ^(S3 -> local^)...
+        %PYTHON_CMD% -m src.cli.main cache sync --download
         if errorlevel 1 (
             echo   [WARN] S3 download failed or skipped. Continuing with JV-Link fetch.
         )
     )
 ) else (
-    echo   No S3 credentials configured (optional).
+    echo   No S3 credentials configured ^(optional^).
     echo   To enable S3 cache sync, run: jltsql cache s3-setup
 )
 echo.
@@ -71,7 +114,7 @@ if "%OPT%"=="2" (
 
 echo.
 echo [4/5] Fetching JRA data (mode=%MODE_LABEL%)...
-%PYTHON% scripts\quickstart.py --mode %MODE% --yes
+%PYTHON_CMD% scripts\quickstart.py --mode %MODE% --yes
 if errorlevel 1 (
     echo.
     echo [ERROR] Fetch failed. Check output above.
@@ -84,7 +127,7 @@ REM Step 4b: Show cache info
 REM ============================================================
 echo.
 echo   Local cache status:
-%PYTHON% -m src.cli.main cache info
+%PYTHON_CMD% -m src.cli.main cache info
 echo.
 
 REM ============================================================
@@ -93,8 +136,8 @@ REM ============================================================
 if exist "config\s3_credentials.enc" (
     set /p UPLOAD_S3="  Upload updated cache to S3? [Y/n]: "
     if /i not "!UPLOAD_S3!"=="n" (
-        echo   Uploading cache to S3 (local -> S3)...
-        %PYTHON% -m src.cli.main cache sync --upload
+        echo   Uploading cache to S3 ^(local -> S3^)...
+        %PYTHON_CMD% -m src.cli.main cache sync --upload
         if errorlevel 1 (
             echo   [WARN] S3 upload failed. Cache remains local.
         )
@@ -106,7 +149,7 @@ REM Step 5: Verify database
 REM ============================================================
 echo.
 echo [5/5] Verifying database...
-%PYTHON% scripts\raceday_verify.py --phase pre
+%PYTHON_CMD% scripts\raceday_verify.py --phase pre
 
 echo.
 echo ============================================================

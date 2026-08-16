@@ -9,9 +9,15 @@ Windows 向け JRA データコレクタです。共有分析基盤向けに Pos
 - JRA / 中央競馬のみ
 - Windows 10 / 11
 - JRA-VAN DataLab + JV-Link
-- JV-Link COM コンポーネントが 32-bit のため、32-bit Python を推奨
+- Python 3.12 以上
+- リリース検証済み構成: 32-bit Python + 32-bit JV-Link
 
 NAR / 地方競馬はこのリポジトリの対象外です。
+
+SDK 5.0.0 では 64-bit 版 JV-Link が追加されましたが、JV-Data と JV-Link の
+データ／インターフェース仕様は変更されていません。これは公式SDKの契約についての
+記述であり、jrvltsqlのx64動作実証ではありません。64-bit 実行経路は未検証で、
+実SDKの導入・取得・parse・DB保存が完了するまではリリース対応範囲に含めません。
 
 ## 開発と配備
 
