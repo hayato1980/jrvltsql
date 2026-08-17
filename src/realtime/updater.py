@@ -14,9 +14,8 @@ from src.importer.importer import (
     MiningSnapshotMutationError,
     TransactionRecoveryError,
     clean_record_metadata,
-    rollback_failed_import,
     resolve_record_data_kubun,
-    resolve_record_type,
+    rollback_failed_import,
     validate_wf_record,
     verify_wf_storage_schema,
 )
@@ -29,6 +28,7 @@ from src.jvlink.constants import (
     DATA_KUBUN_UPDATE,
 )
 from src.parser.factory import ParserFactory
+from src.parser.status_domain import DataKubunContext, validate_record_header
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -200,29 +200,29 @@ class RealtimeUpdater:
     def _canonicalize_strict_record_aliases(
         self, record: Dict
     ) -> tuple[Optional[str], Optional[str]]:
-        """Canonicalize aliases needed to route a strict realtime record.
+        """Canonicalize aliases needed to route a realtime record.
 
-        Returns ``(record_type, error)``. Conflicts and missing WF status stay
-        explicit validation failures; they are never defaulted to a live row.
+        Returns ``(record_type, error)``. Missing, conflicting, and unsupported
+        header state stays an explicit validation failure; it is never
+        defaulted to a live row.
         """
         try:
-            record_type = resolve_record_type(record)
-        except SchemaMigrationError as error:
-            return None, str(error)
-        if record_type != "WF":
-            return record_type, None
-
-        record["RecordSpec"] = record_type
-        has_status = any(
-            record.get(name) not in (None, "")
-            for name in ("DataKubun", "headDataKubun")
-        )
-        if not has_status:
-            return record_type, "WF DataKubun is required"
-        try:
-            record["DataKubun"] = resolve_record_data_kubun(record)
+            record_type, data_kubun = validate_record_header(
+                record,
+                context=DataKubunContext.REALTIME,
+            )
         except ValueError as error:
+            record_type = next(
+                (
+                    value
+                    for name in ("RecordSpec", "headRecordSpec", "レコード種別ID")
+                    if isinstance((value := record.get(name)), str) and value
+                ),
+                None,
+            )
             return record_type, str(error)
+        record["RecordSpec"] = record_type
+        record["DataKubun"] = data_kubun
         return record_type, None
 
     def _reject_strict_record(self, table_name: str, record: Dict) -> Optional[str]:
@@ -274,6 +274,19 @@ class RealtimeUpdater:
                 logger.warning("Failed to parse record")
                 return None
 
+            # The physical parser validates the accumulated contract. Realtime
+            # DM/TM/WF have a narrower official domain, which must be checked
+            # before even the optional local cache is mutated.
+            parsed_rows = parsed_data if isinstance(parsed_data, list) else [parsed_data]
+            for parsed_row in parsed_rows:
+                _, header_error = self._canonicalize_strict_record_aliases(parsed_row)
+                if header_error is not None:
+                    return self.process_parsed_record(
+                        parsed_data,
+                        timeseries=timeseries,
+                        source_spec=source_spec,
+                    )
+
             # Write to RT cache if enabled
             if self.cache_manager and buff:
                 from datetime import date
@@ -307,19 +320,56 @@ class RealtimeUpdater:
         directly through this method. Returns a list when parsed_data is a list.
         """
         if isinstance(parsed_data, list):
-            if parsed_data:
-                from src.importer.importer import _mining_native_snapshot_rows
-
-                record_type = parsed_data[0].get("RecordSpec")
-                table_name = {"DM": "RT_DM", "TM": "RT_TM"}.get(record_type)
-                if table_name is not None:
-                    snapshot_rows = _mining_native_snapshot_rows(
-                        parsed_data[0], table_name
-                    )
-                    if snapshot_rows is not None:
-                        return self._replace_mining_native_snapshot(
-                            parsed_data[0], snapshot_rows, table_name
+            header_errors: list[tuple[Optional[str], str]] = []
+            for item in parsed_data:
+                record_type, header_error = self._canonicalize_strict_record_aliases(item)
+                if header_error is not None:
+                    header_errors.append((record_type, header_error))
+            if header_errors:
+                record_type, header_error = header_errors[0]
+                table_name = self.RECORD_TYPE_TABLE.get(record_type) if record_type else None
+                return [
+                    {
+                        "operation": "validate",
+                        "table": table_name,
+                        "record_type": record_type,
+                        "success": False,
+                        "error": header_error,
+                    }
+                    for _ in parsed_data
+                ]
+            mining_record_types = {
+                item.get("RecordSpec")
+                for item in parsed_data
+                if item.get("RecordSpec") in {"DM", "TM"}
+            }
+            if mining_record_types:
+                record_type = next(iter(mining_record_types))
+                expansion_error, snapshot_rows = self._validate_mining_snapshot_list(
+                    parsed_data, record_type
+                )
+                if expansion_error is not None:
+                    return [
+                        {
+                            "operation": "validate",
+                            "table": self.RECORD_TYPE_TABLE.get(
+                                item.get("RecordSpec")
+                            ),
+                            "record_type": item.get("RecordSpec"),
+                            "success": False,
+                            "error": expansion_error,
+                        }
+                        for item in parsed_data
+                    ]
+                if snapshot_rows is None:
+                    return [
+                        self._process_single_record(
+                            parsed_data[0], timeseries=timeseries
                         )
+                    ]
+                return self._replace_mining_native_snapshot(
+                    parsed_data[0], snapshot_rows, f"RT_{record_type}"
+                )
             results = []
             for item in parsed_data:
                 if timeseries and source_spec:
@@ -333,6 +383,116 @@ class RealtimeUpdater:
         if timeseries and source_spec:
             parsed_data.setdefault("SourceSpec", source_spec)
         return self._process_single_record(parsed_data, timeseries=timeseries)
+
+    @staticmethod
+    def _validate_mining_snapshot_list(
+        parsed_data: list[Dict], record_type: str
+    ) -> tuple[Optional[str], Optional[list[Dict]]]:
+        """Validate one complete DM/TM snapshot or one metadata-free erase."""
+
+        metadata_keys = {
+            "DM": ("_dm_snapshot_rows", "_dm_snapshot_index"),
+            "TM": ("_tm_snapshot_rows", "_tm_snapshot_index"),
+        }
+        rows_key, index_key = metadata_keys[record_type]
+        if any(item.get("RecordSpec") != record_type for item in parsed_data):
+            return f"{record_type} snapshot expansion mixes record types", None
+
+        statuses = {resolve_record_data_kubun(item) for item in parsed_data}
+        if len(statuses) != 1:
+            return f"{record_type} snapshot expansion mixes DataKubun values", None
+        data_kubun = next(iter(statuses))
+        if data_kubun == DATA_KUBUN_ERASE:
+            if (
+                len(parsed_data) == 1
+                and rows_key not in parsed_data[0]
+                and index_key not in parsed_data[0]
+            ):
+                return None, None
+            return f"{record_type} erase must be one metadata-free record", None
+
+        snapshot_rows = parsed_data[0].get(rows_key)
+        if not isinstance(snapshot_rows, list) or not snapshot_rows:
+            return f"{record_type} snapshot expansion metadata is missing", None
+        if len(snapshot_rows) > 18:
+            return f"{record_type} snapshot expansion exceeds 18 horses", None
+        if len(parsed_data) != len(snapshot_rows):
+            return (
+                f"{record_type} snapshot expansion count mismatch: "
+                f"expanded={len(parsed_data)}, snapshot={len(snapshot_rows)}"
+            ), None
+        seen_umaban: set[str] = set()
+        for index, (expanded_row, snapshot_row) in enumerate(
+            zip(parsed_data, snapshot_rows, strict=True)
+        ):
+            if expanded_row.get(index_key) != index:
+                return f"{record_type} snapshot expansion index mismatch", None
+            if expanded_row.get(rows_key) != snapshot_rows:
+                return f"{record_type} snapshot expansion metadata mismatch", None
+            if clean_record_metadata(expanded_row) != clean_record_metadata(
+                snapshot_row
+            ):
+                return f"{record_type} snapshot expansion row mismatch", None
+            umaban = snapshot_row.get("Umaban")
+            if (
+                not isinstance(umaban, str)
+                or len(umaban) != 2
+                or not umaban.isascii()
+                or not umaban.isdigit()
+                or not 1 <= int(umaban) <= 18
+                or umaban in seen_umaban
+            ):
+                return f"{record_type} snapshot expansion has invalid Umaban", None
+            seen_umaban.add(umaban)
+        return None, snapshot_rows
+
+    @classmethod
+    def _partition_mining_batch(
+        cls, records: list[Dict]
+    ) -> tuple[Optional[list[tuple[str, list[Dict], Optional[list[Dict]]]]], Optional[str]]:
+        """Split a flat realtime batch into complete physical mining operations."""
+
+        operations: list[tuple[str, list[Dict], Optional[list[Dict]]]] = []
+        position = 0
+        metadata_keys = {
+            "DM": ("_dm_snapshot_rows", "_dm_snapshot_index"),
+            "TM": ("_tm_snapshot_rows", "_tm_snapshot_index"),
+        }
+        while position < len(records):
+            record = records[position]
+            record_type = record.get("RecordSpec")
+            if record_type not in metadata_keys:
+                operations.append(("record", [record], None))
+                position += 1
+                continue
+
+            data_kubun = resolve_record_data_kubun(record)
+            if data_kubun == DATA_KUBUN_ERASE:
+                error, snapshot_rows = cls._validate_mining_snapshot_list(
+                    [record], record_type
+                )
+                if error is not None:
+                    return None, error
+                operations.append(("record", [record], snapshot_rows))
+                position += 1
+                continue
+
+            rows_key, index_key = metadata_keys[record_type]
+            snapshot_rows = record.get(rows_key)
+            if record.get(index_key) != 0:
+                return None, f"{record_type} batch starts with a snapshot follower"
+            if not isinstance(snapshot_rows, list) or not snapshot_rows:
+                return None, f"{record_type} snapshot expansion metadata is missing"
+            operation_rows = records[position : position + len(snapshot_rows)]
+            error, validated_snapshot = cls._validate_mining_snapshot_list(
+                operation_rows, record_type
+            )
+            if error is not None:
+                return None, error
+            operations.append(("snapshot", operation_rows, validated_snapshot))
+            position += len(operation_rows)
+
+        return operations, None
 
     def _replace_mining_native_snapshot(
         self,
@@ -422,11 +582,14 @@ class RealtimeUpdater:
         validated_records: list[Dict] = []
         ordered_mutation_required = False
         strict_wf_present = False
+        mining_present = False
 
         for record in records:
             record_type, alias_error = self._canonicalize_strict_record_aliases(record)
             if record_type == "WF":
                 strict_wf_present = True
+            if record_type in {"DM", "TM"}:
+                mining_present = True
             if alias_error is not None:
                 logger.warning(f"Skipping record with conflicting header aliases: {alias_error}")
                 errors += 1
@@ -450,6 +613,48 @@ class RealtimeUpdater:
             ):
                 ordered_mutation_required = True
             validated_records.append(record)
+
+        # A malformed provider operation invalidates the batch. Saving only
+        # the remaining rows would silently change provider order. Strict
+        # schema validation can issue catalog SELECTs that start a lazy
+        # psycopg transaction; close only a transaction created by this call.
+        if errors:
+            if not caller_transaction_pending:
+                rollback_failed_import(
+                    self.database,
+                    context="realtime validation-only batch rejection",
+                )
+            return {
+                "operation": "batch_insert",
+                "success": False,
+                "inserted": 0,
+                "errors": max(errors, len(records)),
+                "tables": [],
+            }
+
+        if mining_present:
+            mining_operations, mining_error = self._partition_mining_batch(
+                validated_records
+            )
+            if mining_error is not None or mining_operations is None:
+                if not caller_transaction_pending:
+                    rollback_failed_import(
+                        self.database,
+                        context="realtime mining batch validation rejection",
+                    )
+                return {
+                    "operation": "batch_insert",
+                    "success": False,
+                    "inserted": 0,
+                    "errors": max(1, len(records)),
+                    "tables": [],
+                }
+            return self._process_mining_realtime_batch(
+                mining_operations,
+                timeseries=timeseries,
+                batch_collected_at=batch_collected_at,
+                caller_transaction_pending=caller_transaction_pending,
+            )
 
         if strict_wf_present:
             return self._process_strict_wf_realtime_batch(
@@ -573,6 +778,93 @@ class RealtimeUpdater:
             "errors": errors,
             "tables": sorted(grouped),
         }
+
+    def _process_mining_realtime_batch(
+        self,
+        operations: list[tuple[str, list[Dict], Optional[list[Dict]]]],
+        *,
+        timeseries: bool,
+        batch_collected_at: Optional[str],
+        caller_transaction_pending: bool,
+    ) -> Dict:
+        """Apply complete mining snapshots and adjacent operations atomically."""
+
+        owns_transaction = not caller_transaction_pending
+        if owns_transaction:
+            self.database.begin_transaction()
+
+        successful: list[Dict] = []
+        tables: set[str] = set()
+        operation_count = sum(len(rows) for _, rows, _ in operations)
+        try:
+            for operation_kind, operation_rows, snapshot_rows in operations:
+                record = operation_rows[0]
+                record_type = record.get("RecordSpec")
+                if operation_kind == "snapshot":
+                    if snapshot_rows is None:
+                        raise RuntimeError(
+                            f"{record_type} batch lost validated snapshot metadata"
+                        )
+                    result = self._replace_mining_native_snapshot(
+                        record, snapshot_rows, f"RT_{record_type}"
+                    )
+                else:
+                    if timeseries and batch_collected_at:
+                        record.setdefault("CollectedAt", batch_collected_at)
+                    result = self._process_single_record(
+                        record, timeseries=timeseries
+                    )
+
+                accepted, rejected = summarize_update_result(result)
+                tables.update(
+                    item["table"] for item in accepted if item.get("table")
+                )
+                if rejected:
+                    rolled_back = any(
+                        isinstance(item, dict)
+                        and item.get("transaction_rolled_back") is True
+                        for item in (result if isinstance(result, list) else [result])
+                    )
+                    if not rolled_back:
+                        rollback_failed_import(
+                            self.database,
+                            context="atomic realtime mining batch",
+                        )
+                    return {
+                        "operation": "batch_insert",
+                        "success": False,
+                        "inserted": 0,
+                        "errors": operation_count,
+                        "tables": sorted(tables),
+                        "transaction_rolled_back": True,
+                    }
+                successful.extend(accepted)
+
+            if owns_transaction:
+                self.database.commit()
+            return {
+                "operation": "batch_insert",
+                "success": True,
+                "inserted": len(successful),
+                "errors": 0,
+                "tables": sorted(tables),
+            }
+        except TransactionRecoveryError:
+            raise
+        except Exception as exc:
+            rollback_failed_import(
+                self.database,
+                context="atomic realtime mining batch",
+            )
+            logger.error(f"Atomic realtime mining batch failed: {exc}")
+            return {
+                "operation": "batch_insert",
+                "success": False,
+                "inserted": 0,
+                "errors": operation_count,
+                "tables": sorted(tables),
+                "transaction_rolled_back": True,
+            }
 
     def _process_strict_wf_realtime_batch(
         self,
@@ -720,7 +1012,7 @@ class RealtimeUpdater:
             if alias_error is not None:
                 return {
                     "operation": "validate",
-                    "table": "RT_WF" if record_type == "WF" else None,
+                    "table": self.RECORD_TYPE_TABLE.get(record_type) if record_type else None,
                     "record_type": record_type,
                     "success": False,
                     "error": alias_error,
@@ -728,6 +1020,32 @@ class RealtimeUpdater:
             if not record_type:
                 logger.warning("Missing RecordSpec in parsed data")
                 return None
+
+            record_data_kubun = resolve_record_data_kubun(parsed_data)
+            if record_type in {"DM", "TM"}:
+                rows_key, index_key = {
+                    "DM": ("_dm_snapshot_rows", "_dm_snapshot_index"),
+                    "TM": ("_tm_snapshot_rows", "_tm_snapshot_index"),
+                }[record_type]
+                if record_data_kubun != DATA_KUBUN_ERASE:
+                    mining_error = (
+                        f"{record_type} non-delete records require one complete "
+                        "parser-expanded snapshot list"
+                    )
+                elif rows_key in parsed_data or index_key in parsed_data:
+                    mining_error = (
+                        f"{record_type} erase must be one metadata-free record"
+                    )
+                else:
+                    mining_error = None
+                if mining_error is not None:
+                    return {
+                        "operation": "validate",
+                        "table": self.RECORD_TYPE_TABLE.get(record_type),
+                        "record_type": record_type,
+                        "success": False,
+                        "error": mining_error,
+                    }
 
             # Get table name. In time-series mode, route official 0B41/0B42
             # and current-week 0B30-0B36速報 odds to separate physical tables.
@@ -749,8 +1067,6 @@ class RealtimeUpdater:
             # name headDataKubun is the same header field, not a second command.
             # For cancellation-capable records, 9 must remain queryable and
             # only the official 0 value requests physical erase.
-            record_data_kubun = resolve_record_data_kubun(parsed_data)
-
             rejection = self._reject_strict_record(table_name, parsed_data)
             if rejection is not None:
                 return {

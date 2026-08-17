@@ -22,6 +22,7 @@ from src.jvlink.constants import (
 )
 from src.realtime.updater import RealtimeUpdater, summarize_update_result
 from src.services.realtime_monitor import MonitorStatus, RealtimeMonitor
+from tests.fixtures.record_factory import make_wf_record
 
 
 class TestRealtimeFetcher(unittest.TestCase):
@@ -263,13 +264,319 @@ def test_process_parsed_record_preserves_failed_expanded_rows():
     updater._process_single_record = MagicMock(side_effect=[successful, None])
 
     result = updater.process_parsed_record(
-        [{"RecordSpec": "RA"}, {"RecordSpec": "SE"}]
+        [
+            {"RecordSpec": "RA", "DataKubun": "1"},
+            {"RecordSpec": "SE", "DataKubun": "1"},
+        ]
     )
 
     assert result == [successful, None]
     accepted, failed = summarize_update_result(result)
     assert accepted == [successful]
     assert failed == 1
+
+
+@pytest.mark.parametrize(
+    ("record_type", "payload", "rows_key", "index_key"),
+    (
+        (
+            "DM",
+            {"DMTime": "12345", "DMGosaP": "0123", "DMGosaM": "0456"},
+            "_dm_snapshot_rows",
+            "_dm_snapshot_index",
+        ),
+        ("TM", {"TMScore": "0100"}, "_tm_snapshot_rows", "_tm_snapshot_index"),
+    ),
+)
+def test_mining_snapshot_list_rejects_mixed_or_tampered_expansions(
+    tmp_path,
+    monkeypatch,
+    record_type,
+    payload,
+    rows_key,
+    index_key,
+):
+    """A list shortcut may consume only one exact parser expansion."""
+
+    from src.database.schema import SCHEMAS
+    from src.database.sqlite_handler import SQLiteDatabase
+
+    base = {
+        "RecordSpec": record_type,
+        "DataKubun": "1",
+        "MakeDate": "20260817",
+        "Year": "2026",
+        "MonthDay": "0817",
+        "JyoCD": "05",
+        "Kaiji": "03",
+        "Nichiji": "08",
+        "RaceNum": "11",
+        "MakeHM": "0930",
+        "Umaban": "01",
+        **payload,
+    }
+    snapshot_rows = [dict(base)]
+    expanded = {
+        **base,
+        rows_key: snapshot_rows,
+        index_key: 0,
+    }
+    race = {
+        "RecordSpec": "RA",
+        "DataKubun": "1",
+        "MakeDate": "20260817",
+        "Year": "2026",
+        "MonthDay": "0817",
+        "JyoCD": "05",
+        "Kaiji": "03",
+        "Nichiji": "08",
+        "RaceNum": "11",
+    }
+    delete = {
+        key: value
+        for key, value in base.items()
+        if key not in {"Umaban", *payload}
+    }
+    delete["DataKubun"] = "0"
+    oversized_snapshot = [
+        {**base, "Umaban": f"{umaban:02d}"} for umaban in range(1, 20)
+    ]
+    oversized_expansion = [
+        {
+            **row,
+            rows_key: oversized_snapshot,
+            index_key: index,
+        }
+        for index, row in enumerate(oversized_snapshot)
+    ]
+    truncated_snapshot = [
+        {key: value for key, value in base.items() if key not in payload}
+    ]
+    variants = (
+        [expanded, race],
+        [race, expanded],
+        [{key: value for key, value in expanded.items() if key != rows_key}],
+        [delete, race],
+        [{**expanded, index_key: 1}],
+        [{**expanded, "Umaban": "02"}],
+        [{**expanded, rows_key: truncated_snapshot}],
+        oversized_expansion,
+    )
+
+    database = SQLiteDatabase({"path": str(tmp_path / f"{record_type}-mixed.db")})
+    with database:
+        database.execute(SCHEMAS[f"RT_{record_type}"])
+        database.execute(SCHEMAS["RT_RA"])
+        database.execute("CREATE TABLE CALLER_MARKER (id INTEGER PRIMARY KEY)")
+        database.commit()
+        updater = RealtimeUpdater(database)
+
+        accepted = updater.process_parsed_record([expanded])
+        assert len(accepted) == 1 and accepted[0]["success"] is True
+        erased = updater.process_parsed_record([delete])
+        assert len(erased) == 1 and erased[0]["success"] is True
+        database.commit()
+
+        for records in variants:
+            database.execute("INSERT INTO CALLER_MARKER (id) VALUES (1)")
+            result = updater.process_parsed_record(records)
+            assert isinstance(result, list) and len(result) == len(records)
+            assert all(item["success"] is False for item in result)
+            assert database.has_pending_transaction() is True
+            assert (
+                database.fetch_one(
+                    "SELECT COUNT(*) AS count FROM CALLER_MARKER"
+                )["count"]
+                == 1
+            )
+            assert (
+                database.fetch_one(
+                    f"SELECT COUNT(*) AS count FROM RT_{record_type}"
+                )["count"]
+                == 0
+            )
+            assert (
+                database.fetch_one("SELECT COUNT(*) AS count FROM RT_RA")["count"]
+                == 0
+            )
+            database.rollback()
+
+        database.execute("INSERT INTO CALLER_MARKER (id) VALUES (1)")
+        direct = updater.process_parsed_record(expanded)
+        assert direct["success"] is False
+        assert database.has_pending_transaction() is True
+        assert (
+            database.fetch_one("SELECT COUNT(*) AS count FROM CALLER_MARKER")[
+                "count"
+            ]
+            == 1
+        )
+        assert (
+            database.fetch_one(f"SELECT COUNT(*) AS count FROM RT_{record_type}")[
+                "count"
+            ]
+            == 0
+        )
+        database.rollback()
+
+        direct_batch = updater.process_parsed_records_batch([base])
+        assert direct_batch["success"] is False
+        assert direct_batch["inserted"] == 0
+        assert (
+            database.fetch_one(f"SELECT COUNT(*) AS count FROM RT_{record_type}")[
+                "count"
+            ]
+            == 0
+        )
+
+        old_snapshot = [
+            {**base, "Umaban": f"{umaban:02d}"}
+            for umaban in range(1, 19)
+        ]
+        old_expansion = [
+            {**row, rows_key: old_snapshot, index_key: index}
+            for index, row in enumerate(old_snapshot)
+        ]
+        corrected_snapshot = [
+            {**row, "MakeHM": "0945"}
+            for row in old_snapshot
+            if row["Umaban"] != "02"
+        ]
+        corrected_expansion = [
+            {**row, rows_key: corrected_snapshot, index_key: index}
+            for index, row in enumerate(corrected_snapshot)
+        ]
+
+        corrected_batch = updater.process_parsed_records_batch(
+            [*old_expansion, *corrected_expansion]
+        )
+        assert corrected_batch["success"] is True
+        assert corrected_batch["inserted"] == 35
+        corrected_rows = database.fetch_all(
+            f"SELECT Umaban, MakeHM FROM RT_{record_type} ORDER BY Umaban"
+        )
+        assert len(corrected_rows) == 17
+        assert all(row["Umaban"] != 2 for row in corrected_rows)
+        assert all(row["MakeHM"] == "0945" for row in corrected_rows)
+
+        database.execute(f"DELETE FROM RT_{record_type}")
+        database.commit()
+        assert all(
+            item["success"] for item in updater.process_parsed_record(old_expansion)
+        )
+        database.commit()
+        malformed_batch = updater.process_parsed_records_batch(
+            [*old_expansion[1:], *corrected_expansion]
+        )
+        assert malformed_batch["success"] is False
+        assert malformed_batch["inserted"] == 0
+        preserved_rows = database.fetch_all(
+            f"SELECT Umaban, MakeHM FROM RT_{record_type} ORDER BY Umaban"
+        )
+        assert len(preserved_rows) == 18
+        assert all(row["MakeHM"] == "0930" for row in preserved_rows)
+
+        database.execute(f"DELETE FROM RT_{record_type}")
+        database.commit()
+        ordered_batch = updater.process_parsed_records_batch(
+            [*old_expansion, delete, *corrected_expansion]
+        )
+        assert ordered_batch["success"] is True
+        assert ordered_batch["inserted"] == 36
+        ordered_rows = database.fetch_all(
+            f"SELECT Umaban, MakeHM FROM RT_{record_type} ORDER BY Umaban"
+        )
+        assert len(ordered_rows) == 17
+        assert all(row["MakeHM"] == "0945" for row in ordered_rows)
+
+        database.execute(f"DELETE FROM RT_{record_type}")
+        database.commit()
+        assert all(
+            item["success"] for item in updater.process_parsed_record(old_expansion)
+        )
+        database.commit()
+        database.execute(
+            f"CREATE TRIGGER reject_{record_type.lower()}_0945 "
+            f"BEFORE INSERT ON RT_{record_type} "
+            "WHEN NEW.MakeHM = '0945' "
+            "BEGIN SELECT RAISE(FAIL, 'injected second snapshot failure'); END"
+        )
+        database.commit()
+        failed_batch = updater.process_parsed_records_batch(
+            [*old_expansion, *corrected_expansion]
+        )
+        assert failed_batch["success"] is False
+        assert failed_batch["inserted"] == 0
+        assert failed_batch["transaction_rolled_back"] is True
+        preserved_after_failure = database.fetch_all(
+            f"SELECT Umaban, MakeHM FROM RT_{record_type} ORDER BY Umaban"
+        )
+        assert len(preserved_after_failure) == 18
+        assert all(row["MakeHM"] == "0930" for row in preserved_after_failure)
+
+        mixed_batch = updater.process_parsed_records_batch([race, *old_expansion])
+        assert mixed_batch["success"] is True
+        assert mixed_batch["inserted"] == 19
+        assert database.fetch_one(
+            f"SELECT COUNT(*) AS count FROM RT_{record_type}"
+        )["count"] == 18
+        assert database.fetch_one("SELECT COUNT(*) AS count FROM RT_RA")[
+            "count"
+        ] == 1
+        database.execute(f"DELETE FROM RT_{record_type}")
+        database.execute("DELETE FROM RT_RA")
+        database.commit()
+
+        delete_with_metadata = {
+            **delete,
+            rows_key: [delete],
+            index_key: 0,
+        }
+        rejected_delete = updater.process_parsed_record(delete_with_metadata)
+        assert rejected_delete["success"] is False
+        assert (
+            database.fetch_one(f"SELECT COUNT(*) AS count FROM RT_{record_type}")[
+                "count"
+            ]
+            == 0
+        )
+        database.rollback()
+
+        original_reject = updater._reject_strict_record
+
+        def reject_wf_after_starting_validation_transaction(table_name, record):
+            if table_name == "RT_WF":
+                database.begin_transaction()
+                return "injected invalid WF body"
+            return original_reject(table_name, record)
+
+        monkeypatch.setattr(
+            updater,
+            "_reject_strict_record",
+            reject_wf_after_starting_validation_transaction,
+        )
+        invalid_wf = {
+            "RecordSpec": "WF",
+            "DataKubun": "3",
+            "MakeDate": "20260817",
+            "Year": "2026",
+            "MonthDay": "0817",
+        }
+        validation_failure = updater.process_parsed_records_batch(
+            [invalid_wf, *old_expansion]
+        )
+        assert validation_failure["success"] is False
+        assert validation_failure["inserted"] == 0
+        assert database.has_pending_transaction() is False
+
+        following_success = updater.process_parsed_records_batch(old_expansion)
+        assert following_success["success"] is True
+        assert following_success["inserted"] == 18
+        assert database.has_pending_transaction() is False
+        database.rollback()
+        assert database.fetch_one(
+            f"SELECT COUNT(*) AS count FROM RT_{record_type}"
+        )["count"] == 18
 
 
 class TestRealtimeMonitor(unittest.TestCase):
@@ -283,10 +590,7 @@ class TestRealtimeMonitor(unittest.TestCase):
     def test_initialization(self):
         """Test RealtimeMonitor initialization."""
         monitor = RealtimeMonitor(
-            database=self.mock_db,
-            data_specs=["0B12", "0B15"],
-            sid="TEST_SID",
-            batch_size=50
+            database=self.mock_db, data_specs=["0B12", "0B15"], sid="TEST_SID", batch_size=50
         )
 
         self.assertEqual(monitor.database, self.mock_db)
@@ -425,8 +729,10 @@ class TestRealtimeMonitor(unittest.TestCase):
 
     def test_context_manager(self):
         """Test context manager protocol."""
-        with patch.object(RealtimeMonitor, 'start') as mock_start, \
-             patch.object(RealtimeMonitor, 'stop') as mock_stop:
+        with (
+            patch.object(RealtimeMonitor, "start") as mock_start,
+            patch.object(RealtimeMonitor, "stop") as mock_stop,
+        ):
 
             with RealtimeMonitor(database=self.mock_db) as monitor:
                 self.assertIsNotNone(monitor)
@@ -532,9 +838,7 @@ class TestRealtimeMonitor(unittest.TestCase):
 
         monitor = RealtimeMonitor(database=self.mock_db, data_specs=["0B12"])
         monitor.status.is_running = True
-        fetcher_cls.side_effect = JVLinkBridgeError(
-            "bridge executable unavailable", error_code=-1
-        )
+        fetcher_cls.side_effect = JVLinkBridgeError("bridge executable unavailable", error_code=-1)
 
         monitor._monitor_sequential()
 
@@ -630,6 +934,7 @@ class TestRealtimeUpdater(unittest.TestCase):
         records = [
             {
                 "RecordSpec": "O1",
+                "DataKubun": "1",
                 "SourceSpec": "0B41",
                 "Year": 2026,
                 "MonthDay": 503,
@@ -643,6 +948,7 @@ class TestRealtimeUpdater(unittest.TestCase):
             },
             {
                 "RecordSpec": "O1",
+                "DataKubun": "1",
                 "SourceSpec": "0B30",
                 "Year": 2026,
                 "MonthDay": 503,
@@ -663,8 +969,7 @@ class TestRealtimeUpdater(unittest.TestCase):
         self.assertEqual(result["tables"], ["TS_O1", "TS_SOKUHO_O1"])
 
         inserted_by_table = {
-            call.args[0]: call.args[1]
-            for call in self.mock_db.insert_many.call_args_list
+            call.args[0]: call.args[1] for call in self.mock_db.insert_many.call_args_list
         }
         self.assertNotIn("SourceSpec", inserted_by_table["TS_O1"][0])
         self.assertIn("CollectedAt", inserted_by_table["TS_O1"][0])
@@ -953,9 +1258,7 @@ class TestRealtimeUpdater(unittest.TestCase):
 
         monitor = RealtimeMonitor(database=self.mock_db)
         jvlink = MagicMock()
-        jvlink.jv_rt_open.side_effect = JVLinkBridgeError(
-            "not subscribed", error_code=-114
-        )
+        jvlink.jv_rt_open.side_effect = JVLinkBridgeError("not subscribed", error_code=-114)
 
         imported, failed = monitor._drain_key(
             jvlink, MagicMock(), "0B51", "20260715"
@@ -969,9 +1272,7 @@ class TestRealtimeUpdater(unittest.TestCase):
 
         monitor = RealtimeMonitor(database=self.mock_db)
         jvlink = MagicMock()
-        jvlink.jv_rt_open.side_effect = JVLinkBridgeError(
-            "bridge busy", error_code=-202
-        )
+        jvlink.jv_rt_open.side_effect = JVLinkBridgeError("bridge busy", error_code=-202)
 
         imported, failed = monitor._drain_key(
             jvlink, MagicMock(), "0B12", "20260715"
@@ -1014,7 +1315,7 @@ class TestRealtimeUpdater(unittest.TestCase):
 
     @patch('src.realtime.updater.ParserFactory')
     def test_process_record_unknown_type(self, mock_factory_class):
-        """Test processing record with unknown type returns None."""
+        """An unknown record type is an explicit validation rejection."""
         # Setup mock parser
         mock_parser = MagicMock()
         mock_parser.parse.return_value = {
@@ -1032,8 +1333,12 @@ class TestRealtimeUpdater(unittest.TestCase):
         # Process record
         result = updater.process_record("XX20240101...")
 
-        # Verify result is None
-        self.assertIsNone(result)
+        # Missing routing metadata is an explicit machine-readable rejection.
+        self.assertEqual(result["operation"], "validate")
+        self.assertFalse(result["success"])
+        self.assertIn("RecordSpec", result["error"])
+        self.mock_db.insert.assert_not_called()
+        self.mock_db.execute.assert_not_called()
 
     @patch('src.realtime.updater.ParserFactory')
     def test_process_record_parse_failure(self, mock_factory_class):
@@ -1057,7 +1362,7 @@ class TestRealtimeUpdater(unittest.TestCase):
 
     @patch('src.realtime.updater.ParserFactory')
     def test_process_record_missing_record_spec(self, mock_factory_class):
-        """Test processing record without RecordSpec."""
+        """A missing record type is an explicit validation rejection."""
         # Setup mock parser
         mock_parser = MagicMock()
         mock_parser.parse.return_value = {
@@ -1075,8 +1380,11 @@ class TestRealtimeUpdater(unittest.TestCase):
         # Process record
         result = updater.process_record("RA20240101...")
 
-        # Verify result is None
-        self.assertIsNone(result)
+        self.assertEqual(result["operation"], "validate")
+        self.assertFalse(result["success"])
+        self.assertIn("RecordSpec", result["error"])
+        self.mock_db.insert.assert_not_called()
+        self.mock_db.execute.assert_not_called()
 
     @patch('src.realtime.updater.ParserFactory')
     def test_process_record_delete_missing_primary_key_values(self, mock_factory_class):
@@ -1085,7 +1393,7 @@ class TestRealtimeUpdater(unittest.TestCase):
         mock_parser = MagicMock()
         mock_parser.parse.return_value = {
             "RecordSpec": "DM",
-            "headDataKubun": DATA_KUBUN_DELETE,
+            "headDataKubun": DATA_KUBUN_ERASE,
             "Year": "2024",
             "MonthDay": "0101",
         }
@@ -1212,7 +1520,7 @@ class TestRealtimeUpdater(unittest.TestCase):
         self.assertNotIn("_internal", inserted_data)
         self.assertIn("Year", inserted_data)
 
-    @patch('src.realtime.updater.ParserFactory')
+    @patch("src.realtime.updater.ParserFactory")
     def test_record_data_kubun_is_persisted_not_used_as_delete(self, mock_factory_class):
         """RA DataKubun=9 is a cancelled-race state, not a DELETE command."""
         # Setup mock parser - only DataKubun is present
@@ -1290,8 +1598,7 @@ class TestRealtimeUpdater(unittest.TestCase):
     def test_conflicting_current_and_legacy_data_kubun_is_rejected(self):
         updater = RealtimeUpdater(self.mock_db)
 
-        with self.assertRaisesRegex(ValueError, "conflicting DataKubun"):
-            updater.process_parsed_record(
+        result = updater.process_parsed_record(
                 {
                     "RecordSpec": "RA",
                     "DataKubun": DATA_KUBUN_DELETE,
@@ -1305,8 +1612,122 @@ class TestRealtimeUpdater(unittest.TestCase):
                 }
             )
 
+        self.assertEqual(result["operation"], "validate")
+        self.assertFalse(result["success"])
+        self.assertIn("conflicting DataKubun", result["error"])
         self.mock_db.execute.assert_not_called()
         self.mock_db.insert.assert_not_called()
+
+    def test_dm_tm_accumulated_only_status_is_rejected_by_realtime_batch(self):
+        updater = RealtimeUpdater(self.mock_db)
+
+        for record_type in ("DM", "TM"):
+            result = updater.process_parsed_records_batch(
+                [
+                    {
+                        "RecordSpec": record_type,
+                        "DataKubun": "7",
+                        "MakeDate": "20260817",
+                        "Year": "2026",
+                        "MonthDay": "0817",
+                        "JyoCD": "05",
+                        "Kaiji": "3",
+                        "Nichiji": "8",
+                        "RaceNum": "11",
+                        "Umaban": "1",
+                    }
+                ]
+            )
+            self.assertFalse(result["success"])
+            self.assertEqual(result["inserted"], 0)
+            self.assertEqual(result["errors"], 1)
+
+        self.mock_db.insert.assert_not_called()
+        self.mock_db.insert_many.assert_not_called()
+        self.mock_db.execute.assert_not_called()
+
+    def test_invalid_header_aborts_mixed_realtime_batch_before_any_mutation(self):
+        updater = RealtimeUpdater(self.mock_db)
+        valid = {
+            "RecordSpec": "RA",
+            "DataKubun": "1",
+            "MakeDate": "20260817",
+            "Year": "2026",
+            "MonthDay": "0817",
+            "JyoCD": "05",
+            "Kaiji": "3",
+            "Nichiji": "8",
+            "RaceNum": "11",
+        }
+        invalid = {
+            "RecordSpec": "TC",
+            "DataKubun": "0",
+            "MakeDate": "20260817",
+            "Year": "2026",
+            "MonthDay": "0817",
+            "JyoCD": "05",
+            "Kaiji": "3",
+            "Nichiji": "8",
+            "RaceNum": "11",
+        }
+
+        result = updater.process_parsed_records_batch([valid, invalid])
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["inserted"], 0)
+        self.assertEqual(result["errors"], 2)
+        self.mock_db.insert.assert_not_called()
+        self.mock_db.insert_many.assert_not_called()
+        self.mock_db.execute.assert_not_called()
+
+    def test_matching_legacy_aliases_are_canonicalized_before_batch_routing(self):
+        updater = RealtimeUpdater(self.mock_db)
+        record = {
+            "headRecordSpec": "TC",
+            "headDataKubun": "1",
+            "MakeDate": "20260817",
+            "Year": "2026",
+            "MonthDay": "0817",
+            "JyoCD": "05",
+            "Kaiji": "3",
+            "Nichiji": "8",
+            "RaceNum": "11",
+        }
+
+        result = updater.process_parsed_records_batch([record])
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["inserted"], 1)
+        inserted = self.mock_db.insert_many.call_args.args[1][0]
+        self.assertEqual(inserted["RecordSpec"], "TC")
+        self.assertEqual(inserted["DataKubun"], "1")
+
+    def test_accumulated_only_raw_status_is_rejected_before_cache_write(self):
+        cache = MagicMock()
+        updater = RealtimeUpdater(self.mock_db, cache_manager=cache)
+
+        result = updater.process_record(make_wf_record(data_kubun="7"))
+
+        self.assertEqual(result["operation"], "validate")
+        self.assertFalse(result["success"])
+        cache.write_rt_record.assert_not_called()
+        self.mock_db.insert.assert_not_called()
+        self.mock_db.execute.assert_not_called()
+
+    def test_mining_list_shortcut_validates_realtime_status_before_replacement(self):
+        updater = RealtimeUpdater(self.mock_db)
+        updater._replace_mining_native_snapshot = MagicMock()
+
+        result = updater.process_parsed_record(
+            [{"RecordSpec": "DM", "DataKubun": "7", "MakeDate": "20260817"}]
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["operation"], "validate")
+        self.assertFalse(result[0]["success"])
+        updater._replace_mining_native_snapshot.assert_not_called()
+        self.mock_db.insert.assert_not_called()
+        self.mock_db.execute.assert_not_called()
 
     def test_finalized_ra_data_kubun_is_stored_as_state(self):
         updater = RealtimeUpdater(self.mock_db)
@@ -1351,14 +1772,14 @@ class TestRealtimeUpdater(unittest.TestCase):
         self.mock_db.insert.assert_called_once()
         self.mock_db.execute.assert_not_called()
 
-    @patch('src.realtime.updater.ParserFactory')
-    def test_head_data_kubun_default_fallback(self, mock_factory_class):
-        """Test fallback to default value when both headDataKubun and DataKubun are missing."""
+    @patch("src.realtime.updater.ParserFactory")
+    def test_missing_data_kubun_is_rejected_without_default_or_mutation(self, mock_factory_class):
+        """A missing official header state is unknown, never an implicit INSERT."""
         # Setup mock parser - neither headDataKubun nor DataKubun present
         mock_parser = MagicMock()
         mock_parser.parse.return_value = {
             "RecordSpec": "RA",
-            # No headDataKubun or DataKubun - defaults to "1" (NEW)
+            # No headDataKubun or DataKubun.
             "Year": "2024",
             "MonthDay": "0101",
             "JyoCD": "05",
@@ -1377,10 +1798,39 @@ class TestRealtimeUpdater(unittest.TestCase):
         # Process record
         result = updater.process_record("RA20240101...")
 
-        # Verify it defaults to NEW (insert)
+        # The parser boundary and caller-dict boundary both fail closed.
         self.assertIsNotNone(result)
-        self.assertEqual(result["operation"], "insert")
-        self.mock_db.insert.assert_called_once()
+        self.assertEqual(result["operation"], "validate")
+        self.assertFalse(result["success"])
+        self.assertIn("DataKubun", result["error"])
+        self.mock_db.insert.assert_not_called()
+        self.mock_db.execute.assert_not_called()
+
+    def test_tc_and_cc_reject_non_official_zero_before_delete(self):
+        """Neither format has a historical/current DataKubun=0 generation."""
+
+        updater = RealtimeUpdater(self.mock_db)
+        base = {
+            "DataKubun": "0",
+            "MakeDate": "20260817",
+            "Year": "2026",
+            "MonthDay": "0817",
+            "JyoCD": "05",
+            "Kaiji": "3",
+            "Nichiji": "8",
+            "RaceNum": "11",
+            "HappyoTime": "08171234",
+        }
+
+        for record_type in ("TC", "CC"):
+            result = updater.process_parsed_record({"RecordSpec": record_type, **base})
+            self.assertIsNotNone(result)
+            self.assertEqual(result["operation"], "validate")
+            self.assertFalse(result["success"])
+            self.assertIn("DataKubun", result["error"])
+
+        self.mock_db.insert.assert_not_called()
+        self.mock_db.execute.assert_not_called()
 
 
 if __name__ == "__main__":

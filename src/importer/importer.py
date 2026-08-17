@@ -5,6 +5,7 @@ This module imports parsed JV-Data records into database.
 
 import json
 import re
+from itertools import chain
 from typing import Any, Dict, Iterator, List, Optional
 
 from src.database.base import BaseDatabase, DatabaseError
@@ -12,6 +13,11 @@ from src.database.migration import SchemaMigrationError
 from src.database.schema_types import (
     get_table_column_types,
     get_table_primary_key_columns,
+)
+from src.parser.status_domain import (
+    DataKubunContext,
+    resolve_data_kubun_aliases,
+    validate_record_header,
 )
 from src.utils.logger import get_logger
 
@@ -43,6 +49,26 @@ def rollback_failed_import(database: BaseDatabase, *, context: str) -> None:
             context=context,
             error=str(rollback_error),
         )
+
+
+def inspect_pending_transaction_or_invalidate(
+    database: BaseDatabase, *, context: str
+) -> bool:
+    """Read transaction ownership or invalidate a session whose state is unknown."""
+    try:
+        return database.has_pending_transaction()
+    except Exception as inspection_error:
+        try:
+            database.invalidate_connection()
+        except Exception as invalidation_error:
+            raise TransactionRecoveryError(
+                f"{context}: transaction-state inspection failed "
+                f"({inspection_error}); connection invalidation failed "
+                f"({invalidation_error})"
+            ) from invalidation_error
+        raise TransactionRecoveryError(
+            f"{context}: transaction-state inspection failed; connection invalidated"
+        ) from inspection_error
 
 
 def resolve_standard_storage_table_name(native_table_name: str) -> str:
@@ -1732,17 +1758,21 @@ _STANDARD_ODDS_CONFIG_BY_OWNER = {
 
 
 def resolve_record_data_kubun(record: dict) -> str:
-    """Resolve current and legacy names for the same JV-Data header field."""
-    current = record.get("DataKubun")
-    legacy = record.get("headDataKubun")
-    current = None if current in (None, "") else str(current)
-    legacy = None if legacy in (None, "") else str(legacy)
-    if current is not None and legacy is not None and current != legacy:
-        raise ValueError(
-            "record has conflicting DataKubun and headDataKubun values: "
-            f"{current!r} != {legacy!r}"
+    """Resolve current and legacy names without inventing a live-row default."""
+
+    return resolve_data_kubun_aliases(record)
+
+
+def validate_import_record_header(record: dict) -> tuple[str, str]:
+    """Fail closed on a non-official accumulated/import header."""
+
+    try:
+        return validate_record_header(
+            record,
+            context=DataKubunContext.ACCUMULATED,
         )
-    return current or legacy or "1"
+    except ValueError as error:
+        raise SchemaMigrationError(str(error)) from error
 
 
 def clean_record_metadata(record: dict) -> dict:
@@ -4528,6 +4558,57 @@ class DataImporter:
             ...     stats = importer.import_records(records)
             ...     print(f"Imported {stats['records_imported']} records")
         """
+        previous_statistics = (
+            self._records_imported,
+            self._records_failed,
+            self._batches_processed,
+        )
+        previous_transaction_generation = self.database.get_transaction_generation()
+
+        # Every call owns a fresh statistics interval, including a call that is
+        # rejected before schema preflight.
+        self._records_imported = 0
+        self._records_failed = 0
+        self._batches_processed = 0
+
+        # Validate the first provider header before a standard-schema preflight
+        # is allowed to ALTER anything. The iterator remains streaming; later
+        # rows are validated immediately before their own routing/mutation.
+        records = iter(records)
+        exhausted = object()
+        try:
+            first_record = next(records, exhausted)
+            if first_record is not exhausted:
+                validate_import_record_header(first_record)
+                records = chain((first_record,), records)
+        except Exception:
+            if not auto_commit:
+                try:
+                    pending_transaction = inspect_pending_transaction_or_invalidate(
+                        self.database,
+                        context="first-header failure in caller-owned import",
+                    )
+                except TransactionRecoveryError:
+                    if (
+                        self.database.is_connected()
+                        and previous_transaction_generation is not None
+                    ):
+                        (
+                            self._records_imported,
+                            self._records_failed,
+                            self._batches_processed,
+                        ) = previous_statistics
+                    else:
+                        self.reset_statistics()
+                    raise
+                if pending_transaction:
+                    rollback_failed_import(
+                        self.database,
+                        context="first-header failure in caller-owned import",
+                    )
+                    self.reset_statistics()
+            raise
+
         if not auto_commit:
             self.database.begin_transaction()
         try:
@@ -4540,11 +4621,6 @@ class DataImporter:
                 )
             raise
 
-        # Reset statistics
-        self._records_imported = 0
-        self._records_failed = 0
-        self._batches_processed = 0
-
         # Group records by type for batch insertion
         batch_buffers: Dict[str, List[dict]] = {}
         standard_odds_fingerprints: dict[str, tuple] = {}
@@ -4553,17 +4629,9 @@ class DataImporter:
 
         try:
             for record in records:
+                record_type, _ = validate_import_record_header(record)
                 # Get record type and table name
                 # Note: Japanese parsers use 'レコード種別ID', JRA-VAN standard uses 'RecordSpec'
-                record_type = _record_type_from_record(record)
-                if not record_type:
-                    logger.warning(
-                        "Record missing record type field",
-                        record_keys=list(record.keys())[:5] if record else None,
-                    )
-                    self._records_failed += 1
-                    continue
-
                 table_name = self._get_table_name(record_type)
                 if not table_name:
                     logger.warning(
@@ -4754,6 +4822,7 @@ class DataImporter:
                     self.database,
                     context="validation/schema failure in caller-owned import",
                 )
+                self.reset_statistics()
             raise
         except Exception as e:
             if not auto_commit:
@@ -4761,6 +4830,7 @@ class DataImporter:
                     self.database,
                     context="unexpected failure in caller-owned import",
                 )
+                self.reset_statistics()
             logger.error("Import failed", error=str(e))
             raise ImporterError(f"Failed to import records: {e}")
 
@@ -5178,6 +5248,10 @@ class DataImporter:
     def _rollback_single_record_transaction(self, *, context: str) -> None:
         """Rollback a failed single-record sequence and restore its counters."""
         rollback_failed_import(self.database, context=context)
+        self._restore_single_record_statistics()
+
+    def _restore_single_record_statistics(self) -> None:
+        """Restore counters to the start of the current single-record sequence."""
         if self._single_record_stats_checkpoint is not None:
             (
                 _,
@@ -5201,6 +5275,46 @@ class DataImporter:
         Returns:
             True if successful, False otherwise
         """
+        # Header/domain validation must precede transaction ownership and
+        # standard-schema migration. It cannot be rolled back after an ALTER.
+        try:
+            record_type, _ = validate_import_record_header(record)
+        except SchemaMigrationError:
+            if not auto_commit:
+                checkpoint_generation = (
+                    self._single_record_stats_checkpoint[0]
+                    if self._single_record_stats_checkpoint is not None
+                    else None
+                )
+                active_generation = self.database.get_transaction_generation()
+                checkpoint_is_active = (
+                    checkpoint_generation is not None
+                    and checkpoint_generation == active_generation
+                )
+                try:
+                    pending_transaction = inspect_pending_transaction_or_invalidate(
+                        self.database,
+                        context="header failure in caller-owned single-record import",
+                    )
+                except TransactionRecoveryError:
+                    if not self.database.is_connected():
+                        if checkpoint_is_active:
+                            self._restore_single_record_statistics()
+                        else:
+                            self._single_record_stats_checkpoint = None
+                    raise
+                if pending_transaction:
+                    rollback_failed_import(
+                        self.database,
+                        context="header failure in caller-owned single-record import",
+                    )
+                    if checkpoint_is_active:
+                        self._restore_single_record_statistics()
+                    else:
+                        self._single_record_stats_checkpoint = None
+                elif not checkpoint_is_active:
+                    self._single_record_stats_checkpoint = None
+            raise
         self._begin_single_record_transaction(auto_commit=auto_commit)
         try:
             self._ensure_jravan_tables_ready(auto_commit=auto_commit)
@@ -5210,16 +5324,6 @@ class DataImporter:
                     context="standard-schema preflight in single-record import",
                 )
             raise
-
-        # Note: Japanese parsers use 'レコード種別ID', JRA-VAN standard uses 'RecordSpec'
-        record_type = _record_type_from_record(record)
-        if not record_type:
-            logger.warning("Record missing record type field")
-            if not auto_commit:
-                self._rollback_single_record_transaction(
-                    context="missing record type in single-record import",
-                )
-            return False
 
         table_name = self._get_table_name(record_type)
         if not table_name:

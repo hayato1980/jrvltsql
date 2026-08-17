@@ -95,6 +95,55 @@ cache の変更に入る前に、対応する現行種別名を示して停止�
 | `0B17` | 速報対戦型データマイニング予想 | `TM` | `RT_TM` | `YYYYMMDD` | 対応済み |
 | `0B51` | 速報重勝式 WIN5 | `WF` | `RT_WF` | `YYYYMMDD` または WIN5 開催キー | 公式7,215-byte形式（対象5レース・有効票数5件・払戻243件）に対応。速報系のデータ区分は0/1/2/3/9で、蓄積系のみの7は受け付けません |
 
+### 公式データ区分の検証
+
+パーサー、通常インポート、1件インポート、速報保存は、レコード種別ごとの
+公式`DataKubun`を共通契約で検証します。値が無い、空欄、1文字でない、別名の値が
+食い違う、または下表に無いレコードは、そのレコードを使ったtable routing、cache
+書き込み、DB更新より前に拒否します。未指定値を新規登録`1`として補うことは
+ありません。
+
+通常インポートはstreaming処理です。`auto_commit=True`では完了したbatchを順次commit
+するため、後続レコードの検証失敗より前に確定済みの正常batchと、開始時のstandard
+schema preflightによる変更は保持されます。呼び出し全体をall-or-nothingにする場合は
+`auto_commit=False`を使います。この場合、後続検証失敗は同じ呼び出しまたは同じ
+caller-owned transactionで先に書いた行と統計をrollbackします。
+このrollback要否を判定するtransaction状態を取得できない場合は、未確定行をcommit可能な
+接続として残さず接続を無効化し、`TransactionRecoveryError`で停止します。統計のrollbackは
+同じtransaction generationに属する未確定分だけに限定します。callerが前のtransactionを
+commit済みの場合、その確定行と累積統計を後続transactionの状態判定失敗で巻き戻しません。
+状態判定と接続無効化の両方が失敗した場合は、接続上の未確定分を安全に分類できないため
+`TransactionRecoveryError`を送出し、既存の統計も成功・失敗のどちらへも推測更新しません。
+
+下表は全38形式について、通常import/parserで使うcurrent base domainを示します。
+providerがその形式を蓄積系・速報系のどちらで提供するかを表すavailability表では
+ありません。速報では、このbase domainから明示的な差分を次表で適用します。
+
+| current base domainのレコード種別 | 現行の公式値 |
+| --- | --- |
+| `WH`, `WE`, `JC`, `TC`, `CC` | `1` |
+| `AV` | `1`, `2` |
+| `RC`, `HC`, `HS`, `HY`, `JG`, `WC` | `0`, `1` |
+| `TK`, `KS`, `CH`, `BR`, `BN`, `HN`, `SK`, `CK`, `BT`, `CS` | `0`, `1`, `2` |
+| `HR` | `0`, `1`, `2`, `9` |
+| `DM`, `TM` | `0`, `1`, `2`, `3`, `7` |
+| `YS` | `0`, `1`, `2`, `3`, `9` |
+| `H1`, `H6` | `0`, `2`, `4`, `5`, `9` |
+| `UM` | `0`, `1`, `2`, `3`, `4`, `9` |
+| `WF` | `0`, `1`, `2`, `3`, `7`, `9` |
+| `O1`〜`O6` | `0`, `1`, `2`, `3`, `4`, `5`, `9` |
+| `RA`, `SE` | `0`, `1`, `2`, `3`, `4`, `5`, `6`, `7`, `9`, `A`, `B` |
+
+速報では、公式に蓄積系限定とされる`7`を`DM`, `TM`, `WF`で受け付けません。
+したがって速報の`DM`/`TM`は`0`, `1`, `2`, `3`、`WF`は`0`, `1`, `2`, `3`,
+`9`です。それ以外の形式では、公式資料に明記されない速報独自の制限を推測で
+追加していません。
+
+同じ物理長の旧データも、公式変更日の前であることを`MakeDate`から確認できる場合に
+限り扱います。`RC=2`は2005-09-29より前、`WH`/`WE`/`AV`/`JC=0`は
+2003-07-11より前だけです。`UM=9`は2003-04-22より前のデータでは拒否します。
+日付が無い、読めない、または境界日以後なら現行仕様として検証します。
+
 ### WH テーブルの互換性に関する注意
 
 `WH` は公式 format 101 の847バイト馬体重レコードです。1レコード内の
@@ -273,6 +322,9 @@ rollbackし、行単位fallbackによる部分成功や、rollbackされた操�
 callerは、validation-only拒否かDB rollback済みかにかかわらず、その取込単位を必ず中断してください。
 psycopgではSELECTだけでもtransactionが開始されるため、独立した取込単位へ移るcallerは明示的に
 commitまたはrollbackして境界を閉じてください。transaction状態を判定できない場合は書込前に失敗します。
+batch開始時にcaller側transactionが無かった場合、schema/catalog検証のSELECTが暗黙に開始した
+transactionはvalidation-only拒否時にもrollbackして閉じます。開始時からcaller側transactionが
+存在した場合は、validation-only拒否だけではそのtransactionをcommit/rollbackしません。
 時系列取得CLIは保存先table作成を先にcommitしてbatchごとの境界を分離し、1batchでも拒否された場合は
 `[OK]`を出さず非0終了します。
 `WIN5`は読み取り側の名前解決互換用のaliasであり、新規import先には使いません。
@@ -309,6 +361,18 @@ CKのJRA-VAN標準名モードはまだ実装しておらず、`CHOKYO_DETAIL`�
 右端1桁が小数第一位です。旧39バイト復元データ、旧標準名`TIME_MASTER`、主キーのない
 `TAISENGATA_MINING`、`TMScore`が整数型の旧nativeテーブルは安全に自動変換できないため、
 取り込みを停止して再構築を求めます。
+速報の非削除DM/TMは、1物理レコードから展開された同一種別・同一`DataKubun`の
+1〜18頭を完全なlistとして渡す必要があります。共通metadata、展開index、馬番
+（`01`〜`18`、重複なし）、metadata内と展開後の正規化済み各行内容が完全一致しないlist、
+または19頭以上はDBへ到達する前に拒否します。`process_parsed_record`へ渡すlistは1物理
+スナップショットだけを表し、他種別との混在を拒否します。非削除の1行dictを完全snapshotとは
+扱いません。
+`DataKubun=0`だけはmetadataを持たない単一の削除レコードとして受け付けます。
+`process_parsed_records_batch`は、先頭行の展開indexとmetadata件数で複数のDM/TM物理
+スナップショットを分割し、間にある削除や他種別レコードも提供順の1 transactionで処理します。
+途中の不完全な展開、metadataの無い非削除行、または1操作でもDB書込に失敗したbatchは、
+先行操作も含めて全てrollbackし、`inserted=0`を返します。成功時の`inserted`は最終行数ではなく、
+提供順に正常適用した展開行と隣接レコードの操作数です。
 DM/TMのnative速報スナップショット置換は、既存レース行の削除後に書込が失敗した場合、caller所有を
 含むactive transaction全体をrollbackします。rollback不能時は接続を無効化し、それも失敗した場合は
 batch・optimized・single・速報の全入口から`TransactionRecoveryError`を送出し、通常の失敗結果へ

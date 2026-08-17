@@ -396,7 +396,6 @@ def test_dm_realtime_expansion_revision_and_race_delete(tmp_path) -> None:
     assert deleted[0]["success"] is True
     assert remaining == 0
 
-
 @pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 def test_dm_standard_import_refuses_keyless_mining_without_row_loss(
     tmp_path, importer_class
@@ -548,6 +547,7 @@ def test_dm_postgresql_native_and_standard_revision_delete(postgresql_db, import
 
 def test_dm_postgresql_realtime_snapshot_revision_delete(postgresql_db) -> None:
     postgresql_db.execute(SCHEMAS["RT_DM"])
+    postgresql_db.execute(SCHEMAS["RT_WF"])
     postgresql_db.commit()
     updater = RealtimeUpdater(postgresql_db)
     corrected_entries = _official_entries(time_offset=500)
@@ -585,3 +585,48 @@ def test_dm_postgresql_realtime_snapshot_revision_delete(postgresql_db) -> None:
     assert isinstance(deleted, list) and len(deleted) == 1
     assert deleted[0]["success"] is True
     assert remaining == 0
+
+    old_expansion = DMParser().parse(_dm_record())
+    corrected_expansion = DMParser().parse(
+        _dm_record(make_hm="0945", entries=corrected_entries)
+    )
+    assert old_expansion is not None and corrected_expansion is not None
+    batch = updater.process_parsed_records_batch(
+        [*old_expansion, *corrected_expansion]
+    )
+    batch_rows = postgresql_db.fetch_all(
+        'SELECT Umaban AS "Umaban", MakeHM AS "MakeHM" '
+        "FROM RT_DM ORDER BY Umaban"
+    )
+    assert batch["success"] is True
+    assert batch["inserted"] == 35
+    assert len(batch_rows) == 17
+    assert all(
+        row["Umaban"] != 2 and row["MakeHM"] == "0945"
+        for row in batch_rows
+    )
+
+    postgresql_db.execute("DELETE FROM RT_DM")
+    postgresql_db.commit()
+    invalid_wf = {
+        "RecordSpec": "WF",
+        "DataKubun": "3",
+        "MakeDate": "20260817",
+        "Year": "2026",
+        "MonthDay": "0817",
+    }
+    validation_failure = updater.process_parsed_records_batch(
+        [invalid_wf, *old_expansion]
+    )
+    assert validation_failure["success"] is False
+    assert validation_failure["inserted"] == 0
+    assert postgresql_db.has_pending_transaction() is False
+
+    following_success = updater.process_parsed_records_batch(old_expansion)
+    assert following_success["success"] is True
+    assert following_success["inserted"] == 18
+    assert postgresql_db.has_pending_transaction() is False
+    postgresql_db.rollback()
+    assert postgresql_db.fetch_one("SELECT COUNT(*) AS count FROM RT_DM")[
+        "count"
+    ] == 18

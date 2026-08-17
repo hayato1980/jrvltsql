@@ -7,6 +7,7 @@ Key optimizations:
 - Adaptive batch sizing based on performance
 """
 
+from itertools import chain
 from typing import Dict, Iterator, List, Optional, Union
 
 from src.database.base import BaseDatabase, DatabaseError
@@ -35,7 +36,6 @@ from src.importer.importer import (
     _is_standard_odds_record_erase,
     _is_standard_vote_record_erase,
     _mining_native_snapshot_rows,
-    _record_type_from_record,
     _standard_odds_physical_fingerprint,
     _standard_vote_physical_fingerprint,
     apply_rc_batch,
@@ -51,6 +51,7 @@ from src.importer.importer import (
     insert_tk_coupled_batch,
     insert_wf_native_batch,
     insert_wf_standard_batch,
+    inspect_pending_transaction_or_invalidate,
     preflight_standard_schema_migrations,
     prepare_ch_coupled_rows,
     prepare_ck_coupled_rows,
@@ -61,6 +62,7 @@ from src.importer.importer import (
     resolve_standard_storage_table_name,
     resolve_standard_table_name,
     rollback_failed_import,
+    validate_import_record_header,
     validate_jg_record,
     validate_wc_record,
     validate_wf_record,
@@ -292,6 +294,56 @@ class OptimizedDataImporter:
         Returns:
             Dictionary with import statistics
         """
+        previous_statistics = (
+            self._records_imported,
+            self._records_failed,
+            self._batches_processed,
+        )
+        previous_transaction_generation = self.database.get_transaction_generation()
+
+        self._records_imported = 0
+        self._records_failed = 0
+        self._batches_processed = 0
+
+        records = iter(records)
+        exhausted = object()
+        try:
+            first_record = next(records, exhausted)
+            if first_record is not exhausted:
+                validate_import_record_header(first_record)
+                records = chain((first_record,), records)
+        except Exception:
+            if not auto_commit:
+                try:
+                    pending_transaction = inspect_pending_transaction_or_invalidate(
+                        self.database,
+                        context="first-header failure in optimized caller-owned import",
+                    )
+                except TransactionRecoveryError:
+                    if (
+                        self.database.is_connected()
+                        and previous_transaction_generation is not None
+                    ):
+                        (
+                            self._records_imported,
+                            self._records_failed,
+                            self._batches_processed,
+                        ) = previous_statistics
+                    else:
+                        self._records_imported = 0
+                        self._records_failed = 0
+                        self._batches_processed = 0
+                    raise
+                if pending_transaction:
+                    rollback_failed_import(
+                        self.database,
+                        context="first-header failure in optimized caller-owned import",
+                    )
+                self._records_imported = 0
+                self._records_failed = 0
+                self._batches_processed = 0
+            raise
+
         if not auto_commit:
             self.database.begin_transaction()
         try:
@@ -304,11 +356,6 @@ class OptimizedDataImporter:
                 )
             raise
 
-        # Reset statistics
-        self._records_imported = 0
-        self._records_failed = 0
-        self._batches_processed = 0
-
         # Group records by type for batch insertion
         batch_buffers: Dict[str, List[dict]] = {}
         standard_odds_fingerprints: dict[str, tuple] = {}
@@ -319,16 +366,8 @@ class OptimizedDataImporter:
 
         try:
             for record in records:
+                record_type, _ = validate_import_record_header(record)
                 # Get record type and table name
-                record_type = _record_type_from_record(record)
-                if not record_type:
-                    logger.warning(
-                        "Record missing record type field",
-                        record_keys=list(record.keys())[:5] if record else None,
-                    )
-                    self._records_failed += 1
-                    continue
-
                 table_name = self._get_table_name(record_type)
                 if not table_name:
                     logger.warning(
@@ -658,6 +697,9 @@ class OptimizedDataImporter:
                     self.database,
                     context="validation/schema failure in optimized caller-owned import",
                 )
+                self._records_imported = 0
+                self._records_failed = 0
+                self._batches_processed = 0
             raise
         except Exception as e:
             if not auto_commit:
@@ -665,6 +707,9 @@ class OptimizedDataImporter:
                     self.database,
                     context="unexpected failure in optimized caller-owned import",
                 )
+                self._records_imported = 0
+                self._records_failed = 0
+                self._batches_processed = 0
             logger.error("Import failed", error=str(e))
 
             from src.importer.importer import ImporterError
