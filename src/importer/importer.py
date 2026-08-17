@@ -186,6 +186,12 @@ def resolve_standard_table_name(database: BaseDatabase, native_table_name: str) 
 
 
 _STANDARD_FIELD_ALIASES = {
+    "UMA_RACE": {
+        "Reserved_229": "reserved1",
+        "Reserved_296": "reserved2",
+        "Reserved_382": "reserved3",
+        "Reserved_385": "reserved4",
+    },
     "HANSYOKU": {
         "MochiKubun": "HansyokuMochiKubun",
         "FHansyokuNum": "HansyokuFNum",
@@ -388,6 +394,17 @@ _TK_KEY_COLUMNS = ("Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum")
 _TK_ROWS_KEY = "_tk_registered_horse_rows"
 _HY_STORAGE_TABLES = frozenset({"NL_HY", "BAMEIORIGIN"})
 _BT_STORAGE_TABLES = frozenset({"NL_BT", "KEITO"})
+_SE_STORAGE_TABLES = frozenset({"NL_SE", "RT_SE", "UMA_RACE"})
+_SE_KEY_COLUMNS = (
+    "Year",
+    "MonthDay",
+    "JyoCD",
+    "Kaiji",
+    "Nichiji",
+    "RaceNum",
+    "Umaban",
+    "KettoNum",
+)
 _CS_STORAGE_TABLES = frozenset({"NL_CS", "COURSE"})
 _JG_STORAGE_TABLES = frozenset({"NL_JG", "JOGAIBA"})
 _JG_KEY_COLUMNS = (
@@ -441,6 +458,329 @@ def verify_bt_storage_schema(database: BaseDatabase, table_name: str) -> bool:
     if schema_sql is None:
         raise SchemaMigrationError(f"BT storage schema is undefined: {table_name}")
     verify_table_schema(database, table_name, schema_sql)
+    return True
+
+
+def _verify_se_key_storage_types(database: BaseDatabase, table_name: str) -> None:
+    """Reject key affinities that can split or coerce one official identity."""
+
+    from src.database.migration import (
+        _get_existing_column_types,
+        _is_lossless_text_type,
+        _migration_targets,
+    )
+
+    targets = _migration_targets(database)
+    if targets != (database,):
+        for target in targets:
+            _verify_se_key_storage_types(target, table_name)
+        return
+
+    actual_types = _get_existing_column_types(database, table_name)
+    integral = {
+        "smallint",
+        "int2",
+        "integer",
+        "int",
+        "int4",
+        "bigint",
+        "int8",
+    }
+    problems: list[str] = []
+    for column in ("Year", "MonthDay", "Kaiji", "Nichiji", "RaceNum", "Umaban"):
+        actual = actual_types.get(column.lower(), "")
+        normalized = re.sub(r"\s+", " ", actual.strip().lower())
+        if normalized not in integral:
+            problems.append(f"{column} existing={actual or '<unknown>'} expected=integral")
+    for column in ("JyoCD", "KettoNum"):
+        actual = actual_types.get(column.lower(), "")
+        if not actual or not _is_lossless_text_type(actual):
+            problems.append(f"{column} existing={actual or '<unknown>'} expected=text")
+    if problems:
+        raise SchemaMigrationError(
+            f"SE key type mismatch for {table_name}: {', '.join(problems)}"
+        )
+
+
+def _verify_se_key_not_null_constraints(
+    database: BaseDatabase, table_name: str
+) -> None:
+    """Require the complete composite key to reject NULL identities at the DB."""
+
+    from src.database.migration import _migration_targets
+
+    targets = _migration_targets(database)
+    if targets != (database,):
+        for target in targets:
+            _verify_se_key_not_null_constraints(target, table_name)
+        return
+
+    db_type = database.get_db_type()
+    if db_type == "sqlite":
+        rows = database.fetch_all(f'PRAGMA table_info("{table_name}")')
+        not_null = {
+            str(row.get("name") or "").lower(): bool(row.get("notnull"))
+            for row in rows
+        }
+    elif db_type == "postgresql":
+        rows = database.fetch_all(
+            "SELECT column_name, is_nullable FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = ?",
+            (table_name.lower(),),
+        )
+        not_null = {
+            str(row.get("column_name") or "").lower(): str(
+                row.get("is_nullable") or ""
+            ).upper()
+            == "NO"
+            for row in rows
+        }
+    else:
+        raise SchemaMigrationError(
+            f"SE key nullability cannot be verified for database type {db_type!r}"
+        )
+
+    missing = [
+        column for column in _SE_KEY_COLUMNS if not not_null.get(column.lower(), False)
+    ]
+    if missing:
+        raise SchemaMigrationError(
+            f"SE storage {table_name} key columns must be NOT NULL: {missing}"
+        )
+
+
+def _normalize_se_storage_type(declared_type: str) -> str:
+    """Normalize backend spellings without weakening the SE column contract."""
+
+    normalized = re.sub(r"\s+", " ", str(declared_type or "").strip().lower())
+    sized_patterns = (
+        (r"(?:varchar|character varying)\s*\(\s*(\d+)\s*\)", "varchar"),
+        (r"(?:char|character)\s*\(\s*(\d+)\s*\)", "char"),
+        (r"(?:decimal|numeric)\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)", "numeric"),
+    )
+    for pattern, label in sized_patterns:
+        match = re.fullmatch(pattern, normalized)
+        if match:
+            return f"{label}({','.join(str(int(value)) for value in match.groups())})"
+    aliases = {
+        "text": "text",
+        "date": "date",
+        "smallint": "smallint",
+        "int2": "smallint",
+        "integer": "integer",
+        "int": "integer",
+        "int4": "integer",
+        "bigint": "bigint",
+        "int8": "bigint",
+        "real": "real",
+        "float4": "real",
+    }
+    return aliases.get(normalized, f"unsupported:{normalized or '<empty>'}")
+
+
+def _se_storage_type_is_compatible(actual: str, expected: str) -> bool:
+    """Allow only lossless widening within one SE logical type family."""
+
+    if actual == expected:
+        return True
+    if expected.startswith("varchar("):
+        if actual == "text":
+            return True
+        expected_width = int(expected.split("(", 1)[1][:-1])
+        if actual.startswith("varchar("):
+            actual_width = int(actual.split("(", 1)[1][:-1])
+            return actual_width >= expected_width
+        return False
+    if expected.startswith("char("):
+        # A wider CHAR pads reads and is not lossless. Unbounded TEXT or a
+        # sufficient VARCHAR removes that padding while preserving every
+        # provider value, so those remain safe widening targets (including
+        # SQLite's common TEXT affinity for an official fixed-width code).
+        if actual == "text":
+            return True
+        if actual.startswith("varchar("):
+            expected_width = int(expected.split("(", 1)[1][:-1])
+            actual_width = int(actual.split("(", 1)[1][:-1])
+            return actual_width >= expected_width
+        return False
+    integral_rank = {"smallint": 1, "integer": 2, "bigint": 3}
+    if expected in integral_rank and actual in integral_rank:
+        return integral_rank[actual] >= integral_rank[expected]
+    if expected.startswith("numeric("):
+        if not actual.startswith("numeric("):
+            return False
+        expected_precision, expected_scale = (
+            int(value) for value in expected.split("(", 1)[1][:-1].split(",")
+        )
+        actual_precision, actual_scale = (
+            int(value) for value in actual.split("(", 1)[1][:-1].split(",")
+        )
+        return (
+            actual_scale >= expected_scale
+            and actual_precision - actual_scale
+            >= expected_precision - expected_scale
+        )
+    if expected == "real":
+        return actual == "real"
+    return False
+
+
+def _verify_se_column_contract(
+    database: BaseDatabase,
+    table_name: str,
+    schema_sql: str,
+    *,
+    allow_missing_columns: bool,
+) -> None:
+    """Verify every present SE column's type, capacity, and nullability."""
+
+    from src.database.migration import (
+        _definition_type,
+        _extract_column_definitions,
+        _migration_targets,
+    )
+
+    targets = _migration_targets(database)
+    if targets != (database,):
+        for target in targets:
+            _verify_se_column_contract(
+                target,
+                table_name,
+                schema_sql,
+                allow_missing_columns=allow_missing_columns,
+            )
+        return
+
+    definitions = _extract_column_definitions(schema_sql)
+    if definitions is None:
+        raise SchemaMigrationError(f"Could not parse SE schema for {table_name}")
+    if database.get_db_type() == "postgresql":
+        rows = database.fetch_all(
+            "SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type, "
+            "a.attnotnull AS not_null FROM pg_attribute a "
+            "WHERE a.attrelid = to_regclass(?) AND a.attnum > 0 AND NOT a.attisdropped",
+            (table_name.lower(),),
+        )
+    elif database.get_db_type() == "sqlite":
+        rows = database.fetch_all(f'PRAGMA table_info("{table_name}")')
+    else:
+        raise SchemaMigrationError(
+            f"SE column contract cannot be verified for database type "
+            f"{database.get_db_type()!r}"
+        )
+    actual = {
+        str(row.get("name") or "").lower(): (
+            str(row.get("type") or ""),
+            bool(row.get("not_null", row.get("notnull", 0))),
+        )
+        for row in rows
+    }
+    mismatches: list[str] = []
+    for column_name, definition in definitions.items():
+        column = column_name.lower()
+        if column not in actual:
+            if not allow_missing_columns:
+                mismatches.append(f"{column_name} missing")
+            continue
+        actual_type, actual_not_null = actual[column]
+        expected_type = _normalize_se_storage_type(_definition_type(definition))
+        normalized_actual_type = _normalize_se_storage_type(actual_type)
+        if not _se_storage_type_is_compatible(normalized_actual_type, expected_type):
+            mismatches.append(
+                f"{column_name} type existing={actual_type or '<unknown>'} "
+                f"expected={expected_type}"
+            )
+        expected_not_null = "NOT NULL" in definition.upper()
+        if actual_not_null != expected_not_null:
+            mismatches.append(
+                f"{column_name} nullability existing="
+                f"{'NOT NULL' if actual_not_null else 'NULL'} expected="
+                f"{'NOT NULL' if expected_not_null else 'NULL'}"
+            )
+    if mismatches:
+        raise SchemaMigrationError(
+            f"SE column contract mismatch for {table_name}: {', '.join(mismatches)}"
+        )
+
+
+def verify_se_storage_schema(
+    database: BaseDatabase,
+    table_name: str,
+    *,
+    allow_missing_columns: bool = False,
+) -> bool:
+    """Fail closed unless SE storage preserves the official identity."""
+
+    if table_name not in _SE_STORAGE_TABLES:
+        return False
+    from src.database.migration import verify_table_schema
+    from src.database.schema import SCHEMAS
+    from src.database.schema_jravan import JRAVAN_SCHEMAS
+
+    schema_sql = SCHEMAS.get(table_name) or JRAVAN_SCHEMAS.get(table_name)
+    if schema_sql is None:
+        raise SchemaMigrationError(f"SE storage schema is undefined: {table_name}")
+    verify_table_schema(
+        database,
+        table_name,
+        schema_sql,
+        allow_missing_columns=allow_missing_columns,
+    )
+    _verify_se_column_contract(
+        database,
+        table_name,
+        schema_sql,
+        allow_missing_columns=allow_missing_columns,
+    )
+    _verify_se_key_storage_types(database, table_name)
+    _verify_se_key_not_null_constraints(database, table_name)
+    _verify_replacement_key_constraints(database, table_name, "SE storage")
+    return True
+
+
+def validate_se_record(record: dict, table_name: str | None = None) -> bool:
+    """Validate an SE caller row and standard aliases before coercion."""
+
+    if table_name is not None and table_name not in _SE_STORAGE_TABLES:
+        return False
+    if _record_type_from_record(record) != "SE":
+        if table_name is None:
+            return False
+        raise SchemaMigrationError(f"{table_name} received a non-SE record")
+
+    from src.parser.se_parser import SEParser
+
+    try:
+        SEParser.validate_key_fields(record)
+    except ValueError as error:
+        raise SchemaMigrationError(str(error)) from error
+
+    # DataKubun=0 is an exact-key command. Its provider body is opaque, so
+    # conflicting standard/native body aliases must not block the deletion.
+    data_kubun = record.get("DataKubun") or record.get("headDataKubun")
+    if data_kubun == "0":
+        return True
+
+    aliases = _STANDARD_FIELD_ALIASES.get(table_name, {})
+    if table_name == "UMA_RACE":
+        conflicts = [
+            (native_name, standard_name)
+            for native_name, standard_name in aliases.items()
+            if native_name in record
+            and standard_name in record
+            and record[native_name] != record[standard_name]
+        ]
+        if conflicts:
+            raise SchemaMigrationError(f"conflicting SE alias values: {conflicts}")
+
+    normalized = dict(record)
+    for native_name, standard_name in aliases.items():
+        if native_name not in normalized and standard_name in normalized:
+            normalized[native_name] = normalized[standard_name]
+    try:
+        SEParser.validate_current_fields(normalized)
+    except ValueError as error:
+        raise SchemaMigrationError(str(error)) from error
     return True
 
 
@@ -1371,6 +1711,12 @@ def preflight_standard_schema_migrations(
             allow_missing_columns=(standard_name not in _STRICT_NONADDITIVE_STANDARD_TABLES),
             allow_primary_key_mismatch=(standard_name in _ORDERED_MASTER_STORAGE_TABLES),
         )
+        if standard_name == "UMA_RACE":
+            verify_se_storage_schema(
+                database,
+                standard_name,
+                allow_missing_columns=True,
+            )
         if standard_name in {"UMA", "COURSE"}:
             _verify_replacement_key_constraints(
                 database,
@@ -1874,7 +2220,7 @@ CANCELLATION_STATE_RECORD_TYPES = frozenset(
 
 _OFFICIAL_ERASE_KEY_COLUMNS = {
     "RA": _MINING_RACE_KEY_COLUMNS,
-    "SE": (*_MINING_RACE_KEY_COLUMNS, "Umaban"),
+    "SE": _SE_KEY_COLUMNS,
     "HR": _MINING_RACE_KEY_COLUMNS,
     # One physical H1/H6/O1-O6 record expands into multiple child rows.
     "H1": _MINING_RACE_KEY_COLUMNS,
@@ -1986,6 +2332,10 @@ def validate_import_record_header(record: dict) -> tuple[str, str]:
             from src.parser.cs_parser import CSParser
 
             CSParser.validate_current_fields(record, data_kubun=data_kubun)
+        if record_type == "SE":
+            from src.parser.se_parser import SEParser
+
+            SEParser.validate_current_fields(record)
         return record_type, data_kubun
     except ValueError as error:
         raise SchemaMigrationError(str(error)) from error
@@ -4334,8 +4684,6 @@ DIVIDE_BY_10_PREFIXES = frozenset(
         "Haron",
         "LapTime",
         "Futan",
-        "BaTaijyu",
-        "ZogenSa",
         "DMTime",
         "DMGosa",
     ]
@@ -4565,6 +4913,7 @@ class DataImporter:
         self._verified_mining_native_tables: set[str] = set()
         self._verified_hy_tables: set[str] = set()
         self._verified_bt_tables: set[str] = set()
+        self._verified_se_tables: set[str] = set()
         self._verified_cs_tables: set[str] = set()
         self._verified_jg_tables: set[str] = set()
         self._verified_wc_tables: set[str] = set()
@@ -4809,7 +5158,10 @@ class DataImporter:
         try:
             first_record = next(records, exhausted)
             if first_record is not exhausted:
-                validate_import_record_header(first_record)
+                first_record_type, _ = validate_import_record_header(first_record)
+                first_table_name = self._get_table_name(first_record_type)
+                if first_table_name is not None:
+                    validate_se_record(first_record, first_table_name)
                 records = chain((first_record,), records)
         except Exception:
             if not auto_commit:
@@ -4877,6 +5229,10 @@ class DataImporter:
                 if table_name not in self._verified_bt_tables:
                     if verify_bt_storage_schema(self.database, table_name):
                         self._verified_bt_tables.add(table_name)
+                if table_name not in self._verified_se_tables:
+                    if verify_se_storage_schema(self.database, table_name):
+                        self._verified_se_tables.add(table_name)
+                validate_se_record(record, table_name)
                 if table_name not in self._verified_cs_tables:
                     if verify_cs_storage_schema(self.database, table_name):
                         self._verified_cs_tables.add(table_name)
@@ -5432,6 +5788,11 @@ class DataImporter:
                         )
                         continue
                     self.database.insert(table_name, converted_record, use_replace=True)
+                    # A later failed row makes both SQLite and PostgreSQL roll
+                    # back the current transaction. Commit each successful
+                    # retry before counting it so statistics cannot describe a
+                    # row that the next retry erased.
+                    self.database.commit()
                     success_count += 1
 
                 except DatabaseError as record_error:
@@ -5444,10 +5805,6 @@ class DataImporter:
 
             self._records_imported += success_count
             self._records_failed += fail_count
-
-            # Only commit if we had successful individual inserts
-            if auto_commit and success_count > 0:
-                self.database.commit()
 
     def _begin_single_record_transaction(self, *, auto_commit: bool) -> None:
         """Start or join one single-record transaction and checkpoint counters."""
@@ -5512,6 +5869,9 @@ class DataImporter:
         # standard-schema migration. It cannot be rolled back after an ALTER.
         try:
             record_type, _ = validate_import_record_header(record)
+            table_name = self._get_table_name(record_type)
+            if table_name is not None:
+                validate_se_record(record, table_name)
         except SchemaMigrationError:
             if not auto_commit:
                 checkpoint_generation = (
@@ -5558,7 +5918,6 @@ class DataImporter:
                 )
             raise
 
-        table_name = self._get_table_name(record_type)
         if not table_name:
             logger.warning(f"Unknown record type: {record_type}")
             if not auto_commit:
@@ -5574,6 +5933,10 @@ class DataImporter:
             if table_name not in self._verified_bt_tables:
                 if verify_bt_storage_schema(self.database, table_name):
                     self._verified_bt_tables.add(table_name)
+            if table_name not in self._verified_se_tables:
+                if verify_se_storage_schema(self.database, table_name):
+                    self._verified_se_tables.add(table_name)
+            validate_se_record(record, table_name)
             if table_name not in self._verified_cs_tables:
                 if verify_cs_storage_schema(self.database, table_name):
                     self._verified_cs_tables.add(table_name)
