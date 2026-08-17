@@ -7,11 +7,18 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Union
 
 from src.database.base import BaseDatabase
+from src.database.migration import SchemaMigrationError
 from src.database.schema_types import get_table_primary_key_columns
 from src.importer.importer import (
     CANCELLATION_STATE_RECORD_TYPES,
+    MiningSnapshotMutationError,
+    TransactionRecoveryError,
     clean_record_metadata,
+    rollback_failed_import,
     resolve_record_data_kubun,
+    resolve_record_type,
+    validate_wf_record,
+    verify_wf_storage_schema,
 )
 from src.jvlink.constants import (
     DATA_KUBUN_DELETE,
@@ -182,8 +189,62 @@ class RealtimeUpdater:
         self.parser_factory = ParserFactory()
         self.cache_manager = cache_manager
         self._verified_mining_native_tables: set[str] = set()
+        self._verified_wf_tables: set[str] = set()
 
         logger.info("RealtimeUpdater initialized")
+
+    # Realtime tables whose caller-built rows are revalidated against the
+    # official contract before any coercion or mutation.
+    STRICT_RECORD_TABLES = frozenset({"RT_WF"})
+
+    def _canonicalize_strict_record_aliases(
+        self, record: Dict
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Canonicalize aliases needed to route a strict realtime record.
+
+        Returns ``(record_type, error)``. Conflicts and missing WF status stay
+        explicit validation failures; they are never defaulted to a live row.
+        """
+        try:
+            record_type = resolve_record_type(record)
+        except SchemaMigrationError as error:
+            return None, str(error)
+        if record_type != "WF":
+            return record_type, None
+
+        record["RecordSpec"] = record_type
+        has_status = any(
+            record.get(name) not in (None, "")
+            for name in ("DataKubun", "headDataKubun")
+        )
+        if not has_status:
+            return record_type, "WF DataKubun is required"
+        try:
+            record["DataKubun"] = resolve_record_data_kubun(record)
+        except ValueError as error:
+            return record_type, str(error)
+        return record_type, None
+
+    def _reject_strict_record(self, table_name: str, record: Dict) -> Optional[str]:
+        """Return a rejection reason for a strict-contract table, else None.
+
+        The physical WF parser already enforces the official layout, but the
+        parsed and batch entry points accept dictionaries. Schema verification
+        (exact ordered key) and record validation both happen before
+        ``convert_record_types`` could strip characters, and every failure is
+        reported without touching a row.
+        """
+        if table_name not in self.STRICT_RECORD_TABLES:
+            return None
+        try:
+            if table_name not in self._verified_wf_tables:
+                if verify_wf_storage_schema(self.database, table_name):
+                    self._verified_wf_tables.add(table_name)
+            validate_wf_record(record, table_name)
+        except SchemaMigrationError as error:
+            logger.error(f"Rejected realtime {table_name} record: {error}")
+            return str(error)
+        return None
 
     def process_record(
         self,
@@ -283,13 +344,13 @@ class RealtimeUpdater:
         from src.importer.importer import replace_mining_native_snapshot
 
         record_type = record.get("RecordSpec")
-        transaction_active = getattr(self.database, "is_transaction_active", None)
-        owns_transaction = not bool(transaction_active()) if callable(transaction_active) else False
+        owns_transaction = False
         owned_transaction_started = False
 
         try:
             from src.importer.importer import verify_mining_native_schema
 
+            owns_transaction = not self.database.has_pending_transaction()
             if owns_transaction:
                 self.database.begin_transaction()
                 owned_transaction_started = True
@@ -313,51 +374,76 @@ class RealtimeUpdater:
                 }
                 for _ in snapshot_rows
             ]
+        except TransactionRecoveryError:
+            raise
         except Exception as exc:
-            recovery_error = None
-            if owned_transaction_started:
-                try:
-                    self.database.rollback()
-                except Exception as rollback_error:
-                    recovery_error = rollback_error
-                    try:
-                        self.database.invalidate_connection()
-                    except Exception as invalidation_error:
-                        recovery_error = RuntimeError(
-                            f"rollback failed: {rollback_error}; "
-                            f"connection invalidation failed: {invalidation_error}"
-                        )
+            transaction_rolled_back = isinstance(exc, MiningSnapshotMutationError)
+            if owned_transaction_started and not transaction_rolled_back:
+                rollback_failed_import(
+                    self.database,
+                    context=f"{table_name} snapshot replacement",
+                )
+                transaction_rolled_back = True
             logger.error(f"Failed to replace {table_name} snapshot: {exc}", exc_info=True)
-            error = str(exc)
-            if recovery_error is not None:
-                error = f"{error}; transactional recovery failed: {recovery_error}"
-            return [
-                {
+            results = []
+            for _ in snapshot_rows:
+                result = {
                     "operation": "insert",
                     "table": table_name,
                     "record_type": record_type,
                     "success": False,
-                    "error": error,
+                    "error": str(exc),
                 }
-                for _ in snapshot_rows
-            ]
+                if transaction_rolled_back:
+                    result["transaction_rolled_back"] = True
+                results.append(result)
+            return results
 
     def process_parsed_records_batch(self, records: list[Dict], timeseries: bool = False) -> Dict:
         """Insert already parsed records in batches grouped by target table."""
+        try:
+            # This must be captured before validation or catalog reads. psycopg
+            # starts a physical transaction lazily, so a later snapshot cannot
+            # distinguish caller work from reads performed by this batch.
+            caller_transaction_pending = self.database.has_pending_transaction()
+        except Exception as exc:
+            logger.error(f"Cannot determine realtime transaction ownership: {exc}")
+            return {
+                "operation": "batch_insert",
+                "success": False,
+                "inserted": 0,
+                "errors": max(1, len(records)),
+                "tables": [],
+            }
+
         grouped: dict[str, list[Dict]] = {}
         errors = 0
         batch_collected_at = self._current_collected_at() if timeseries else None
         validated_records: list[Dict] = []
         ordered_mutation_required = False
+        strict_wf_present = False
 
         for record in records:
+            record_type, alias_error = self._canonicalize_strict_record_aliases(record)
+            if record_type == "WF":
+                strict_wf_present = True
+            if alias_error is not None:
+                logger.warning(f"Skipping record with conflicting header aliases: {alias_error}")
+                errors += 1
+                continue
             try:
                 data_kubun = resolve_record_data_kubun(record)
             except ValueError as exc:
                 logger.warning(f"Skipping record with conflicting DataKubun aliases: {exc}")
                 errors += 1
                 continue
-            record_type = record.get("RecordSpec")
+            strict_table = self.RECORD_TYPE_TABLE.get(record_type)
+            if (
+                strict_table in self.STRICT_RECORD_TABLES
+                and self._reject_strict_record(strict_table, record) is not None
+            ):
+                errors += 1
+                continue
             if data_kubun == DATA_KUBUN_ERASE or (
                 data_kubun == DATA_KUBUN_DELETE
                 and record_type not in CANCELLATION_STATE_RECORD_TYPES
@@ -365,29 +451,69 @@ class RealtimeUpdater:
                 ordered_mutation_required = True
             validated_records.append(record)
 
+        if strict_wf_present:
+            return self._process_strict_wf_realtime_batch(
+                validated_records,
+                validation_errors=errors,
+                ordered_mutation_required=ordered_mutation_required,
+                timeseries=timeseries,
+                batch_collected_at=batch_collected_at,
+                caller_transaction_pending=caller_transaction_pending,
+            )
+
         if ordered_mutation_required:
             if timeseries and batch_collected_at:
                 for record in validated_records:
                     record.setdefault("CollectedAt", batch_collected_at)
-            results = [
-                self._process_single_record(record, timeseries=timeseries)
-                for record in validated_records
-            ]
-            successful, rejected = summarize_update_result(results)
-            tables = sorted(
-                {
-                    item["table"]
-                    for item in successful
-                    if item.get("table")
+            owns_transaction = not caller_transaction_pending
+            if validated_records and owns_transaction:
+                self.database.begin_transaction()
+            successful: list[Dict] = []
+            tables: set[str] = set()
+            try:
+                for record in validated_records:
+                    result = self._process_single_record(record, timeseries=timeseries)
+                    accepted, rejected = summarize_update_result(result)
+                    tables.update(
+                        item["table"] for item in accepted if item.get("table")
+                    )
+                    if rejected:
+                        rollback_failed_import(
+                            self.database,
+                            context="atomic realtime ordered mutation",
+                        )
+                        return {
+                            "operation": "batch_insert",
+                            "success": False,
+                            "inserted": 0,
+                            "errors": errors + len(validated_records),
+                            "tables": sorted(tables),
+                            "transaction_rolled_back": True,
+                        }
+                    successful.extend(accepted)
+                if validated_records and owns_transaction:
+                    self.database.commit()
+                return {
+                    "operation": "batch_insert",
+                    "success": errors == 0,
+                    "inserted": len(successful),
+                    "errors": errors,
+                    "tables": sorted(tables),
                 }
-            )
-            return {
-                "operation": "batch_insert",
-                "success": errors + rejected == 0,
-                "inserted": len(successful),
-                "errors": errors + rejected,
-                "tables": tables,
-            }
+            except Exception as exc:
+                rollback_failed_import(
+                    self.database,
+                    context="atomic realtime ordered mutation",
+                )
+                logger.error(f"Atomic realtime ordered mutation failed: {exc}")
+                return {
+                    "operation": "batch_insert",
+                    "success": False,
+                    "inserted": 0,
+                    "errors": errors + len(validated_records),
+                    "tables": sorted(tables),
+                    "transaction_rolled_back": True,
+                }
 
         for record in validated_records:
             if timeseries and batch_collected_at:
@@ -411,10 +537,34 @@ class RealtimeUpdater:
             grouped.setdefault(table_name, []).append(clean_data)
 
         inserted = 0
-        for table_name, rows in grouped.items():
-            inserted_rows, failed_rows = self._insert_rows_resilient(table_name, rows)
-            inserted += inserted_rows
-            errors += failed_rows
+        owns_batch_transaction = not caller_transaction_pending
+        owned_transaction_started = False
+        try:
+            if grouped and owns_batch_transaction:
+                self.database.begin_transaction()
+                owned_transaction_started = True
+            for table_name, rows in grouped.items():
+                self.database.insert_many(table_name, rows)
+                inserted += len(rows)
+
+            if owned_transaction_started:
+                self.database.commit()
+                owned_transaction_started = False
+        except Exception as exc:
+            rollback_failed_import(
+                self.database,
+                context="atomic realtime batch",
+            )
+            failed_operations = sum(len(rows) for rows in grouped.values())
+            logger.error(f"Atomic realtime batch failed: {exc}")
+            return {
+                "operation": "batch_insert",
+                "success": False,
+                "inserted": 0,
+                "errors": errors + failed_operations,
+                "tables": sorted(grouped),
+                "transaction_rolled_back": True,
+            }
 
         return {
             "operation": "batch_insert",
@@ -423,6 +573,122 @@ class RealtimeUpdater:
             "errors": errors,
             "tables": sorted(grouped),
         }
+
+    def _process_strict_wf_realtime_batch(
+        self,
+        records: list[Dict],
+        *,
+        validation_errors: int,
+        ordered_mutation_required: bool,
+        timeseries: bool,
+        batch_collected_at: Optional[str],
+        caller_transaction_pending: bool,
+    ) -> Dict:
+        """Apply a realtime mutation containing WF without partial success.
+
+        The whole valid mutation set shares one explicit transaction. A
+        database failure rolls back every row whose success would otherwise be
+        reported, including non-WF rows in the same call. Provider ordering is
+        retained whenever an erase command is present.
+        """
+        owns_transaction = not caller_transaction_pending
+        if owns_transaction:
+            self.database.begin_transaction()
+
+        tables: set[str] = set()
+        prepared_errors = 0
+        try:
+            if ordered_mutation_required:
+                successful: list[Dict] = []
+                for record in records:
+                    if timeseries and batch_collected_at:
+                        record.setdefault("CollectedAt", batch_collected_at)
+                    result = self._process_single_record(record, timeseries=timeseries)
+                    accepted, rejected = summarize_update_result(result)
+                    if rejected:
+                        rollback_failed_import(
+                            self.database,
+                            context="atomic realtime WF ordered mutation",
+                        )
+                        return {
+                            "operation": "batch_insert",
+                            "success": False,
+                            "inserted": 0,
+                            "errors": validation_errors + len(records),
+                            "tables": sorted(tables),
+                            "transaction_rolled_back": True,
+                        }
+                    successful.extend(accepted)
+                    tables.update(
+                        item["table"] for item in accepted if item.get("table")
+                    )
+                if owns_transaction:
+                    self.database.commit()
+                return {
+                    "operation": "batch_insert",
+                    "success": validation_errors == 0,
+                    "inserted": len(successful),
+                    "errors": validation_errors,
+                    "tables": sorted(tables),
+                }
+
+            grouped: dict[str, list[Dict]] = {}
+            for record in records:
+                if timeseries and batch_collected_at:
+                    record.setdefault("CollectedAt", batch_collected_at)
+                record_type = record.get("RecordSpec")
+                table_name = self._resolve_timeseries_table(record) if timeseries else None
+                if table_name is None:
+                    table_name = self.RECORD_TYPE_TABLE.get(record_type)
+                if not table_name:
+                    prepared_errors += 1
+                    continue
+                clean_data = self._prepare_data_for_db(table_name, record)
+                if not self._has_complete_primary_key(table_name, clean_data):
+                    prepared_errors += 1
+                    continue
+                grouped.setdefault(table_name, []).append(clean_data)
+
+            inserted = 0
+            tables = set(grouped)
+            for table_name, rows in grouped.items():
+                for row in rows:
+                    row_count = self.database.insert(
+                        table_name,
+                        row,
+                        use_replace=True,
+                    )
+                    if row_count != 1:
+                        raise RuntimeError(
+                            f"Atomic realtime batch wrote {row_count} of one "
+                            f"provider operation to {table_name}"
+                        )
+                    inserted += 1
+
+            if owns_transaction:
+                self.database.commit()
+            total_errors = validation_errors + prepared_errors
+            return {
+                "operation": "batch_insert",
+                "success": total_errors == 0,
+                "inserted": inserted,
+                "errors": total_errors,
+                "tables": sorted(tables),
+            }
+        except Exception as exc:
+            rollback_failed_import(
+                self.database,
+                context="atomic realtime WF batch",
+            )
+            logger.error(f"Atomic realtime WF batch failed: {exc}")
+            return {
+                "operation": "batch_insert",
+                "success": False,
+                "inserted": 0,
+                "errors": validation_errors + len(records),
+                "tables": sorted(tables),
+                "transaction_rolled_back": True,
+            }
 
     def _resolve_timeseries_table(self, record: Dict) -> Optional[str]:
         """Resolve official vs速報 odds time-series table from source spec."""
@@ -447,78 +713,18 @@ class RealtimeUpdater:
         """Drop parser metadata and coerce values for the target schema."""
         return self._prepare_data_for_db(table_name, data)
 
-    def _insert_rows_resilient(
-        self,
-        table_name: str,
-        rows: list[Dict],
-        reconnected: bool = False,
-    ) -> tuple[int, int]:
-        """Insert rows, splitting batches on timeout/driver failures.
-
-        PostgreSQL can time out on very large odds time-series upserts.
-        Dropping a whole 5,000-row odds batch silently corrupts later strategy
-        evaluation, so recursively split failed batches and only count
-        irreducible single-row failures as errors.
-        """
-        if not rows:
-            return 0, 0
-
-        try:
-            self.database.insert_many(table_name, rows)
-            return len(rows), 0
-        except Exception as exc:
-            if not reconnected and self._reconnect_database_after_insert_error(exc):
-                return self._insert_rows_resilient(
-                    table_name,
-                    rows,
-                    reconnected=True,
-                )
-
-            if len(rows) == 1:
-                logger.error(f"Failed to insert row into {table_name}: {exc}")
-                return 0, 1
-
-            midpoint = len(rows) // 2
-            logger.warning(
-                f"Batch insert failed for {table_name}; retrying split batches "
-                f"({len(rows)} -> {midpoint}+{len(rows) - midpoint}): {exc}"
-            )
-            left_inserted, left_failed = self._insert_rows_resilient(table_name, rows[:midpoint])
-            right_inserted, right_failed = self._insert_rows_resilient(table_name, rows[midpoint:])
-            return left_inserted + right_inserted, left_failed + right_failed
-
-    def _reconnect_database_after_insert_error(self, exc: Exception) -> bool:
-        """Reconnect once after driver/network failures before retrying rows."""
-        message = str(exc).lower()
-        connection_error_markers = (
-            "not connected",
-            "timed out",
-            "timeout",
-            "connection",
-            "socket",
-            "closed",
-        )
-        if not any(marker in message for marker in connection_error_markers):
-            return False
-
-        reconnect = getattr(self.database, "_reconnect", None)
-        if reconnect is None:
-            reconnect = getattr(self.database, "connect", None)
-        if reconnect is None:
-            return False
-
-        try:
-            logger.warning(f"Database insert failed with connection error; reconnecting: {exc}")
-            reconnect()
-            return True
-        except Exception as reconnect_exc:
-            logger.error(f"Database reconnect failed after insert error: {reconnect_exc}")
-            return False
-
     def _process_single_record(self, parsed_data: Dict, timeseries: bool = False) -> Optional[Dict]:
         """Process a single parsed record dict."""
         try:
-            record_type = parsed_data.get("RecordSpec")
+            record_type, alias_error = self._canonicalize_strict_record_aliases(parsed_data)
+            if alias_error is not None:
+                return {
+                    "operation": "validate",
+                    "table": "RT_WF" if record_type == "WF" else None,
+                    "record_type": record_type,
+                    "success": False,
+                    "error": alias_error,
+                }
             if not record_type:
                 logger.warning("Missing RecordSpec in parsed data")
                 return None
@@ -544,6 +750,16 @@ class RealtimeUpdater:
             # For cancellation-capable records, 9 must remain queryable and
             # only the official 0 value requests physical erase.
             record_data_kubun = resolve_record_data_kubun(parsed_data)
+
+            rejection = self._reject_strict_record(table_name, parsed_data)
+            if rejection is not None:
+                return {
+                    "operation": "validate",
+                    "table": table_name,
+                    "record_type": record_type,
+                    "success": False,
+                    "error": rejection,
+                }
             if (
                 record_type in CANCELLATION_STATE_RECORD_TYPES
                 and record_data_kubun not in {

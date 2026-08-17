@@ -9,6 +9,7 @@ from unittest.mock import ANY, MagicMock, Mock, call, patch
 
 import pytest
 
+from src.database.base import DatabaseError
 from src.fetcher.base import FetcherError
 from src.fetcher.realtime import RealtimeFetcher, materialize_complete_records
 from src.jvlink.constants import (
@@ -560,6 +561,7 @@ class TestRealtimeUpdater(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.mock_db = MagicMock()
+        self.mock_db.has_pending_transaction.return_value = False
         self.updater = RealtimeUpdater(self.mock_db)
 
     def test_initialization(self):
@@ -668,6 +670,20 @@ class TestRealtimeUpdater(unittest.TestCase):
         self.assertIn("CollectedAt", inserted_by_table["TS_O1"][0])
         self.assertEqual(inserted_by_table["TS_SOKUHO_O1"][0]["SourceSpec"], "0B30")
         self.assertIn("CollectedAt", inserted_by_table["TS_SOKUHO_O1"][0])
+
+    def test_batch_rejects_unknown_transaction_ownership_before_mutation(self):
+        """An unreadable backend transaction state is not treated as owned."""
+        self.mock_db.has_pending_transaction.side_effect = DatabaseError(
+            "transaction state unavailable"
+        )
+
+        result = self.updater.process_parsed_records_batch([])
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["inserted"], 0)
+        self.assertEqual(result["errors"], 1)
+        self.mock_db.insert_many.assert_not_called()
+        self.mock_db.commit.assert_not_called()
 
     def test_ordered_timeseries_batch_uses_one_collected_at(self):
         """A destructive mutation must not split one capture into different timestamps."""
@@ -1231,9 +1247,13 @@ class TestRealtimeUpdater(unittest.TestCase):
     def test_cancellation_status_is_upserted_for_realtime_state_records(self):
         updater = RealtimeUpdater(self.mock_db)
 
+        # WF is also a cancellation-state record, but RT_WF revalidates the
+        # official schema/key and complete record before any write, which a
+        # MagicMock database cannot satisfy. Its status-9 retention is covered
+        # against a real SQLite table in test_wf_official_contract.py.
         for record_type in (
             "RA", "SE", "HR", "H1", "H6",
-            "O1", "O2", "O3", "O4", "O5", "O6", "WF",
+            "O1", "O2", "O3", "O4", "O5", "O6",
         ):
             with self.subTest(record_type=record_type):
                 self.mock_db.reset_mock()

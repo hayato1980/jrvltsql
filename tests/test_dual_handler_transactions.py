@@ -11,6 +11,9 @@ def _dual_database():
     secondary = MagicMock()
     primary.get_db_type.return_value = "sqlite"
     secondary.get_db_type.return_value = "postgresql"
+    primary.has_pending_transaction.return_value = False
+    secondary.has_pending_transaction.return_value = False
+    secondary.is_connected.return_value = True
     return DualDatabase(primary, secondary), primary, secondary
 
 
@@ -18,13 +21,37 @@ def test_dual_transaction_begins_and_rolls_back_both_backends():
     database, primary, secondary = _dual_database()
 
     database.begin_transaction()
+    first_generation = database.get_transaction_generation()
+    assert first_generation is not None
+    database.rollback()
+    assert database.get_transaction_generation() is None
+
+    database.begin_transaction()
+    assert database.get_transaction_generation() == first_generation + 1
     database.rollback()
 
-    primary.begin_transaction.assert_called_once_with()
-    secondary.begin_transaction.assert_called_once_with()
-    primary.rollback.assert_called_once_with()
-    secondary.rollback.assert_called_once_with()
+    assert primary.begin_transaction.call_count == 2
+    assert secondary.begin_transaction.call_count == 2
+    assert primary.rollback.call_count == 2
+    assert secondary.rollback.call_count == 2
     assert not database._transaction_active
+
+
+def test_dual_pending_transaction_uses_either_connected_backend():
+    database, primary, secondary = _dual_database()
+
+    assert database.has_pending_transaction() is False
+    primary.has_pending_transaction.return_value = True
+    assert database.has_pending_transaction() is True
+    primary.has_pending_transaction.return_value = False
+    secondary.has_pending_transaction.return_value = True
+    assert database.has_pending_transaction() is True
+
+    secondary.has_pending_transaction.side_effect = DatabaseError(
+        "transaction state unavailable"
+    )
+    with pytest.raises(DatabaseError, match="transaction state unavailable"):
+        database.has_pending_transaction()
 
 
 def test_dual_transaction_secondary_write_failure_is_not_swallowed():

@@ -3,6 +3,8 @@
 This module imports parsed JV-Data records into database.
 """
 
+import json
+import re
 from typing import Any, Dict, Iterator, List, Optional
 
 from src.database.base import BaseDatabase, DatabaseError
@@ -14,6 +16,33 @@ from src.database.schema_types import (
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class TransactionRecoveryError(RuntimeError):
+    """A failed transaction could not be rolled back or invalidated safely."""
+
+
+class MiningSnapshotMutationError(DatabaseError):
+    """A DM/TM snapshot mutation failed after its transaction was rolled back."""
+
+
+def rollback_failed_import(database: BaseDatabase, *, context: str) -> None:
+    """Rollback a failed strict import, invalidating an unrecoverable session."""
+    try:
+        database.rollback()
+    except Exception as rollback_error:
+        try:
+            database.invalidate_connection()
+        except Exception as invalidation_error:
+            raise TransactionRecoveryError(
+                f"{context}: rollback failed ({rollback_error}); connection "
+                f"invalidation failed ({invalidation_error})"
+            ) from invalidation_error
+        logger.error(
+            "Invalidated database after strict import rollback failure",
+            context=context,
+            error=str(rollback_error),
+        )
 
 
 def resolve_standard_storage_table_name(native_table_name: str) -> str:
@@ -58,6 +87,18 @@ def resolve_standard_table_name(database: BaseDatabase, native_table_name: str) 
             "Legacy standard table WEIGHT_CHANGE exists but canonical JOGAIBA does not. "
             "Automatic JG import is refused; rebuild the standard table as JOGAIBA "
             "and reimport current 80-byte source records."
+        )
+    if (
+        native_table_name == "NL_WF"
+        and database.is_connected()
+        and database.table_exists(_WF_LEGACY_STANDARD_TABLE)
+        and not database.table_exists(standard_name)
+    ):
+        raise SchemaMigrationError(
+            "Legacy standard table WIN5 exists but canonical JYUSYOSIKI_HEAD does not. "
+            "Automatic WF import is refused; rebuild the standard tables as "
+            "JYUSYOSIKI_HEAD plus JYUSYOSIKI and reimport current 7,215-byte "
+            "source records."
         )
     if (
         native_table_name == "NL_SK"
@@ -183,6 +224,13 @@ _STANDARD_FIELD_ALIASES = {
         "LapTime_400M_200M": "LapTime2",
         "LapTime_200M_0M": "LapTime1",
     },
+    "JYUSYOSIKI_HEAD": {
+        "Yobi1": "reserved1",
+        "Yobi2": "reserved2",
+        "TekichuNasiFlag": "TekichunashiFlag",
+        "CarryOverStart": "CarryoverSyoki",
+        "CarryOverBalance": "CarryoverZandaka",
+    },
     "TOKU_RACE": {
         "RaceRyakusyo10": "Ryakusyo10",
         "RaceRyakusyo6": "Ryakusyo6",
@@ -247,7 +295,19 @@ _JG_KEY_COLUMNS = (
 )
 _WC_STORAGE_TABLES = frozenset({"NL_WC", "WOOD"})
 _WC_KEY_COLUMNS = ("TresenKubun", "ChokyoDate", "ChokyoTime", "KettoNum")
-_STRICT_NONADDITIVE_STANDARD_TABLES = frozenset({"KEITO", "JOGAIBA", "WOOD"})
+_WF_NATIVE_STORAGE_TABLES = frozenset({"NL_WF", "RT_WF"})
+_WF_STANDARD_HEAD_TABLE = "JYUSYOSIKI_HEAD"
+_WF_STANDARD_CHILD_TABLE = "JYUSYOSIKI"
+_WF_STANDARD_STORAGE_TABLES = frozenset({_WF_STANDARD_HEAD_TABLE})
+_WF_STORAGE_TABLES = _WF_NATIVE_STORAGE_TABLES | _WF_STANDARD_STORAGE_TABLES
+_WF_KEY_COLUMNS = ("Year", "MonthDay")
+_WF_LEGACY_STANDARD_TABLE = "WIN5"
+_WF_RACE_SPLIT = (("JyoCD", 0, 2), ("Kaiji", 2, 4), ("Nichiji", 4, 6), ("RaceNum", 6, 8))
+# JYUSYOSIKI (the WF child) is never a resolved standard owner name; preflight
+# verifies it strictly through verify_wf_coupled_tables instead.
+_STRICT_NONADDITIVE_STANDARD_TABLES = frozenset(
+    {"KEITO", "JOGAIBA", "WOOD", _WF_STANDARD_HEAD_TABLE}
+)
 _LEGACY_STANDARD_PREFLIGHT_NATIVE_TABLES = (
     "NL_BT",
     "NL_JG",
@@ -256,6 +316,7 @@ _LEGACY_STANDARD_PREFLIGHT_NATIVE_TABLES = (
     "NL_HY",
     "NL_DM",
     "NL_TM",
+    "NL_WF",
 )
 _ORDERED_MASTER_STORAGE_TABLES = _RC_STORAGE_TABLES | _YS_STORAGE_TABLES | _TK_CHILD_STORAGE_TABLES
 
@@ -478,6 +539,590 @@ def validate_wc_record(record: dict, table_name: str) -> bool:
     return True
 
 
+def _verify_wf_sqlite_foreign_key(database: BaseDatabase) -> None:
+    """Require the actual JYUSYOSIKI -> JYUSYOSIKI_HEAD cascade in SQLite."""
+    enforcement = database.fetch_one("PRAGMA foreign_keys")
+    if not enforcement or int(next(iter(enforcement.values()), 0)) != 1:
+        raise SchemaMigrationError("WF child foreign key enforcement is disabled for SQLite")
+    rows = database.fetch_all(f'PRAGMA foreign_key_list("{_WF_STANDARD_CHILD_TABLE}")')
+    ordered = sorted(rows, key=lambda item: (int(item["id"]), int(item["seq"])))
+    expected = [column.lower() for column in _WF_KEY_COLUMNS]
+    if not ordered or len({int(item["id"]) for item in ordered}) != 1:
+        raise SchemaMigrationError(
+            f"WF child {_WF_STANDARD_CHILD_TABLE} must declare exactly one composite "
+            f"foreign key to {_WF_STANDARD_HEAD_TABLE}"
+        )
+    local = [str(item["from"]).lower() for item in ordered]
+    remote_values = [item["to"] for item in ordered]
+    if all(value is None for value in remote_values):
+        # An implicit reference targets the parent primary key, which
+        # verify_table_schema already proved to be (Year, MonthDay).
+        remote = expected
+    else:
+        remote = [str(value).lower() for value in remote_values]
+    if (
+        local != expected
+        or remote != expected
+        or any(str(item["table"]).lower() != _WF_STANDARD_HEAD_TABLE.lower() for item in ordered)
+        or any(str(item["on_delete"]).upper() != "CASCADE" for item in ordered)
+        or any(str(item["on_update"]).upper() != "NO ACTION" for item in ordered)
+        or any(str(item["match"]).upper() != "NONE" for item in ordered)
+    ):
+        raise SchemaMigrationError(
+            f"WF child foreign key mismatch for {_WF_STANDARD_CHILD_TABLE}: expected "
+            f"({', '.join(_WF_KEY_COLUMNS)}) -> {_WF_STANDARD_HEAD_TABLE} "
+            "MATCH SIMPLE ON UPDATE NO ACTION ON DELETE CASCADE"
+        )
+
+
+def _verify_wf_postgresql_foreign_key(database: BaseDatabase) -> None:
+    """Require the actual JYUSYOSIKI -> JYUSYOSIKI_HEAD cascade in PostgreSQL."""
+    trigger_mode = database.fetch_one(
+        "SELECT current_setting('session_replication_role') AS trigger_mode"
+    )
+    if not trigger_mode or str(trigger_mode.get("trigger_mode")) != "origin":
+        raise SchemaMigrationError(
+            "WF child foreign key enforcement requires PostgreSQL origin trigger mode"
+        )
+    child = _WF_STANDARD_CHILD_TABLE.lower()
+    parent = _WF_STANDARD_HEAD_TABLE.lower()
+    rows = database.fetch_all(
+        "SELECT oid AS constraint_oid, confdeltype AS delete_type, "
+        "confupdtype AS update_type, confmatchtype AS match_type, "
+        "condeferrable AS deferrable, condeferred AS initially_deferred, "
+        "convalidated AS validated, confrelid = to_regclass(?) AS parent_matches "
+        "FROM pg_constraint WHERE conrelid = to_regclass(?) AND contype = 'f'",
+        (parent, child),
+    )
+    if len(rows) != 1:
+        raise SchemaMigrationError(
+            f"WF child {_WF_STANDARD_CHILD_TABLE} must declare exactly one composite "
+            f"foreign key to {_WF_STANDARD_HEAD_TABLE}"
+        )
+    row = rows[0]
+    if (
+        str(row.get("delete_type")) != "c"
+        or str(row.get("update_type")) != "a"
+        or str(row.get("match_type")) != "s"
+        or not bool(row.get("validated"))
+        or not bool(row.get("parent_matches"))
+        or bool(row.get("deferrable"))
+        or bool(row.get("initially_deferred"))
+    ):
+        raise SchemaMigrationError(
+            f"WF child foreign key mismatch for {_WF_STANDARD_CHILD_TABLE}: expected a "
+            f"validated immediate MATCH SIMPLE reference to {_WF_STANDARD_HEAD_TABLE} "
+            "ON DELETE CASCADE ON UPDATE NO ACTION"
+        )
+    key_rows = database.fetch_all(
+        "SELECT local_column.attname AS local_name, remote_column.attname AS remote_name "
+        "FROM pg_constraint constraint_row "
+        "JOIN LATERAL generate_subscripts(constraint_row.conkey, 1) "
+        "AS key_position(position) ON TRUE "
+        "JOIN pg_attribute local_column ON local_column.attrelid = constraint_row.conrelid "
+        "AND local_column.attnum = constraint_row.conkey[key_position.position] "
+        "JOIN pg_attribute remote_column ON remote_column.attrelid = constraint_row.confrelid "
+        "AND remote_column.attnum = constraint_row.confkey[key_position.position] "
+        "WHERE constraint_row.oid = ? ORDER BY key_position.position",
+        (int(row["constraint_oid"]),),
+    )
+    expected = [column.lower() for column in _WF_KEY_COLUMNS]
+    if (
+        [str(key_row["local_name"]).lower() for key_row in key_rows] != expected
+        or [str(key_row["remote_name"]).lower() for key_row in key_rows] != expected
+    ):
+        raise SchemaMigrationError(
+            f"WF child foreign key columns mismatch for {_WF_STANDARD_CHILD_TABLE}: "
+            f"expected ordered ({', '.join(_WF_KEY_COLUMNS)})"
+        )
+    trigger_rows = database.fetch_all(
+        "SELECT tgenabled AS enabled, tgrelid = to_regclass(?) AS on_child, "
+        "tgrelid = to_regclass(?) AS on_parent "
+        "FROM pg_trigger WHERE tgconstraint = ? AND tgisinternal ORDER BY oid",
+        (child, parent, int(row["constraint_oid"])),
+    )
+    if (
+        len(trigger_rows) != 4
+        or any(str(trigger["enabled"]) != "O" for trigger in trigger_rows)
+        or sum(bool(trigger["on_child"]) for trigger in trigger_rows) != 2
+        or sum(bool(trigger["on_parent"]) for trigger in trigger_rows) != 2
+    ):
+        raise SchemaMigrationError(
+            f"WF child foreign key triggers are not active for {_WF_STANDARD_CHILD_TABLE}"
+        )
+
+
+def _normalize_wf_column_type(declared_type: str) -> str:
+    """Return the exact logical type used by the frozen WF storage contract."""
+    normalized = re.sub(r"\s+", " ", declared_type.strip().lower())
+    match = re.fullmatch(
+        r"(?:varchar|character varying)\s*\(\s*(\d+)\s*\)", normalized
+    )
+    if match:
+        return f"varchar({int(match.group(1))})"
+    match = re.fullmatch(r"(?:char|character)\s*\(\s*(\d+)\s*\)", normalized)
+    if match:
+        return f"char({int(match.group(1))})"
+    aliases = {
+        "text": "text",
+        "smallint": "smallint",
+        "int2": "smallint",
+        "integer": "integer",
+        "int": "integer",
+        "int4": "integer",
+        "bigint": "bigint",
+        "int8": "bigint",
+        "date": "date",
+    }
+    return aliases.get(normalized, f"unsupported:{normalized or '<empty>'}")
+
+
+def _verify_wf_column_types(
+    database: BaseDatabase, table_name: str, schema_sql: str
+) -> None:
+    """Require every existing WF column to retain its declared logical type."""
+    from src.database.migration import (
+        _definition_type,
+        _extract_column_definitions,
+        _get_existing_column_types,
+    )
+
+    definitions = _extract_column_definitions(schema_sql)
+    if definitions is None:
+        raise SchemaMigrationError(f"Could not parse WF schema for {table_name}")
+    actual_types = _get_existing_column_types(database, table_name)
+    mismatches = []
+    for column, definition in definitions.items():
+        expected = _normalize_wf_column_type(_definition_type(definition))
+        actual_raw = actual_types.get(column.lower(), "")
+        actual = _normalize_wf_column_type(actual_raw)
+        if actual != expected:
+            mismatches.append(
+                f"{column} existing={actual_raw or '<unknown>'} expected={expected}"
+            )
+    if mismatches:
+        raise SchemaMigrationError(
+            f"WF column type mismatch for {table_name}: {', '.join(mismatches)}"
+        )
+
+
+def _verify_wf_unique_and_primary_constraints(
+    database: BaseDatabase, table_name: str
+) -> None:
+    """Reject replacement-changing UNIQUEs and unusable PostgreSQL PKs."""
+    db_type = database.get_db_type()
+    if db_type == "sqlite":
+        indexes = database.fetch_all(f'PRAGMA index_list("{table_name}")')
+        unexpected = [
+            str(row.get("name") or "<unnamed>")
+            for row in indexes
+            if int(row.get("unique") or 0) == 1
+            and str(row.get("origin") or "").lower() != "pk"
+        ]
+        if unexpected:
+            raise SchemaMigrationError(
+                f"WF storage {table_name} has unsupported additional UNIQUE "
+                f"constraints/indexes: {unexpected}"
+            )
+        return
+    if db_type != "postgresql":
+        raise SchemaMigrationError(
+            f"WF constraints cannot be verified for database type {db_type!r}"
+        )
+
+    indexes = database.fetch_all(
+        "SELECT index_class.relname AS index_name, index_row.indisprimary AS is_primary, "
+        "index_row.indisunique AS is_unique, index_row.indisexclusion AS is_exclusion, "
+        "index_row.indisvalid AS is_valid, index_row.indisready AS is_ready, "
+        "index_row.indimmediate AS is_immediate, "
+        "constraint_row.condeferrable AS is_deferrable, "
+        "constraint_row.condeferred AS is_deferred, "
+        "constraint_row.convalidated AS is_validated "
+        "FROM pg_index index_row "
+        "JOIN pg_class index_class ON index_class.oid = index_row.indexrelid "
+        "LEFT JOIN pg_constraint constraint_row "
+        "ON constraint_row.conindid = index_row.indexrelid "
+        "AND constraint_row.conrelid = index_row.indrelid "
+        "AND constraint_row.contype = 'p' "
+        "WHERE index_row.indrelid = to_regclass(?) ORDER BY index_class.relname",
+        (table_name.lower(),),
+    )
+    unexpected = [
+        str(row.get("index_name") or "<unnamed>")
+        for row in indexes
+        if not bool(row.get("is_primary"))
+        and (bool(row.get("is_unique")) or bool(row.get("is_exclusion")))
+    ]
+    if unexpected:
+        raise SchemaMigrationError(
+            f"WF storage {table_name} has unsupported additional UNIQUE/exclusion "
+            f"indexes: {unexpected}"
+        )
+    primary = [row for row in indexes if bool(row.get("is_primary"))]
+    if len(primary) != 1:
+        raise SchemaMigrationError(
+            f"WF primary key catalog mismatch for {table_name}: expected one primary key"
+        )
+    key = primary[0]
+    if (
+        not bool(key.get("is_unique"))
+        or not bool(key.get("is_valid"))
+        or not bool(key.get("is_ready"))
+        or not bool(key.get("is_immediate"))
+        or bool(key.get("is_deferrable"))
+        or bool(key.get("is_deferred"))
+        or not bool(key.get("is_validated"))
+    ):
+        raise SchemaMigrationError(
+            f"WF primary key for {table_name} must be valid, ready, immediate, "
+            "non-deferrable, and usable by ON CONFLICT"
+        )
+
+
+def _verify_wf_table_contract(
+    database: BaseDatabase, table_name: str, schema_sql: str
+) -> None:
+    """Verify one concrete WF table without applying any migration."""
+    from src.database.migration import verify_table_schema
+
+    verify_table_schema(database, table_name, schema_sql)
+    _verify_wf_column_types(database, table_name, schema_sql)
+    _verify_wf_unique_and_primary_constraints(database, table_name)
+
+
+def verify_wf_coupled_tables(database: BaseDatabase) -> None:
+    """Fail closed unless JYUSYOSIKI_HEAD and JYUSYOSIKI form the official pair.
+
+    Both tables must exist with every column and their ordered primary keys,
+    and the child must carry the composite ``(Year, MonthDay)`` foreign key with
+    ``ON DELETE CASCADE``. The catalog is inspected directly (PRAGMA /
+    pg_constraint), never inferred from constraint names.
+    """
+    from src.database.migration import _migration_targets
+    from src.database.schema_jravan import JRAVAN_SCHEMAS
+
+    for target in _migration_targets(database):
+        for required_table in (_WF_STANDARD_HEAD_TABLE, _WF_STANDARD_CHILD_TABLE):
+            if not target.table_exists_strict(required_table):
+                raise SchemaMigrationError(
+                    f"WF import requires table {required_table} before mutation"
+                )
+        for required_table in (_WF_STANDARD_HEAD_TABLE, _WF_STANDARD_CHILD_TABLE):
+            _verify_wf_table_contract(
+                target, required_table, JRAVAN_SCHEMAS[required_table]
+            )
+        db_type = target.get_db_type()
+        if db_type == "sqlite":
+            _verify_wf_sqlite_foreign_key(target)
+        elif db_type == "postgresql":
+            _verify_wf_postgresql_foreign_key(target)
+        else:
+            raise SchemaMigrationError(
+                f"WF child foreign key cannot be verified for database type {db_type!r}"
+            )
+
+
+def verify_wf_storage_schema(database: BaseDatabase, table_name: str) -> bool:
+    """Fail closed unless WF storage preserves the official key and payload."""
+    if table_name in _WF_NATIVE_STORAGE_TABLES:
+        from src.database.migration import _migration_targets
+        from src.database.schema import SCHEMAS
+
+        for target in _migration_targets(database):
+            _verify_wf_table_contract(target, table_name, SCHEMAS[table_name])
+        return True
+    if table_name in _WF_STANDARD_STORAGE_TABLES:
+        verify_wf_coupled_tables(database)
+        return True
+    return False
+
+
+def _wf_payout_tuples(payouts_json: Any) -> list[tuple[Any, Any, Any]]:
+    """Decode PayoutsJson into exactly 243 (Kumi, Pay, Votes) tuples."""
+    from src.parser.wf_parser import WFParser
+
+    if not isinstance(payouts_json, str):
+        raise ValueError("WF PayoutsJson must be JSON text describing 243 payout slots")
+    try:
+        decoded = json.loads(payouts_json)
+    except ValueError as error:
+        raise ValueError("WF PayoutsJson is not valid JSON") from error
+    if not isinstance(decoded, list) or len(decoded) != WFParser.PAYOUT_COUNT:
+        raise ValueError(
+            f"WF PayoutsJson must contain exactly {WFParser.PAYOUT_COUNT} payout slots"
+        )
+    expected_keys = set(WFParser.PAYOUT_KEYS)
+    tuples = []
+    for index, slot in enumerate(decoded, start=1):
+        if not isinstance(slot, dict) or set(slot) != expected_keys:
+            raise ValueError(
+                f"WF payout slot {index} must be a Kumi/PayJyushosiki/TekichuHyosu dictionary"
+            )
+        tuples.append(tuple(slot[key] for key in WFParser.PAYOUT_KEYS))
+    return tuples
+
+
+def _wf_split_conflicts(record: dict) -> list[str]:
+    """Report caller split race fields that contradict the composite values."""
+    from src.parser.wf_parser import WFParser
+
+    conflicts = []
+    for index in range(1, WFParser.RACE_COUNT + 1):
+        composite = record.get(f"RaceInfo{index}")
+        if not isinstance(composite, str) or len(composite) != 8:
+            continue
+        for name, start, end in _WF_RACE_SPLIT:
+            provided = record.get(f"{name}{index}")
+            if provided in (None, ""):
+                continue
+            expected = composite[start:end]
+            actual = str(provided).strip()
+            if name == "JyoCD":
+                matches = actual == expected
+            else:
+                matches = actual.isdigit() and expected.isdigit() and int(actual) == int(expected)
+            if not matches:
+                conflicts.append(f"{name}{index}")
+    return conflicts
+
+
+def validate_wf_record(record: dict, table_name: str) -> bool:
+    """Revalidate a caller-built WF row before any coercion or mutation.
+
+    The parser already enforces the official contract, but importer and
+    realtime entry points also accept dictionaries. Record-type and status
+    aliases must be present and consistent, the key must be a real date, and
+    the state-dependent body plus all 243 payout slots must be valid before
+    generic numeric coercion could silently strip characters. A status-0 row
+    is an exact-key erase whose body stays opaque.
+    """
+    if table_name not in _WF_STORAGE_TABLES:
+        return False
+    if _record_type_from_record(record) != "WF":
+        raise SchemaMigrationError(f"{table_name} received a non-WF record")
+
+    from src.parser.wf_parser import WFParser
+
+    if record.get("DataKubun") in (None, "") and record.get("headDataKubun") in (
+        None,
+        "",
+    ):
+        raise SchemaMigrationError("WF DataKubun is required")
+    try:
+        data_kubun = resolve_record_data_kubun(record)
+    except ValueError as error:
+        raise SchemaMigrationError(str(error)) from error
+    allowed = (
+        WFParser.REALTIME_DATA_KUBUN_VALUES
+        if table_name == "RT_WF"
+        else WFParser.ACCUMULATED_DATA_KUBUN_VALUES
+    )
+    if data_kubun not in allowed:
+        raise SchemaMigrationError(
+            f"WF record has unsupported DataKubun for {table_name}: {data_kubun!r}"
+        )
+
+    aliases = _STANDARD_FIELD_ALIASES.get(table_name, {})
+    def value_for(native_name: str):
+        if native_name in record:
+            return record[native_name]
+        return record.get(aliases.get(native_name, native_name))
+
+    try:
+        make_date = WFParser._require_yyyymmdd("MakeDate", value_for("MakeDate"))
+        WFParser._require_event_date(value_for("Year"), value_for("MonthDay"))
+        if data_kubun == "0":
+            return True
+        conflicts = [
+            (native_name, standard_name)
+            for native_name, standard_name in aliases.items()
+            if native_name in record
+            and standard_name in record
+            and record[native_name] != record[standard_name]
+        ]
+        if conflicts:
+            raise SchemaMigrationError(f"conflicting WF alias values: {conflicts}")
+        body_names = (
+            "Yobi1",
+            *WFParser.RACE_INFO_FIELDS,
+            "Yobi2",
+            "HatubaiHyosu",
+            *WFParser.YUKO_HYOSU_FIELDS,
+            *WFParser.FLAG_FIELDS,
+            "CarryOverStart",
+            "CarryOverBalance",
+        )
+        # A caller-built row may carry None for a blank optional field; that is
+        # the same stored NULL as the parser's "" and is not a coercion hole.
+        # Payout slots stay strict text because PayoutsJson is stored verbatim.
+        values = {
+            name: "" if value_for(name) is None else value_for(name) for name in body_names
+        }
+        payouts = _wf_payout_tuples(record.get("PayoutsJson"))
+        WFParser.validate_body(values, payouts, data_kubun, make_date)
+    except ValueError as error:
+        raise SchemaMigrationError(str(error)) from error
+
+    if table_name in _WF_STANDARD_STORAGE_TABLES:
+        split_conflicts = _wf_split_conflicts(record)
+        if split_conflicts:
+            raise SchemaMigrationError(
+                "WF record split race fields contradict RaceInfo composites: "
+                f"{split_conflicts}"
+            )
+    return True
+
+
+def prepare_wf_standard_record(record: dict) -> tuple[str, dict, list[dict]]:
+    """Build (status, JYUSYOSIKI_HEAD row, exactly 243 JYUSYOSIKI rows).
+
+    The returned status is the validated official DataKubun; the writer
+    branches on it rather than re-deriving it from the converted header.
+    """
+    from src.parser.wf_parser import WFParser
+
+    validate_wf_record(record, _WF_STANDARD_HEAD_TABLE)
+    source = translate_standard_field_names(
+        clean_record_metadata(record), _WF_STANDARD_HEAD_TABLE
+    )
+    status = resolve_record_data_kubun(record)
+    if status != "0":
+        for index in range(1, WFParser.RACE_COUNT + 1):
+            composite = str(source.get(f"RaceInfo{index}"))
+            for name, start, end in _WF_RACE_SPLIT:
+                source[f"{name}{index}"] = composite[start:end]
+    header = convert_record_types(source, _WF_STANDARD_HEAD_TABLE)
+    if any(header.get(column) in (None, "") for column in _WF_KEY_COLUMNS):
+        raise SchemaMigrationError("WF header has an incomplete official key")
+    if status == "0":
+        return status, header, []
+
+    payouts = _wf_payout_tuples(source.get("PayoutsJson"))
+    children = []
+    for index, (kumi, pay, votes) in enumerate(payouts, start=1):
+        child = convert_record_types(
+            {
+                "Year": source.get("Year"),
+                "MonthDay": source.get("MonthDay"),
+                "Num": str(index),
+                "Kumi": kumi,
+                "PayJyushosiki": pay,
+                "TekichuHyo": votes,
+            },
+            _WF_STANDARD_CHILD_TABLE,
+        )
+        if any(child.get(column) != header.get(column) for column in _WF_KEY_COLUMNS):
+            raise SchemaMigrationError(f"WF payout row {index} has a mismatched parent key")
+        if child.get("Num") != index:
+            raise SchemaMigrationError(f"WF payout row {index} lost its ordinal")
+        children.append(child)
+    if len(children) != WFParser.PAYOUT_COUNT:
+        raise SchemaMigrationError("WF standard storage requires exactly 243 payout rows")
+    return status, header, children
+
+
+def insert_wf_native_batch(
+    database: BaseDatabase,
+    table_name: str,
+    rows: list[dict],
+    *,
+    commit_batch: bool,
+    optimized: bool,
+) -> int:
+    """Write one strict native WF batch atomically without row fallback."""
+    if table_name not in _WF_NATIVE_STORAGE_TABLES:
+        raise SchemaMigrationError(f"Unsupported native WF storage table: {table_name}")
+    if not rows:
+        return 0
+
+    try:
+        if not database.has_pending_transaction():
+            database.begin_transaction()
+        if optimized and hasattr(database, "insert_many_optimized"):
+            inserted = database.insert_many_optimized(table_name, rows)
+        else:
+            inserted = database.insert_many(table_name, rows, use_replace=True)
+        if commit_batch:
+            database.commit()
+        return inserted
+    except Exception:
+        rollback_failed_import(database, context=f"atomic WF write to {table_name}")
+        raise
+
+
+def insert_wf_standard_batch(
+    database: BaseDatabase,
+    prepared: list[tuple[str, dict, list[dict]]],
+    *,
+    commit_batch: bool,
+    optimized: bool,
+) -> tuple[int, int]:
+    """Atomically replace parent plus 243 children per record in provider order.
+
+    Status 0 deletes the children and then the parent for the exact key; every
+    other status upserts the parent, deletes the previous children, and inserts
+    all 243 ordinals. A failure rolls back the whole batch and propagates; the
+    caller must never fall back to a parent-only insert.
+    """
+    if not prepared:
+        return 0, 0
+    from src.parser.wf_parser import WFParser
+
+    def begin_if_owned() -> None:
+        if commit_batch:
+            begin = getattr(database, "begin_transaction", None)
+            if begin is not None:
+                begin()
+
+    def rollback_or_invalidate() -> None:
+        try:
+            database.rollback()
+        except Exception:
+            try:
+                database.invalidate_connection()
+            except Exception as disconnect_error:
+                logger.error(
+                    "Failed to invalidate database after WF rollback failure",
+                    table=_WF_STANDARD_HEAD_TABLE,
+                    error=str(disconnect_error),
+                )
+            raise
+
+    def upsert_header(header: dict) -> int:
+        if optimized and hasattr(database, "insert_many_optimized"):
+            return database.insert_many_optimized(_WF_STANDARD_HEAD_TABLE, [header])
+        return database.insert_many(_WF_STANDARD_HEAD_TABLE, [header], use_replace=True)
+
+    where = " AND ".join(f"{column} = ?" for column in _WF_KEY_COLUMNS)
+    try:
+        begin_if_owned()
+        for status, header, children in prepared:
+            key_values = tuple(header.get(column) for column in _WF_KEY_COLUMNS)
+            if any(value in (None, "") for value in key_values):
+                raise SchemaMigrationError("WF write has an incomplete parent key")
+            if status == "0":
+                database.execute(f"DELETE FROM {_WF_STANDARD_CHILD_TABLE} WHERE {where}", key_values)
+                database.execute(f"DELETE FROM {_WF_STANDARD_HEAD_TABLE} WHERE {where}", key_values)
+                continue
+            if len(children) != WFParser.PAYOUT_COUNT:
+                raise SchemaMigrationError("WF standard storage requires exactly 243 payout rows")
+            if upsert_header(header) != 1:
+                raise DatabaseError(f"WF header upsert failed for {_WF_STANDARD_HEAD_TABLE}")
+            database.execute(f"DELETE FROM {_WF_STANDARD_CHILD_TABLE} WHERE {where}", key_values)
+            inserted = database.insert_many(_WF_STANDARD_CHILD_TABLE, children, use_replace=False)
+            if inserted != WFParser.PAYOUT_COUNT:
+                raise DatabaseError(
+                    f"WF payout child insert count mismatch for {_WF_STANDARD_CHILD_TABLE}: "
+                    f"{inserted}"
+                )
+        if commit_batch:
+            database.commit()
+        return len(prepared), 0
+    except Exception:
+        rollback_or_invalidate()
+        raise
+
+
 def preflight_standard_schema_migrations(
     database: BaseDatabase,
     native_table_names: set[str],
@@ -514,6 +1159,23 @@ def preflight_standard_schema_migrations(
                 child_schema,
                 allow_missing_columns=True,
             )
+
+    # WF standard storage is a strict parent/child pair. A partial pair, an old
+    # keyless layout, or a child without the composite cascade foreign key must
+    # stop the standard import before any unrelated additive ALTER runs.
+    if database.table_exists(_WF_STANDARD_HEAD_TABLE) or database.table_exists(
+        _WF_STANDARD_CHILD_TABLE
+    ):
+        try:
+            verify_wf_coupled_tables(database)
+        except SchemaMigrationError as error:
+            raise SchemaMigrationError(
+                "Standard-schema import stopped before any mutation because the "
+                f"existing WF storage pair {_WF_STANDARD_HEAD_TABLE}/"
+                f"{_WF_STANDARD_CHILD_TABLE} does not satisfy the current contract; "
+                "back up and rebuild both tables (parent first) with the current "
+                f"schema, then reimport RACE data: {error}"
+            ) from error
 
 
 def verify_hy_storage_schema(database: BaseDatabase, table_name: str) -> bool:
@@ -973,6 +1635,11 @@ def _record_type_from_record(record: dict) -> Any:
     return aliases[0][1] if aliases else None
 
 
+def resolve_record_type(record: dict) -> Any:
+    """Resolve and consistency-check importer-supported record-type aliases."""
+    return _record_type_from_record(record)
+
+
 CANCELLATION_STATE_RECORD_TYPES = frozenset(
     {"RA", "SE", "HR", "H1", "H6", "O1", "O2", "O3", "O4", "O5", "O6", "WF"}
 )
@@ -1009,7 +1676,9 @@ _OFFICIAL_ERASE_STORAGE_TABLES = {
     "O4": {"NL_O4", "RT_O4", "ODDS_UMATAN_HEAD"},
     "O5": {"NL_O5", "RT_O5", "ODDS_SANREN_HEAD"},
     "O6": {"NL_O6", "RT_O6", "ODDS_SANRENTAN_HEAD"},
-    "WF": {"NL_WF", "RT_WF", "WIN5"},
+    # Standard-mode WF erases are applied by the coupled parent/child writer in
+    # provider order; WIN5 is a legacy alias and never a physical write target.
+    "WF": set(_WF_NATIVE_STORAGE_TABLES),
     "HY": {"NL_HY", "BAMEIORIGIN"},
     "BT": {"NL_BT", "KEITO"},
     "JG": {"NL_JG", "JOGAIBA"},
@@ -2151,13 +2820,20 @@ def replace_mining_native_snapshot(
     if record_race_key != expected_race_key:
         raise ValueError(f"{record_type} snapshot metadata does not match its expanded row")
 
-    _delete_mining_race_rows(database, record, table_name)
-    inserted = database.insert_many(table_name, converted_rows, use_replace=True)
-    if inserted != len(converted_rows):
-        raise DatabaseError(
-            f"{table_name} {record_type} snapshot inserted "
-            f"{inserted} of {len(converted_rows)} rows"
+    try:
+        _delete_mining_race_rows(database, record, table_name)
+        inserted = database.insert_many(table_name, converted_rows, use_replace=True)
+        if inserted != len(converted_rows):
+            raise DatabaseError(
+                f"{table_name} {record_type} snapshot inserted "
+                f"{inserted} of {len(converted_rows)} rows"
+            )
+    except Exception as exc:
+        rollback_failed_import(
+            database,
+            context=f"{table_name} {record_type} snapshot replacement",
         )
+        raise MiningSnapshotMutationError(str(exc)) from exc
     return inserted
 
 
@@ -3623,12 +4299,16 @@ class DataImporter:
         self._records_imported = 0
         self._records_failed = 0
         self._batches_processed = 0
+        self._single_record_stats_checkpoint: Optional[
+            tuple[int, int, int, int]
+        ] = None
         self._jravan_tables_ready = not use_jravan_schema
         self._verified_mining_native_tables: set[str] = set()
         self._verified_hy_tables: set[str] = set()
         self._verified_bt_tables: set[str] = set()
         self._verified_jg_tables: set[str] = set()
         self._verified_wc_tables: set[str] = set()
+        self._verified_wf_tables: set[str] = set()
         self._verified_ck_child_tables: dict[str, tuple[str, str]] = {}
         self._verified_rc_tables: set[str] = set()
         self._verified_ys_tables: set[str] = set()
@@ -3678,7 +4358,7 @@ class DataImporter:
             "HS": "NL_HS",  # 競走馬市場取引価格
             "HY": "NL_HY",  # 馬名の意味由来
             "WE": "NL_WE",  # 気象情報
-            "WF": "NL_WF",  # 風情報
+            "WF": "NL_WF",  # 重勝式（WIN5）
             "WH": "NL_WH",  # 馬体重情報
             "TM": "NL_TM",  # 対戦型データマイニング予想
             "TK": "NL_TK",  # 追切マスター
@@ -3850,7 +4530,15 @@ class DataImporter:
         """
         if not auto_commit:
             self.database.begin_transaction()
-        self._ensure_jravan_tables_ready(auto_commit=auto_commit)
+        try:
+            self._ensure_jravan_tables_ready(auto_commit=auto_commit)
+        except Exception:
+            if not auto_commit:
+                rollback_failed_import(
+                    self.database,
+                    context="standard-schema preflight in caller-owned import",
+                )
+            raise
 
         # Reset statistics
         self._records_imported = 0
@@ -3899,6 +4587,10 @@ class DataImporter:
                     if verify_wc_storage_schema(self.database, table_name):
                         self._verified_wc_tables.add(table_name)
                 validate_wc_record(record, table_name)
+                if table_name not in self._verified_wf_tables:
+                    if verify_wf_storage_schema(self.database, table_name):
+                        self._verified_wf_tables.add(table_name)
+                validate_wf_record(record, table_name)
 
                 if table_name not in self._verified_mining_native_tables:
                     if verify_mining_native_schema(self.database, record, table_name):
@@ -3983,6 +4675,8 @@ class DataImporter:
                         )
                         if auto_commit:
                             self.database.commit()
+                    except TransactionRecoveryError:
+                        raise
                     except Exception:
                         self.database.rollback()
                         raise
@@ -4052,9 +4746,21 @@ class DataImporter:
 
             return stats
 
+        except TransactionRecoveryError:
+            raise
         except SchemaMigrationError:
+            if not auto_commit:
+                rollback_failed_import(
+                    self.database,
+                    context="validation/schema failure in caller-owned import",
+                )
             raise
         except Exception as e:
+            if not auto_commit:
+                rollback_failed_import(
+                    self.database,
+                    context="unexpected failure in caller-owned import",
+                )
             logger.error("Import failed", error=str(e))
             raise ImporterError(f"Failed to import records: {e}")
 
@@ -4132,6 +4838,23 @@ class DataImporter:
                 self.database,
                 table_name,
                 [item for item in prepared_tk if item is not None],
+                commit_batch=auto_commit,
+                optimized=False,
+            )
+            self._records_imported += succeeded
+            self._records_failed += failed
+            if succeeded:
+                self._batches_processed += 1
+            return
+
+        if table_name in _WF_STANDARD_STORAGE_TABLES:
+            # One provider record is one parent row plus exactly 243 payout
+            # rows; the coupled writer applies them in provider order and never
+            # enters the generic parent-only fallback below.
+            prepared_wf = [prepare_wf_standard_record(record) for record in batch]
+            succeeded, failed = insert_wf_standard_batch(
+                self.database,
+                prepared_wf,
                 commit_batch=auto_commit,
                 optimized=False,
             )
@@ -4245,6 +4968,19 @@ class DataImporter:
             if not converted_batch:
                 return
 
+            if table_name in _WF_NATIVE_STORAGE_TABLES:
+                rows = insert_wf_native_batch(
+                    self.database,
+                    table_name,
+                    converted_batch,
+                    commit_batch=auto_commit,
+                    optimized=False,
+                )
+                self._records_imported += rows
+                if rows:
+                    self._batches_processed += 1
+                return
+
             if table_name in _RC_STORAGE_TABLES:
                 rows = apply_rc_batch(
                     self.database,
@@ -4345,6 +5081,8 @@ class DataImporter:
                 _ch_result_table_name(table_name) is not None
                 or _ks_result_table_name(table_name) is not None
                 or table_name in _ORDERED_MASTER_STORAGE_TABLES
+                or table_name in _WF_NATIVE_STORAGE_TABLES
+                or table_name in _WF_STANDARD_STORAGE_TABLES
             ):
                 # Coupled master writes must never enter the parent-only fallback.
                 raise
@@ -4408,6 +5146,47 @@ class DataImporter:
             if auto_commit and success_count > 0:
                 self.database.commit()
 
+    def _begin_single_record_transaction(self, *, auto_commit: bool) -> None:
+        """Start or join one single-record transaction and checkpoint counters."""
+        if auto_commit:
+            if not self.database.is_transaction_active():
+                self._single_record_stats_checkpoint = None
+            return
+        if not self.database.is_transaction_active():
+            self.database.begin_transaction()
+        generation = self.database.get_transaction_generation()
+        if generation is None:
+            raise DatabaseError(
+                "Database did not expose an active transaction generation"
+            )
+        checkpoint_generation = (
+            self._single_record_stats_checkpoint[0]
+            if self._single_record_stats_checkpoint is not None
+            else None
+        )
+        if checkpoint_generation != generation:
+            # The transaction may have been opened outside this importer. Its
+            # generation distinguishes that new caller transaction from a
+            # previously committed sequence whose checkpoint is still cached.
+            self._single_record_stats_checkpoint = (
+                generation,
+                self._records_imported,
+                self._records_failed,
+                self._batches_processed,
+            )
+
+    def _rollback_single_record_transaction(self, *, context: str) -> None:
+        """Rollback a failed single-record sequence and restore its counters."""
+        rollback_failed_import(self.database, context=context)
+        if self._single_record_stats_checkpoint is not None:
+            (
+                _,
+                self._records_imported,
+                self._records_failed,
+                self._batches_processed,
+            ) = self._single_record_stats_checkpoint
+            self._single_record_stats_checkpoint = None
+
     def import_single_record(
         self,
         record: dict,
@@ -4422,19 +5201,33 @@ class DataImporter:
         Returns:
             True if successful, False otherwise
         """
-        if not auto_commit:
-            self.database.begin_transaction()
-        self._ensure_jravan_tables_ready(auto_commit=auto_commit)
+        self._begin_single_record_transaction(auto_commit=auto_commit)
+        try:
+            self._ensure_jravan_tables_ready(auto_commit=auto_commit)
+        except Exception:
+            if not auto_commit:
+                self._rollback_single_record_transaction(
+                    context="standard-schema preflight in single-record import",
+                )
+            raise
 
         # Note: Japanese parsers use 'レコード種別ID', JRA-VAN standard uses 'RecordSpec'
         record_type = _record_type_from_record(record)
         if not record_type:
             logger.warning("Record missing record type field")
+            if not auto_commit:
+                self._rollback_single_record_transaction(
+                    context="missing record type in single-record import",
+                )
             return False
 
         table_name = self._get_table_name(record_type)
         if not table_name:
             logger.warning(f"Unknown record type: {record_type}")
+            if not auto_commit:
+                self._rollback_single_record_transaction(
+                    context="unknown record type in single-record import",
+                )
             return False
 
         try:
@@ -4452,6 +5245,10 @@ class DataImporter:
                 if verify_wc_storage_schema(self.database, table_name):
                     self._verified_wc_tables.add(table_name)
             validate_wc_record(record, table_name)
+            if table_name not in self._verified_wf_tables:
+                if verify_wf_storage_schema(self.database, table_name):
+                    self._verified_wf_tables.add(table_name)
+            validate_wf_record(record, table_name)
             if table_name not in self._verified_rc_tables:
                 if verify_rc_storage_schema(self.database, table_name):
                     self._verified_rc_tables.add(table_name)
@@ -4480,6 +5277,18 @@ class DataImporter:
                     self.database,
                     table_name,
                     [prepared],
+                    commit_batch=auto_commit,
+                    optimized=False,
+                )
+                self._records_imported += succeeded
+                self._records_failed += failed
+                if succeeded:
+                    self._batches_processed += 1
+                return succeeded == 1
+            if table_name in _WF_STANDARD_STORAGE_TABLES:
+                succeeded, failed = insert_wf_standard_batch(
+                    self.database,
+                    [prepare_wf_standard_record(record)],
                     commit_batch=auto_commit,
                     optimized=False,
                 )
@@ -4534,6 +5343,8 @@ class DataImporter:
                     rows = replace_mining_native_snapshot(self.database, record, table_name)
                     if auto_commit:
                         self.database.commit()
+                except TransactionRecoveryError:
+                    raise
                 except Exception:
                     self.database.rollback()
                     raise
@@ -4576,6 +5387,10 @@ class DataImporter:
                     table=table_name,
                     primary_key=get_table_primary_key_columns(table_name),
                 )
+                if not auto_commit:
+                    self._rollback_single_record_transaction(
+                        context="incomplete key in single-record import",
+                    )
                 return False
             if table_name in _RC_STORAGE_TABLES:
                 rows = apply_rc_batch(
@@ -4664,10 +5479,28 @@ class DataImporter:
 
             return True
 
+        except TransactionRecoveryError:
+            raise
+        except SchemaMigrationError:
+            if not auto_commit:
+                self._rollback_single_record_transaction(
+                    context="validation/schema failure in single-record import",
+                )
+            raise
         except DatabaseError as e:
+            if not auto_commit:
+                self._rollback_single_record_transaction(
+                    context="database failure in single-record import",
+                )
             self._records_failed += 1
             logger.error("Failed to insert record", error=str(e))
             return False
+        except Exception:
+            if not auto_commit:
+                self._rollback_single_record_transaction(
+                    context="unexpected failure in single-record import",
+                )
+            raise
 
     def get_statistics(self) -> Dict[str, int]:
         """Get import statistics.
@@ -4686,6 +5519,7 @@ class DataImporter:
         self._records_imported = 0
         self._records_failed = 0
         self._batches_processed = 0
+        self._single_record_stats_checkpoint = None
 
     def add_table_mapping(self, record_type: str, table_name: str):
         """Add custom table mapping.

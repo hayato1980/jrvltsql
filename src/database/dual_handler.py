@@ -96,6 +96,8 @@ class DualDatabase(BaseDatabase):
         self._secondary_errors = 0
         self._secondary_in_sync = True
         self._transaction_active = False
+        self._transaction_generation = 0
+        self._context_exit_invalidated = False
         logger.info(
             f"DualDatabase initialized: primary={primary.get_db_type()}, "
             f"secondary={secondary.get_db_type()}"
@@ -107,6 +109,7 @@ class DualDatabase(BaseDatabase):
 
     def connect(self) -> None:
         """Connect both backends. Secondary failure is logged, not raised."""
+        self._transaction_active = False
         self._primary.connect()
         # Surface primary's connection so BaseDatabase.is_connected() works.
         self._connection = getattr(self._primary, "_connection", None)
@@ -131,6 +134,7 @@ class DualDatabase(BaseDatabase):
                     f"DualDatabase: secondary disconnect failed: {e}"
                 )
         self._connection = None
+        self._transaction_active = False
 
     def is_connected(self) -> bool:
         """Report connection status of the primary backend."""
@@ -144,6 +148,14 @@ class DualDatabase(BaseDatabase):
         the rest of the codebase unchanged.
         """
         return self._primary.get_db_type()
+
+    def has_pending_transaction(self) -> bool:
+        """Return whether either connected backend has pending work."""
+        if self._transaction_active or self._primary.has_pending_transaction():
+            return True
+        if not self._secondary.is_connected():
+            return False
+        return self._secondary.has_pending_transaction()
 
     def get_migration_targets(self) -> tuple[BaseDatabase, ...]:
         """Return connected backends for backend-specific schema migration."""
@@ -247,7 +259,7 @@ class DualDatabase(BaseDatabase):
             except Exception:
                 pass
             raise DatabaseError(f"DualDatabase: secondary begin failed: {e}") from e
-        self._transaction_active = True
+        self._mark_transaction_started()
 
     def create_table(self, table_name: str, schema: str) -> None:
         """Create table in both backends.

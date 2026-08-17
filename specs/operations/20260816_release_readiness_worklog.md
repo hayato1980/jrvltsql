@@ -772,7 +772,7 @@
   green by encoding the current implementation's assumptions here.
 - Repository: `miyamamoto/jrvltsql`.
 - Dedicated worktree:
-  `/home/keiba/scratch/20260816_jrvltsql_official_oracle`.
+  `$WORKSPACE/20260816_jrvltsql_official_oracle`.
 - Branch: `agent/official-oracle-20260816`.
 - Base and initial HEAD:
   `8baf34a79783370f17ac8430151cd212a496965e` (latest fetched
@@ -1011,7 +1011,7 @@
   identity. CK expansion, unrelated standard routes, global metadata repair,
   and the strict fresh-acquisition release gate remain separate iterations.
 - Repository: `miyamamoto/jrvltsql`.
-- Worktree: `/home/keiba/scratch/20260817_jrvltsql_hy_official`.
+- Worktree: `$WORKSPACE/20260817_jrvltsql_hy_official`.
 - Branch: `agent/hy-official-20260817`.
 - Base / initial HEAD / `origin/master` full SHA:
   `3a0b108cfca22d9c2741aed96942178f4d475f90`.
@@ -1164,7 +1164,7 @@
   standard-schema iteration; other record types and release changes are out of
   scope here.
 - Repository: `miyamamoto/jrvltsql`.
-- Worktree: `/home/keiba/scratch/20260817_jrvltsql_ck_official`.
+- Worktree: `$WORKSPACE/20260817_jrvltsql_ck_official`.
 - Branch: `agent/ck-official-20260817`.
 - Base / initial HEAD / `origin/master` full SHA:
   `9f2e2a8c11bae32a76e850c13aa0e112f75ef67a`.
@@ -1208,7 +1208,7 @@
 - Red-first contract executed at unchanged base full SHA
   `9f2e2a8c11bae32a76e850c13aa0e112f75ef67a`:
   `uv run pytest -q tests/test_ck_official_contract.py
-  --basetemp=/home/keiba/scratch/pytest_ck_red --no-cov` returned
+  --basetemp=$WORKSPACE/pytest_ck_red --no-cov` returned
   `9 failed, 1 passed`. The old parser accepted blank/3/9 `DataKubun`, exposed
   none of the required 70 horse, four professional, or four owner/breeder
   normalized rows, and the schema/importers had no child-table contract. Both
@@ -1877,7 +1877,7 @@
 - WC official-storage iteration started from current `origin/master` full SHA
   `b4369f74d2ba236c8b33dbb1e45882ffa7c9aa0f`. Repository:
   `miyamamoto/jrvltsql`; dedicated worktree:
-  `/home/keiba/scratch/20260817_jrvltsql_wc_standard`; branch:
+  `$WORKSPACE/20260817_jrvltsql_wc_standard`; branch:
   `agent/wc-standard-storage-20260817`. Minimal scope is WC only: reconcile the
   current 105-byte official/SDK layout, the documentation-only 4.7.0.1
   availability/measured-distance clarification,
@@ -1913,7 +1913,7 @@
   change and executed on exact code base
   `b4369f74d2ba236c8b33dbb1e45882ffa7c9aa0f` with
   `python3 -m pytest -q tests/test_wc_official_contract.py --no-cov
-  --basetemp=/home/keiba/scratch/20260817_wc_red_pytest`. It produced the
+  --basetemp=$WORKSPACE/20260817_wc_red_pytest`. It produced the
   required red evidence: `42 failed, 1 passed, 1 PostgreSQL opt-in skip`.
   Failures independently exposed the generic parser raising or accepting
   corrupt fields, DATE/delimiter representation drift, the wrong native key,
@@ -2101,3 +2101,1099 @@
   polite final evidence comment and squash-merge #200. STOP on any non-worklog
   delta, remote-head mismatch, executed CI failure, new actionable thread, or
   loss of mergeability.
+- PR [#200](https://github.com/miyamamoto/jrvltsql/pull/200) passed its final
+  gate on exact head `96f251f8a636ba0006706b349df656c6143d580f`.
+  Actions run `31977457281` completed `test`, `lint`, and
+  `windows-batch-syntax` successfully; only the intentionally conditional
+  `performance-test` was skipped. Thread-aware GraphQL returned zero review
+  threads, the remote and local heads matched, the worktree was clean, and the
+  PR was `MERGEABLE` / `CLEAN`. A final evidence comment recorded the review
+  disposition and the non-release/fresh-acquisition boundary. The iteration
+  was squash-merged as
+  `4e052962ca7b3322be7d1025c3151c8d2afcd02a`; GitHub then reported zero open
+  PRs, and the merged worktree and local branch were removed.
+- WF official-storage iteration started from freshly fetched `origin/master`
+  full SHA `4e052962ca7b3322be7d1025c3151c8d2afcd02a`. Repository:
+  `miyamamoto/jrvltsql`; dedicated worktree:
+  `$WORKSPACE/20260817_jrvltsql_wf_standard`; branch:
+  `agent/wf-standard-storage-20260817`. Minimal scope is WF only: reconcile
+  the current and prior official layouts and state semantics, all five race
+  slots and 243 payout slots, native `NL_WF` and canonical storage ownership,
+  keys, migration fail-closed behavior, executable metadata, tests, public
+  support documentation, and the official-history oracle. WC is merged; CK
+  and the final fresh-provider release gate remain separate iterations.
+  Dependency order remains jrvltsql specification/storage fixes, final
+  repository audit plus fresh provider acquisition/storage and release, then
+  jrvltsql-nar alignment/release, then jvlink-mcp-server alignment/release.
+  Claude Code Fable is the preferred implementation reviewer because the work
+  crosses nested fixed-width arrays, status semantics, and two importers; if
+  the recorded account limit persists, the operator-authorized Codex critical
+  fallback applies and no unavailable-Claude result will be counted. Next safe
+  action: bind the pinned official workbook/SDK structures and relevant
+  community clarifications to the current parser/schema/import paths, then add
+  one grouped red-first WF contract on this unchanged base. STOP if the
+  official sources do not establish a lossless table/key design, if an old
+  layout cannot be distinguished safely, if a legacy mismatch would mutate
+  before rejection, or if a current PR already owns the same scope.
+- Two independent Codex critical reviews completed read-only against exact
+  base `4e052962ca7b3322be7d1025c3151c8d2afcd02a`; neither changed production or
+  tests. Both returned `NEEDS_CHANGES`. The independently reproduced blockers
+  were: standard WF resolves to undefined physical `WIN5`; the existing
+  `JYUSYOSIKI_HEAD`/`JYUSYOSIKI` schemas lack the official parent key and a
+  lossless 243-row child contract; no WF caller validator exists; generic
+  coercion silently changes non-digits; native/realtime wrong primary keys can
+  silently collapse dates; realtime accepts unsupported `8` and accumulated-
+  only `7`; metadata and history fixtures are false-green. Both audits agreed
+  on the official 7,215-byte layout, `(Year, MonthDay)` key, statuses
+  `0/1/2/3/7/9`, five race slots, five active-vote slots, 243 payout slots,
+  status-0 erase and status-9 retention. The 169-byte repository fixture has
+  no official historical-format provenance. PostgreSQL runtime verification
+  remains explicitly unperformed and mandatory after repair.
+- Added one grouped red-first contract at
+  `tests/test_wf_official_contract.py` without changing production code. On
+  unchanged exact base `4e052962ca7b3322be7d1025c3151c8d2afcd02a`, command
+  `python3 -m pytest -q tests/test_wf_official_contract.py --no-cov
+  --basetemp=$WORKSPACE/20260817_jrvltsql_wf_red_tmp7` produced
+  `28 failed, 3 passed` after extending the same grouped contract with native
+  and realtime wrong-primary-key probes plus the absent WF same-length history
+  entries. The red failures demonstrate that current code accepts
+  blank/unknown status, invalid dates, non-digit fixed fields and flags; both
+  importers accept malformed caller dictionaries; standard parent/243-child
+  storage is absent; wrong WF keys do not stop either historical importer or
+  realtime before mutation; and realtime accepts statuses `7` and `8`. The paired
+  green cases bind the pinned SDK 5.0.0 manifest (7,215 bytes, 771 leaves,
+  5/5/243 repeats, CRLF at one-based 7,214), first/middle/last extraction,
+  every official accumulated status, opaque status-0 body, and explicit
+  rejection of the repository-only 169-byte reconstruction. This is the
+  required pre-repair red evidence; do not replace it with a post-fix claim.
+- The official 4.9.0.1 format sheet rows 1296-1330 were then re-read directly.
+  The test builder was corrected before implementation so its complete payload
+  uses status `3`, not status `1`: all statuses require five race composites
+  and initial carryover; status `1` uses initial values for sales/votes/flags,
+  balance, and payouts; status `2`/`9` allow optional values; status `3`/`7`
+  provide the values. Added red cases prove current code incorrectly accepts a
+  non-initial status-1 sales count and a status-3 record missing required
+  payload. It also proves all three current statuses changed by Ver.4.2.0
+  wrongly accept a blank initial-carryover amount, while paired pre-4.2
+  event records and status-2/9 optional non-carryover payload stay green.
+  The final pre-delegation red extension also proves standard import does not
+  raise before mutation when the required child is absent or its composite
+  `ON DELETE CASCADE` foreign key is missing (both importers).
+- As an independent old/current physical check, the normalized 35-row WF
+  format block beginning at workbook row 1296 was serialized from both pinned
+  artifacts. `JV-Data4802.xlsx` and `JV-Data4901.xlsx` produced the identical
+  SHA-256 `dc406a98fd5050b883bd590eb271ac9d064b26eaf61d220be746e11c54f80d4b`
+  over 6,207 UTF-8 JSON bytes. This confirms the supported 4.8.0.2 and 4.9.0.1
+  physical layout is the same; the 4.1.1/4.2.0 differences are semantic
+  availability/history, not a second record length.
+- Claude Code implementation session reserved as
+  `3178b449-85d0-43ef-b671-13a519df1649`, with `--model fable --effort max`.
+  Fable is selected under the operator rule because this repair implements a
+  fail-closed validator, state-dependent old/current semantics, coupled parent/
+  child transactions, two importer orderings, realtime restrictions, and
+  SQLite/PostgreSQL constraint boundaries. The session must be resumed by this
+  ID for findings within this WF iteration; it may edit the current dedicated
+  worktree but must not commit, push, open/merge a PR, release, or claim provider
+  runtime/64-bit verification. Start only after the recorded 08:40 JST quota
+  reset; if the service still refuses it, record that fact and use the
+  operator-approved Codex implementation fallback.
+- At `2026-08-17T08:40:15+09:00`, the recorded reset had passed and session
+  `3178b449-85d0-43ef-b671-13a519df1649` was started with
+  `claude --model fable --effort max`. Its task is the single aggregated WF
+  implementation described above, using the grouped red contract as immutable
+  evidence. Worktree was dirty only with this tracked worklog and the untracked
+  red-first WF test at dispatch; no production file had changed.
+- Aggregated implementation boundary before delegating the repair: retain
+  native `NL_WF` and `RT_WF` as one-row JSON compatibility storage, but add a
+  shared fail-closed WF validator and exact schema/key verification before
+  generic coercion in both historical importers, single-record import, and all
+  realtime parsed/raw/batch paths. Accumulated accepts `0/1/2/3/7/9`; realtime
+  accepts `0/1/2/3/9` and rejects accumulated-only `7`. Status `0` validates
+  only the exact date key and treats its body as opaque before physical delete;
+  status `9` is retained. The validator must reject conflicting/missing record
+  type or status aliases, invalid Gregorian dates, non-ASCII/fixed-width keys
+  and race composites, invalid flags, malformed or non-243 payout JSON, and
+  partial payout tuples before conversion can strip characters.
+- Standard mode will use the existing project-canonical physical owner
+  `JYUSYOSIKI_HEAD` plus child `JYUSYOSIKI`; `WIN5` remains a public mapping
+  alias only and is never a physical write target. Parent key is
+  `(Year, MonthDay)`. The child stores every ordinal `Num=1..243`, including
+  documented blank slots, under key `(Year, MonthDay, Num)` with a composite
+  parent foreign key and `ON DELETE CASCADE`. One provider record replaces the
+  parent plus exactly 243 children atomically and in provider order. Existing
+  malformed parent/child or legacy-only `WIN5` storage is non-additive and must
+  stop before any unrelated DDL/row mutation; do not infer/backfill missing
+  ordinals. Both SQLite and PostgreSQL constraint verification must establish
+  actual ordered PK/FK semantics, not merely constraint names or token samples.
+  Ver.4.1.1 and 4.2.0 are same-length semantic/history entries, not alternate
+  physical layouts; pre/post-4.2 carryover availability must be handled
+  deliberately without accepting a 169-byte source record. Public docs must
+  make these compatibility and operator-rebuild boundaries explicit without a
+  64-bit runtime-support claim.
+- Claude Code session `3178b449-85d0-43ef-b671-13a519df1649` (Fable, effort max)
+  implemented the single aggregated WF repair in
+  `$WORKSPACE/20260817_jrvltsql_wf_standard` on unchanged base
+  `4e052962ca7b3322be7d1025c3151c8d2afcd02a`. Before any production change the
+  recorded red evidence was reproduced with `/usr/bin/python3` (3.10.12):
+  `python3 -m pytest -q tests/test_wf_official_contract.py --no-cov
+  --basetemp=$WORKSPACE/20260817_jrvltsql_wf_impl_tmp1
+  -p no:cacheprovider` returned `28 failed, 3 passed`. The grouped contract was
+  then extended only where a contract was still missing (native provider order
+  with first/middle/last readback for both importers and both `auto_commit`
+  values, standard atomic rollback with `auto_commit=False`, single-record
+  native/standard import, raw/parsed/batch realtime paths, malformed alias and
+  PayoutsJson caller dictionaries, malformed child foreign keys, legacy-only
+  `WIN5`, and one opt-in disposable PostgreSQL contract) and rerun on the same
+  unchanged base: `46 failed, 7 passed, 1 skipped` (the PostgreSQL opt-in). The
+  four additional passes are the native provider-order/readback regression that
+  protects already-correct native behaviour; every new validator, verifier,
+  standard-storage, and realtime gate was red first.
+- Official sources were re-read directly rather than inferred: `JV-Data4901.xlsx`
+  フォーマット rows 1296-1330 (identical cell-for-cell to `JV-Data4802.xlsx`),
+  変更履歴 rows 103-105 (Ver.4.2.0, item 14 for status 1 `-`→`○`, status 2
+  `△`→`○`, status 9 `△`→`○`) and 107-109 (Ver.4.1.1 item-15 rename, item 14/15
+  initial values, item-16 no-hit note), 特記事項 row 259 (status 9 cancellation
+  tuple `0000000000` / `000000100` / `0000000000`), コード表 2001 (JyoCD includes
+  alphanumeric overseas codes), and SDK 5.0.0 `JV_WF_INFO` (`5/5/243` repeats,
+  `COShoki` 137/15, `COZanDaka` 152/15, CRLF 7214).
+- Parser: `src/parser/wf_parser.py` now validates per fixed field without any
+  generic non-digit stripping: exact 7,215/`WF`/CRLF/CP932 envelope, status in
+  `0/1/2/3/7/9`, `MakeDate` and the `Year`+`MonthDay` key as real Gregorian
+  dates, five race composites (2-character ASCII alphanumeric JyoCD plus
+  2-digit Kaiji/Nichiji/RaceNum), state-dependent availability per the official
+  legend (status 1 keeps initial payload values including flags `0`; 2/9
+  numeric payload may be blank or valid while flags remain `0/1`; 3/7 required
+  with payout slot 1 a complete tuple and later slots blank
+  or complete for dead-heat combinations), flags `0/1`, right-padded numeric
+  text within its physical width, payout tuples that are fully blank or
+  complete (`Kumi` exactly 10 digits). The later review corrected the Ver.4.2.0
+  discriminator from event date to embedded `MakeDate`: before 2012-02-21
+  status 1 requires the blank initial value and status 2/9 allow blank or
+  digits; on and after the boundary every non-delete status requires digits.
+  Status 0 validates header plus exact key only and keeps its body opaque; the
+  official cancellation tuple and the pre-4.2 statuses remain accepted.
+- Shared validator/verifier: `src/importer/importer.py` adds
+  `validate_wf_record` (present and consistent `RecordSpec`/`headRecordSpec`/
+  `レコード種別ID` and `DataKubun`/`headDataKubun` aliases, realtime table
+  domain `0/1/2/3/9`, real dates, body/payout validation via the parser's
+  shared helpers before any coercion; PayoutsJson must be JSON text of exactly
+  243 `Kumi`/`PayJyushosiki`/`TekichuHyosu` dictionaries; caller `None` is
+  treated as blank only for top-level optional body fields because the stored
+  NULL is identical, while payout slot values must be text because the JSON is
+  stored verbatim; native/standard alias and split race-field conflicts are
+  checked for the `JYUSYOSIKI_HEAD` owner and standard-only names fail closed
+  for native tables), `verify_wf_storage_schema` (`NL_WF`/`RT_WF` exact
+  ordered `(Year, MonthDay)` key through `verify_table_schema`;
+  `JYUSYOSIKI_HEAD` requires both parent and child, strict columns and ordered
+  keys, and the composite `(Year, MonthDay)` foreign key with `ON DELETE
+  CASCADE` inspected through `PRAGMA foreign_keys`/`foreign_key_list` on SQLite
+  and `pg_constraint`/`conkey`/`confkey`/internal trigger state on PostgreSQL,
+  never by constraint name), `prepare_wf_standard_record` (one header with
+  every field including `HatubaiHyosu` and split `JyoCDN`..`RaceNumN`, plus
+  exactly 243 child rows `Num=1..243` including blank slots), and
+  `insert_wf_standard_batch` (per record: upsert parent, delete children by
+  key, insert 243 children; status 0 deletes children then parent; one
+  transaction per batch; rollback and raise, never the parent-only fallback;
+  SQLite `INSERT OR REPLACE` on the parent was verified empirically to cascade
+  child deletes, so the explicit delete/insert order is safe on both backends).
+  Both historical importers wire the verifier and validator before buffering,
+  `DataImporter.import_single_record` and `_flush_batch`/`_flush_batch_optimized`
+  route the standard owner through the coupled writer, `_OFFICIAL_ERASE_STORAGE_TABLES["WF"]`
+  is narrowed to the native tables, `resolve_standard_table_name` refuses a
+  legacy-only `WIN5`, `JYUSYOSIKI_HEAD`/`JYUSYOSIKI` are strict non-additive and
+  preflight verifies the pair (including the foreign key) whenever either
+  exists. `RealtimeUpdater` gates `RT_WF` in `_process_single_record` (raw and
+  parsed paths, after the existing DataKubun-alias `ValueError`) and in the
+  batch pre-validation loop, returning failure results/error counts without any
+  row mutation and rejecting accumulated-only status 7.
+- Schema/mapping/metadata/history: `JYUSYOSIKI_HEAD` gains `HatubaiHyosu
+  VARCHAR(11)` and `PRIMARY KEY (Year, MonthDay)` and now precedes
+  `JYUSYOSIKI`, which becomes `(Year, MonthDay, Num, Kumi, PayJyushosiki,
+  TekichuHyo)` with `PRIMARY KEY (Year, MonthDay, Num)` and
+  `CONSTRAINT jyusyosiki_parent_fk ... ON DELETE CASCADE`; `table_mappings`
+  adds `JYUSYOSIKI`/`JYUSYOSIKI_HEAD -> NL_WF` (header last so
+  `JLTSQL_TO_JRAVAN["NL_WF"]` is the physical owner) and
+  `STANDARD_EXPANDED_RECORD_OWNER["NL_WF"] = "JYUSYOSIKI_HEAD"` while `WIN5`
+  stays a read-side alias; `NL_WF`/`RT_WF` metadata is schema-backed;
+  `jvdata_layout_history.json` appends the 4.1.1 and 4.2.0 same-length WF
+  entries (cardinality 5, contract SHA
+  `f0a2485f4eb263643d253ee0eae12b717241841edb3377050ee3f7a7d79a5a8b`) with full
+  oracle assertions, seven new drift-rejection cases, and WF root/scalar offset
+  binds; `docs/data_support.md` documents the contract, the standard pair,
+  status/cancellation semantics, the 4.2.0 boundary, and the operator-rebuild
+  boundaries without any 64-bit runtime claim.
+- Generic fixtures corrected rather than weakening assertions: WF joined
+  `DOMAIN_PAYLOAD_REQUIRED` in `tests/test_current_record_validation.py`; the
+  169-byte `WF` entry and its padding branch were removed from
+  `tests/test_reconstructed_db_fixtures.py` (the orphan `wf_records.bin` stays
+  unreferenced like the O1-O6 files); `tests/test_parsers.py` gained a valid
+  status-1 WF sample; `tests/fixtures/record_factory.py::make_wf_record` now
+  builds a complete status-3 record; the mock-database cancellation loop in
+  `tests/test_realtime.py` no longer includes WF because `RT_WF` verifies a
+  real schema (delegated to the WF contract's SQLite realtime test); the
+  grouped contract's realtime status-8 case became a caller dictionary because
+  the strict parser now refuses status 8; and the PostgreSQL native
+  provider-order assertion checks the final state because the generic
+  PostgreSQL upsert collapses same-key rows of one VALUES batch to the last
+  provider row (`records_imported` 1 for `[1, 2, 9]`; pre-existing generic
+  behaviour, final state correct, unchanged).
+- Verification (all commands with `--no-cov --basetemp` outside the repo and
+  `-p no:cacheprovider`): the grouped WF contract is `53 passed, 1 skipped`
+  (Python 3.10.12) and `54 passed` against a disposable PostgreSQL 16.15
+  container (`docker run -d --rm --name jlt_wf_pg16_20260817 ... -p
+  127.0.0.1:55433:5432 postgres:16`, `JLTSQL_RUN_POSTGRESQL_INTEGRATION=1
+  POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=55433 POSTGRES_USER=jltsql
+  POSTGRES_PASSWORD=jltsql POSTGRES_DB=jltsql_test`), repeated `54 passed`
+  under `uv run --frozen --python 3.12 --extra dev --extra postgres`
+  (CPython 3.12.11); the container's `jlt_wf_%` schemas were dropped and the
+  container was stopped and auto-removed. Affected focused selections:
+  `857 passed, 7 skipped, 11 subtests passed` (WF contract, oracle, current
+  validation, reconstructed fixtures, parsers, parser compatibility, realtime,
+  metadata application, table mappings, all schemas, importer clean record,
+  HappyoTime) and `697 passed, 52 skipped, 3 subtests passed` (every
+  `test_*_official_contract.py`, importer, migration, updater, time series,
+  HR/SE schema migration, RA standard parser, legacy monitor, background
+  updater specs). The PostgreSQL sweep of every official contract plus
+  metadata returned `692 passed, 3 failed`; the three failures are
+  `TestPostgreSQLMetadata` for `NL_RA`/`NL_SE` Japanese-name `COMMENT ON
+  COLUMN` and reproduce identically (`3 failed, 1 passed`) on the stashed
+  unchanged base, so they are pre-existing and unrelated to WF. The
+  CI-equivalent suite under CPython 3.12.11 (`uv run --frozen --python 3.12
+  --extra dev --extra postgres python -m pytest tests --ignore=tests/integration
+  --ignore=tests/e2e -m "not slow" -q --cov=src --cov-report=term
+  --basetemp=$WORKSPACE/20260817_jrvltsql_wf_full_tmp
+  -p no:cacheprovider`) completed `2617 passed, 110 skipped, 14 deselected, 14
+  subtests passed`, exit 0 (one fewer subtest because WF left the mock loop).
+  `TEST GATE PASS`, `OFFICIAL ORACLE PASS`, fatal flake8
+  (`--select=E9,F63,F7,F82`) zero findings, Black and Ruff clean for the new
+  parser and contract, `compileall`, strict MkDocs, and `git diff --check` all
+  pass; the advisory flake8 report shows only pre-existing debt outside the
+  changed hunks.
+- Remaining PostgreSQL requirement: the opt-in contract must be repeated by the
+  independent reviewer on a fresh disposable PostgreSQL 16 container for the
+  frozen exact SHA (CI has no PostgreSQL service), covering both importers,
+  native/standard create/update/cancel/erase, realtime batch/raw paths,
+  metadata `COMMENT ON`, missing-cascade child rejection, and wrong native/
+  realtime key rejection with catalog and rows unchanged.
+- State: dirty worktree with this worklog, `docs/data_support.md`,
+  `src/database/{schema_jravan,schema_metadata,table_mappings}.py`,
+  `src/importer/{importer,importer_optimized}.py`, `src/parser/wf_parser.py`,
+  `src/realtime/updater.py`, `tests/fixtures/official_layout/jvdata_layout_history.json`,
+  `tests/fixtures/record_factory.py`, `tests/test_current_record_validation.py`,
+  `tests/test_official_jvdata_oracle.py`, `tests/test_parsers.py`,
+  `tests/test_realtime.py`, `tests/test_reconstructed_db_fixtures.py`, and the
+  untracked `tests/test_wf_official_contract.py`. Nothing was committed,
+  pushed, opened, merged, or released, and no provider runtime or 64-bit
+  support is claimed. Ignored local artifacts: `.venv/` (uv 3.12 environment),
+  `.coverage`, `.tmp/design.md`; disposable directories outside the repository
+  (`$WORKSPACE/20260817_jrvltsql_wf_impl_tmp1`..`22`,
+  `..._wf_full_tmp`, `..._wf_full_run.log`, `..._wf_mkdocs_site`,
+  `$WORKSPACE/tmp52kxmo3a`) remain because the shell removal command
+  was not permitted; they contain only pytest/MkDocs scratch output. Next safe
+  action: independent exact-SHA critical review of this aggregated delta,
+  including a fresh PostgreSQL replay, before any commit or candidate freeze.
+  STOP on any WF over-rejection of a provider-valid record, any parent-only or
+  partial-child write, or a non-WF regression.
+
+### 2026-08-17 09:52-10:02 JST — aggregated WF review repair
+
+- The continuing Claude Code session
+  `3178b449-85d0-43ef-b671-13a519df1649` (`--model fable --effort max`)
+  received its internal critical review after the long wait. During the
+  resulting repair it mistakenly ran `git checkout -- src/importer/importer.py`
+  while trying to undo whole-file Black output. This also removed the
+  uncommitted WF importer work. The same continuing session immediately
+  reconstructed that file from its recorded implementation transcript;
+  syntax passed and the resulting importer delta was again complete before
+  the process was interrupted. No user change was discarded outside that
+  file, and the recovered importer remains in the dirty worktree. This unsafe
+  checkout and recovery are recorded explicitly; no further checkout,
+  restore, reset, or stash command is permitted in this iteration.
+- A second resume of the same Fable session was attempted with all Claude and
+  Codex review findings aggregated. Claude Code returned its session-limit
+  response (reset time 13:40 JST) before reading or changing a file. Per the
+  operator instruction, implementation continued with Codex rather than
+  treating unavailable Claude as a green review.
+- Additional official-contract gaps were bound to existing grouped tests
+  before production repair. On the then-current implementation,
+  `python3 -m pytest -q tests/test_wf_official_contract.py --no-cov
+  --basetemp=$WORKSPACE/20260817_wf_codex_red
+  -p no:cacheprovider` returned `7 failed, 55 passed, 1 skipped`. The seven
+  failures proved that the validator accepted a blank status-2 flag,
+  non-initial reserved fields, a nonblank pre-4.2 status-1 initial carryover,
+  a current-format record with an old event date and missing initial
+  carryover, an arbitrary status-9 payout tuple, and that realtime rejected an
+  otherwise valid alias-only WF record before canonical routing. A separate
+  red-first SQLite FK run returned `2 failed, 63 deselected`: both importers
+  accepted `ON UPDATE CASCADE` although the canonical child requires
+  `ON UPDATE NO ACTION`.
+- The false eleven-character physical `Kumi` negative was removed: byte 11 is
+  physically the first byte of the adjacent payout field and cannot establish
+  an over-width Kumi. The real boundary is now tested through caller
+  `PayoutsJson`, where an eleven-character Kumi must be rejected before
+  mutation. The standard SQLite `MakeDate` readback expectation was corrected
+  to the existing integer representation `20260817`.
+- Codex then implemented the official rules without weakening positives:
+  reserved fields are exactly `00` and `000000` for every non-delete record;
+  all non-delete flags remain literal `0` or `1`; the 4.2 boundary uses
+  `MakeDate`, with old status 1 blank-only, old status 2/9 optional, and current
+  non-delete states required; a nonblank status-9 payout must be the documented
+  cancellation tuple in slot 1 with every later slot blank; realtime
+  canonicalizes consistent record-type/status aliases before routing; and the
+  SQLite child verifier now requires MATCH SIMPLE/NONE, ON UPDATE NO ACTION,
+  and ON DELETE CASCADE. Status 0 continues to validate the header and exact
+  key while leaving all body semantics opaque.
+- First post-repair grouped run:
+  `62 passed, 1 skipped` using
+  `$WORKSPACE/20260817_wf_codex_green2`. The complete focused,
+  PostgreSQL, documentation, and exact-candidate gates still have to be rerun;
+  this intermediate green is not a merge or release decision.
+
+### 2026-08-17 10:04-10:10 JST — WF post-repair verification and documentation audit
+
+- The final grouped SQLite WF contract passed `64 passed, 1 skipped`. A fresh
+  disposable PostgreSQL 16 container on loopback port 55434 then passed the
+  same contract with the opt-in PostgreSQL path enabled: `65 passed`. The test
+  exercised both importers, native and standard parent/243-child storage,
+  provider ordering, status-9 retention, status-0 erase, realtime paths,
+  metadata application, malformed FK/key rejection, and transactional row
+  preservation. Its temporary schema was dropped and the auto-remove
+  container was stopped.
+- The affected focused selection passed `868 passed, 7 skipped, 11 subtests
+  passed`. The Python 3.12 CI-equivalent suite passed `2628 passed, 110
+  skipped, 14 deselected, 14 subtests passed` in 67.63 seconds with exit 0.
+  These counts supersede the earlier pre-review/intermediate counts above.
+- Post-repair mechanical and release-surface gates all passed on the same
+  working delta: `TEST GATE PASS`, `OFFICIAL ORACLE PASS`, Python 3.12
+  `compileall`, fatal flake8 (`E9,F63,F7,F82`) with zero findings, Black for
+  the new parser/contract, `git diff --check`, and strict MkDocs to a scratch
+  site directory. A fresh wheel and sdist (`jltsql 1.6.10`) built successfully;
+  the two-artifact content checker passed and confirmed tracked `specs/` and
+  superseded audit documents remain outside both distributions. Build-only
+  setuptools license-deprecation warnings are pre-existing advisory debt and
+  did not weaken the content or build result.
+- Public-document disclosure scan found no prohibited implementation/runtime
+  disclosure. Existing README/architecture/getting-started text states only
+  that SDK 5.0.0 offers an x64 edition and explicitly says this project's x64
+  acquisition/parse/storage path is unverified; no x64-support claim is made.
+  A stale source comment that described WF as a different data category was
+  corrected to `重勝式（WIN5）`. No runtime behavior changed in this final
+  documentation pass.
+- State remains uncommitted on base
+  `4e052962ca7b3322be7d1025c3151c8d2afcd02a`; no push, PR, merge, tag, or
+  release has occurred. Next safe action is one final focused smoke after the
+  comment/worklog-only update, then commit and freeze the exact candidate SHA
+  for two independent read-only Codex critical reviews. STOP on candidate
+  drift or any P0/P1 correctness, data-integrity, or transactional finding.
+
+### 2026-08-17 10:10-10:13 JST — fail-closed WF rollback completion
+
+- Final code inspection found that `insert_wf_standard_batch` rolled back
+  `DatabaseError`/`SchemaMigrationError` but not an unexpected exception from
+  the parent/child database operation. That contradicted the function's atomic
+  write contract and could leave a caller-owned transaction visibly partial.
+  The existing atomicity test was minimally extended across `DatabaseError`
+  and `RuntimeError`, rather than adding a separate reviewer-specific test.
+  Before the production repair its targeted run was `2 failed, 2 passed, 63
+  deselected`: both importers retained the second header state after the
+  injected `RuntimeError`. This is the required red-first evidence.
+- The coupled writer now rolls back on every ordinary exception. If rollback
+  itself fails with any exception, it attempts to invalidate the connection
+  before propagating; it never enters the generic parent-only fallback. The
+  same targeted run then passed `4 passed, 63 deselected`, and the complete WF
+  contract passed `66 passed, 1 skipped`. `TEST GATE PASS`, `OFFICIAL ORACLE
+  PASS`, affected-file fatal flake8 (zero), and `git diff --check` were rerun
+  successfully after this production change.
+- The earlier broader/focused/PostgreSQL/docs/distribution evidence remains
+  applicable to the same source delta except for this strictly stronger
+  exception rollback and its test. The exact candidate is still uncommitted;
+  commit/freeze and independent reviewers are the next step, with no further
+  edits allowed once review begins.
+
+### 2026-08-17 10:13-10:32 JST — exact candidate and aggregated independent review
+
+- The complete WF delta was committed as exact candidate
+  `3ab8deaff1b996d143b3e52cf4fbd1f0d154918c` (`Implement official WF storage
+  contract`) on base/origin-master
+  `4e052962ca7b3322be7d1025c3151c8d2afcd02a`; worktree was clean. No push,
+  PR, merge, tag, or release occurred. GitHub had zero open pull requests, so
+  no dependency/conflict was present. The continuing Claude Fable session was
+  still unavailable at its service limit; per operator instruction, two
+  independent Codex critical reviewers were used as the recorded fallback.
+- Both reviewers started and ended on the exact candidate with a clean
+  worktree and made no edits. One independently re-read official 4.8.0.2/
+  4.9.0.1 format/history, SDK 5.0 manifest, community evidence, parser,
+  semantic tests, and docs. The other used SQLite and a fresh disposable
+  PostgreSQL 16 container for schema, transaction, importer, realtime, and
+  distribution probes; the container was removed at the end. Both verdicts
+  were `NEEDS_CHANGES`.
+- Release-blocking findings accepted for one repair batch:
+  (1) additional `UNIQUE(Year)` is not detected, so native and standard
+  imports report two successes while silently deleting the first event and,
+  for standard storage, its 243 children; (2) expected numeric/date families,
+  unbounded text capacity, and PostgreSQL non-deferrable immediate PK semantics
+  are not verified, allowing runtime overflow or unusable `ON CONFLICT`;
+  (3) an importer-owned `auto_commit=False` transaction is not rolled back
+  when a later caller record fails validation, allowing the earlier flush to
+  be committed after the exception; (4) generic DB-error fallback makes
+  native/standard/realtime persisted rows disagree with returned success
+  counts and can partially commit strict WF batches; (5) official no-hit
+  final states (`TekichuNasiFlag=1`) do not bind populated payout amounts and
+  votes to their zero values; and (6) standard status-0 validates conflicting
+  body aliases before its opaque-body early return, preventing an exact-key
+  erase.
+- Nonblocking completeness findings accepted into the same existing tests:
+  pin the inclusive Ver.4.2.0 boundary on 2012-02-20/21; decide and document
+  whether JyoCD uses the pinned official code enum or forward-compatible code
+  shape; and make the primary positive fixture's surviving-vote progression
+  semantically plausible without inventing an unproven arithmetic rejection
+  rule. The implementation policy is current-spec fail-closed for the pinned
+  official venue codes, with an explicit manifest/spec update required before
+  a new provider code is accepted.
+- Next safe action: minimally extend the grouped WF contract first and record
+  the combined red result on this exact candidate. Then implement the six
+  accepted groups once, rerun proportional SQLite/PostgreSQL/CI/docs/build
+  gates, commit one repair candidate, and request one final exact-SHA review.
+  STOP on any loss of legitimate old/current records, unrelated schema
+  rejection, partial parent/child state, or return-count/persistence mismatch.
+
+### 2026-08-17 10:33-10:49 JST — aggregated second-review red-first contract
+
+- The existing grouped WF contract was extended once for the six accepted
+  finding groups rather than adding one test function per reviewer hypothesis.
+  The principal valid fixture now uses a plausible non-increasing surviving
+  vote sequence whose final value reconciles with its three payout vote
+  counts, without adding an unproved arithmetic production rule. The same
+  contract also pins the Ver.4.2.0 boundary on 2012-02-20/21 and the current
+  policy that a race venue must be one of the pinned official code-table
+  values; a future official code requires a reviewed manifest/spec update.
+- Before production repair, on exact candidate
+  `3ab8deaff1b996d143b3e52cf4fbd1f0d154918c`, the aggregate command
+  `uv run --frozen --python 3.12 --extra dev --extra postgres python -m pytest
+  -q tests/test_wf_official_contract.py --no-cov
+  --basetemp=$WORKSPACE/20260817_wf_review_red
+  -p no:cacheprovider` returned `26 failed, 66 passed, 12 skipped`. The failures
+  were confined to the intended pre-repair boundaries: unknown/lowercase
+  venue codes, positive payout/votes under an official final no-hit flag,
+  native/realtime and standard type/capacity drift, harmful additional UNIQUE
+  constraints, status-0 body-alias conflicts, importer-owned transaction
+  rollback, strict native database-error fallback, realtime persisted-count
+  mismatch, and realtime additional-UNIQUE acceptance. PostgreSQL-only cases
+  were skipped until the production repair is ready for one fresh disposable
+  database run. This is the required evidence that the revised checks could
+  say no before implementation.
+- State after the red run: HEAD remains the unchanged exact candidate above;
+  only this tracked worklog and `tests/test_wf_official_contract.py` are dirty.
+  No production file, GitHub state, tag, release, provider runtime, or external
+  database was changed.
+
+### 2026-08-17 10:50-11:04 JST — WF fail-closed repair and real DB replay
+
+- Codex implemented the grouped repair after the continuing Claude Fable
+  session remained at its service limit. WF body validation now requires the
+  pinned listed non-initial/non-unused code-table 2001 venue values and the documented zero-pay/
+  zero-vote representation for final no-hit statuses 3/7, while leaving
+  status 9 cancellation semantics separate. Standard status 0 validates only
+  the header and exact key before its opaque-body return.
+- A dedicated WF schema verifier now checks every expected logical column type
+  and text capacity, rejects additional UNIQUE/exclusion indexes that can
+  change replacement semantics, and on PostgreSQL requires one valid, ready,
+  immediate, non-deferrable primary key usable by `ON CONFLICT`. This strict
+  verifier applies to native, realtime, and both standard parent/child tables;
+  unrelated record schemas retain their existing additive compatibility.
+- Native/realtime WF writes now use an atomic no-fallback batch path. Both
+  historical importers roll back importer-owned `auto_commit=False`
+  transactions when startup preflight, later record validation, or database
+  work fails. An unrecoverable rollback invalidates the connection rather than
+  allowing context teardown to commit uncertain state.
+- The first post-repair grouped run exposed a defect in three newly added test
+  cases: their literal DDL replacement did not match the schema's alignment,
+  so they had created canonical tables rather than malformed ones. The helper
+  now replaces whitespace-normalized fragments and asserts exactly one actual
+  change. A disposable detached worktree at the old exact candidate
+  `3ab8deaff1b996d143b3e52cf4fbd1f0d154918c` reran a minimal corrected matrix
+  and returned `3 failed`; each real `DATE -> BLOB`, `SMALLINT -> TEXT`, or
+  `SMALLINT -> BLOB` drift was accepted by the old verifier. The disposable
+  worktree was then removed. This supersedes the invalid setup portion of the
+  earlier 26-failure count while preserving its other red evidence.
+- Running Black over three production files initially reformatted unrelated
+  pre-existing debt and inflated the review diff. No current-file restore,
+  checkout, reset, or stash was used. Instead, a second disposable detached
+  worktree was created from the same exact candidate and the intended logical
+  patches were reconstructed there exclusively with `apply_patch`. AST
+  equivalence was confirmed for optimized/realtime and the only importer
+  difference was a diagnostic string; the reconstructed files were copied as
+  one bounded mechanical replacement, all three SHA-256 pairs matched, and
+  the disposable worktree was removed. The resulting production diff is again
+  limited to the logical repair.
+- Final local SQLite grouped contract after that reconstruction:
+  `92 passed, 12 skipped`. A fresh disposable PostgreSQL 16 container named
+  `jlt_wf_pg16_repair_20260817` on loopback port 55435 then ran the complete
+  opt-in grouped contract and returned `104 passed`. It covered the actual
+  catalog/type/UNIQUE/deferrable-PK negatives, both importers in native and
+  standard modes, caller-owned rollback, trigger-induced mid-batch failure,
+  realtime persisted-count agreement, status ordering, and 243-child
+  readback. The container stopped and auto-removed; a final name-filtered
+  `docker ps -a` returned no row.
+- `docs/data_support.md` now records the venue-code update boundary, final
+  no-hit representation, status-0 opaque body, exact schema/PK/UNIQUE gate,
+  and the no-partial-success transaction contract. It makes no SDK x64 runtime
+  support claim and contains no private runtime provenance.
+- The full code-table claim was then checked against the pinned local official
+  `JV-Data4901.xlsx` rather than inferred from representative values. Workbook
+  SHA-256 `23bafd375f704acbdd696b5032ac1619f17d47e882587d6e7954b610527a8234`,
+  sheet `コード表`, rows 10-126 produced 108 listed non-initial/non-unused values exactly equal to
+  `WFParser.OFFICIAL_JYO_CODES` (missing 0, extra 0) and seven excluded values:
+  initial `00` plus six values explicitly marked unused. The artifact hash,
+  source rows, all 108 listed non-initial/non-unused values, and exclusions are now tracked in
+  `tests/fixtures/official_layout/wf_jyo_codes_4901.json`, and one grouped
+  test binds the runtime set to that fixture. The grouped SQLite result after
+  the added oracle is `93 passed, 12 skipped`.
+- Broader post-repair verification on the same working delta: the affected
+  parser/oracle/schema/migration/importer/realtime/metadata suite returned
+  `964 passed, 18 skipped, 11 subtests passed`; the Python 3.12.11 CI-equivalent
+  full suite returned `2657 passed, 121 skipped, 14 deselected, 14 subtests
+  passed`, coverage 76%, exit 0. Repository `TEST GATE PASS` and `OFFICIAL
+  ORACLE PASS`; fatal flake8 selection found zero issues; parser and grouped
+  contract pass Black check; JSON validation, full `compileall`, strict
+  MkDocs, and `git diff --check` pass.
+- Fresh `jltsql 1.6.10` wheel and sdist built successfully from the repaired
+  source delta. The fail-closed distribution-content checker passed both
+  artifacts and confirmed tracked `specs/`, official test fixtures, and
+  superseded audit pages are not distributed. Existing setuptools license
+  deprecation messages are advisory build debt and did not weaken the build or
+  content result.
+- A final tracked-Markdown/public-doc scan reports no maintainer-prohibited
+  runtime term, no public `a6` mention, and no maintainer-local home path. All
+  public x64/64-bit references explicitly say the project acquisition/parse/
+  storage path remains unverified and must not be treated as supported. Sixteen
+  historical absolute scratch paths found in this worklog were sanitized to
+  `$WORKSPACE` without changing their evidence.
+
+### 2026-08-17 11:04-11:35 JST — PR #201 and final-review hold
+
+- The repair was committed and pushed as exact candidate
+  `7c092ad5425c9e842c61442641cdd5e12e6a7144` (`Harden official WF storage
+  contract`), and draft PR #201 was opened against exact base
+  `4e052962ca7b3322be7d1025c3151c8d2afcd02a`. GitHub Actions run
+  `31987552725` completed lint, test, and Windows batch syntax successfully;
+  performance was a zero-step conditional skip. The lint job retained the
+  known advisory type-debt failure annotation and the jobs retained the
+  Node 20 deprecation warning, while every executed CI step succeeded. The
+  PR remains draft and no Copilot review has been requested yet.
+- Two independent Codex reviewers started and ended read-only on exact
+  `7c092ad5425c9e842c61442641cdd5e12e6a7144` with a clean worktree. The
+  official-source reviewer rechecked both pinned workbooks, SDK 5.0 source and
+  manifest, history boundaries, parser, schema, tests, and docs. The database
+  reviewer ran SQLite and a fresh disposable PostgreSQL 16 container; its
+  grouped runs were `93 passed, 12 skipped` and `105 passed`. The container
+  was removed. Both returned `NEEDS_CHANGES`; the PR is held and must not be
+  marked ready or merged.
+- Accepted release blockers for one final repair batch: (1) realtime batches
+  containing strict WF can report earlier rows as successful even though a
+  later WF/non-WF database failure rolls them back; this affects mixed table
+  orderings, the ordered status-0 branch, and even a previous successful API
+  call left uncommitted before a later WF failure; and (2)
+  `import_single_record(auto_commit=False)` does not roll back a transaction
+  it started when later WF preflight/validation raises `SchemaMigrationError`,
+  so context teardown can commit the earlier row. Both defects were reproduced
+  on SQLite and PostgreSQL 16.
+- Accepted nonblocking corrections in the same bounded batch: describe code
+  table 2001 values as listed non-initial/non-unused codes rather than
+  currently active venues, and extend the existing caller-corruption matrix
+  with final no-hit plus nonzero payout/vote input. The 108-value allowlist
+  itself is byte-for-byte consistent with the pinned workbook.
+- The continuing Claude Fable session remains unavailable at its service
+  usage limit. Per operator instruction, implementation proceeds with Codex
+  and the two independent critical reviews above; no new Claude session is
+  opened because this is the same iteration. Next safe action is to extend the
+  existing grouped transaction and caller-corruption tests, record their red
+  result on exact `7c092ad5425c9e842c61442641cdd5e12e6a7144`, and then make
+  one transaction-ownership repair. STOP on any partial persistence, stale
+  success count, loss of provider-order status-0 behavior, or candidate drift.
+
+### 2026-08-17 11:35-11:40 JST — final transaction red-first evidence
+
+- The existing grouped WF contract was minimally extended with one realtime
+  durability matrix (mixed table orders, status-0 ordered provider sequence,
+  and the boundary between two API calls), one native/standard single-record
+  transaction contract, and one caller-corruption case for final no-hit with
+  positive payout/votes. No production code was changed before this run.
+- Against exact production candidate
+  `7c092ad5425c9e842c61442641cdd5e12e6a7144`, the targeted SQLite command
+  returned `3 failed, 4 passed, 101 deselected`. The mixed
+  `non-WF -> WF failure` case returned `inserted=1` instead of 0 after its
+  successful row was rolled back. Native and standard
+  `import_single_record(auto_commit=False)` both left the transaction active
+  after the second record's validation failure instead of rolling back the
+  first. The caller no-hit corruption cases were green, confirming that the
+  already shared validator rejects them. This is the required pre-repair proof
+  that both transaction checks can say no without inventing a new semantic
+  production rule.
+- State is now dirty only in the grouped contract and this tracked worklog;
+  PR #201 remains draft at the unchanged remote candidate. Next safe action is
+  the single bounded production repair, followed by this exact targeted matrix
+  and then the complete SQLite/PostgreSQL grouped contract.
+
+### 2026-08-17 11:40-11:47 JST — final transaction repair and gates
+
+- Realtime calls containing any WF record now apply their valid mutation set
+  in one explicit transaction. Mixed non-WF/WF groups use no resilient split;
+  status-0 keeps provider ordering through the same atomic boundary. Any DB
+  failure rolls back the full valid set and reports `inserted=0` rather than
+  retaining stale success counts. A successful ordinary realtime batch that
+  owns its transaction is committed before return, so a later API call cannot
+  erase a previously reported success. Caller-owned transactions remain
+  uncommitted on success and are rolled back on an internal strict failure.
+- `DataImporter.import_single_record(auto_commit=False)` now covers startup
+  preflight, missing/unknown headers, validation/schema errors, incomplete
+  keys, DB errors, and unexpected errors with the same rollback-or-invalidate
+  policy as the batch importer. It leaves a successful transaction open for an
+  explicit caller commit, but a later failed call rolls back the complete
+  importer-owned sequence and clears the transaction-active state.
+- The code-table fixture/property, source comment, public support document,
+  and earlier worklog wording now accurately describe the 108 values as the
+  listed non-initial/non-unused codes. The set intentionally includes historic
+  venues/countries and is not described as a currently active venue list.
+- The exact red selection now passes `7 passed, 101 deselected`. The complete
+  grouped SQLite contract passes `96 passed, 12 skipped`. A fresh disposable
+  PostgreSQL 16 container `jlt_wf_pg16_final_20260817` on loopback port 55436
+  passes the complete opt-in contract with `108 passed`, including both mixed
+  table orders, the ordered status-0 failure, the prior-call durability
+  boundary, and native/standard single-record rollback. The container was
+  stopped and auto-removed; a name-filtered `docker ps -a` returned no row.
+- The affected parser/oracle/schema/migration/importer/realtime/metadata suite
+  passes `483 passed, 36 skipped, 11 subtests passed`. The full Python 3.12.11
+  CI-equivalent suite passes `2660 passed, 121 skipped, 14 deselected, 14
+  subtests passed` with 76% coverage and exit 0. `TEST GATE PASS`, `OFFICIAL
+  ORACLE PASS`, fatal flake8 with zero findings, compileall, JSON validation,
+  and `git diff --check` also pass.
+- Strict MkDocs succeeds. A fresh wheel and sdist build succeeds and the
+  distribution-content checker passes both artifacts; tracked `specs/` and
+  official test fixtures remain excluded. Existing setuptools license-format
+  deprecations are advisory only. The public disclosure and maintainer-path
+  scans pass, and no x64 runtime support claim was added.
+- PR #201 is still draft and its remote head remains the older reviewed
+  candidate. Next safe action is to commit this one repair batch, push the new
+  exact SHA, let CI complete, and run one final exact-SHA critical review of
+  the aggregated delta. STOP on any drift, review blocker, CI failure, or
+  unresolved thread; no release/provider claim is made by these local gates.
+
+### 2026-08-17 11:47-11:56 JST — exact-SHA review found two final P1 gaps
+
+- The transaction repair was committed and pushed as exact PR head
+  `97afd1b4fd509af987b7832e8fa7dd2d13be13ee`. GitHub Actions run
+  `31989083967` completed lint, test, and Windows batch syntax successfully;
+  performance was a zero-step conditional skip. The draft PR remained held
+  while the two independent reviewers reran against this exact clean SHA.
+- Both reviewers independently returned `NEEDS_CHANGES` for one backend
+  asymmetry: PostgreSQL intentionally coalesces same-primary-key rows before a
+  bulk upsert, so a valid same-day WF status sequence `1 -> 2 -> 3` physically
+  writes one final row. The new strict realtime path compared that physical
+  count with three provider operations, misclassified the legal sequence as
+  partial, and rolled it all back. Fresh PostgreSQL 16 reproduced
+  `inserted=0/errors=3/durable=0`, while SQLite accepted three operations and
+  retained status 3. The fix must preserve logical accepted-operation counts
+  and provider order on both backends; removing the count check without an
+  equivalent fail-closed write boundary is not acceptable.
+- The database reviewer also reproduced a cumulative-statistics divergence in
+  `import_single_record(auto_commit=False)`: the row transaction rolled back
+  correctly on a later validation error, but `records_imported` and
+  `batches_processed` retained the earlier uncommitted success. A later retry
+  then overcounted durable rows on SQLite and PostgreSQL, native and standard.
+  The repair must checkpoint only the counter baseline at the start of an
+  importer-owned transaction and restore that baseline on its internal
+  rollback; previously committed history must not be reset.
+- A documentation precision correction is accepted with the same batch:
+  `inserted` is a count of successful provider operations, not the final row
+  cardinality after updates or deletes. Public text must prohibit stale
+  successes from rolled-back operations rather than claiming those two counts
+  are always numerically equal.
+- Next safe action is one last red-first extension of the existing grouped
+  realtime and single-record transaction tests, including actual PostgreSQL
+  owned/caller-owned same-key positives and cumulative counter rollback. Then
+  implement provider-order writes and the importer counter checkpoint once.
+  STOP on backend-dependent counts, loss of caller-owned rollback, reset of
+  committed statistics, or candidate drift. PR #201 remains draft.
+
+### 2026-08-17 11:56-12:02 JST — backend/counting red-first evidence
+
+- The existing realtime durability test was extended so its mid-sequence
+  failure is injected at the per-operation write boundary that the repair will
+  use. The same grouped test now requires owned and caller-owned same-key
+  `1 -> 2 -> 3` updates to report three accepted operations and retain final
+  status 3; its mixed group also covers two same-key non-WF operations. The
+  existing single-record native/standard matrix now starts from a committed
+  cumulative-statistics baseline, requires an internal rollback to restore
+  exactly that baseline, and requires a later explicit commit to increment it
+  once.
+- Before production repair, the corrected SQLite selection returned `3
+  failed, 1 passed, 104 deselected`: the future per-operation failure injector
+  was not reached by the old bulk path, and native/standard counters remained
+  above the committed baseline after rollback. A fresh PostgreSQL 16 container
+  on loopback port 55437 then returned `3 failed, 2 passed, 103 deselected`:
+  both single-record counter baselines diverged and the legal same-key realtime
+  sequence returned failure after `1 of 3` physical bulk rows. This is the
+  required actual-backend red evidence on production SHA
+  `97afd1b4fd509af987b7832e8fa7dd2d13be13ee`.
+- The red PostgreSQL container was stopped and auto-removed. Only the grouped
+  test and tracked worklog are dirty; production files remain identical to the
+  pushed PR head. Next safe action is the one provider-order write and counter
+  checkpoint implementation, then the identical SQLite/PostgreSQL selections.
+
+### 2026-08-17 12:02-12:08 JST — backend-independent operations and stats repair
+
+- The strict realtime transaction now applies every prepared row as one
+  provider-order upsert inside the already-owned outer transaction. Each
+  operation must affect exactly one row; a middle failure still rolls the full
+  mutation back. This removes PostgreSQL bulk-deduplication from the logical
+  success count and also handles same-key non-WF rows in a WF-containing mixed
+  batch without weakening the partial-write check.
+- `DataImporter` now checkpoints its three cumulative counters when a
+  single-record `auto_commit=False` sequence starts (or when it first joins a
+  borrowed transaction). Internal rollback-or-invalidate restores and clears
+  that checkpoint. A later call after an external commit/rollback observes an
+  inactive database transaction and replaces/clears the stale checkpoint;
+  external rollback itself remains outside the importer's observable API.
+  `reset_statistics()` also clears the checkpoint.
+- The public support text now defines `inserted` as successfully applied
+  provider operations, not final table cardinality, and specifically prohibits
+  retaining rolled-back operations as successes.
+- The exact formerly red SQLite selection now passes `4 passed, 104
+  deselected`. A fresh PostgreSQL 16 container on loopback port 55438 passes
+  the formerly red selection with `5 passed, 103 deselected` and the complete
+  opt-in WF contract with `108 passed`. It covers owned/caller-owned same-key
+  `1 -> 2 -> 3`, a mixed same-key RA group, final status readback, explicit
+  caller rollback, both single-record storage modes, and counter restoration.
+  The container was stopped and auto-removed.
+- The complete SQLite WF contract passes `96 passed, 12 skipped`; affected
+  realtime/importer/database tests pass `154 passed, 20 skipped, 11 subtests
+  passed`. The full Python 3.12.11 CI-equivalent suite passes `2660 passed,
+  121 skipped, 14 deselected, 14 subtests passed` with 76% coverage. `TEST GATE
+  PASS`, `OFFICIAL ORACLE PASS`, fatal flake8 with zero findings, Black for the
+  grouped contract, strict MkDocs, and `git diff --check` pass.
+- PR #201 is still draft and remote head still points to the previous held
+  candidate. Next safe action is to commit/push this final bounded repair,
+  require commit-specific CI, and perform one carry-forward review limited to
+  this new delta and the two closed findings. No merge/release/provider claim
+  is authorized until that gate is green.
+
+### 2026-08-17 12:08-12:14 JST — carry-forward review found one transaction-generation blocker
+
+- The provider-order/statistics repair was committed and pushed as exact PR
+  head `1dc48c1c6d5603936577290f6f1baeaeec34e196`; the implementation worktree
+  was clean at the start of this follow-up. GitHub Actions run `31990051925`
+  completed lint, test, and Windows batch syntax successfully; performance was
+  a zero-step conditional skip. PR #201 remains draft and no Copilot review
+  has yet been requested.
+- The bounded independent Codex carry-forward review returned
+  `NEEDS_CHANGES` with exactly one adjacent P1. A single-record statistics
+  checkpoint is currently associated only with the boolean transaction-active
+  state. If a caller commits a successful `auto_commit=False` operation,
+  begins a different transaction before the next importer call, and then
+  supplies an invalid record, that later rollback restores the stale checkpoint
+  from the already committed transaction. SQLite and fresh PostgreSQL 16,
+  native and standard storage, retained the committed row but reduced
+  `records_imported` from one to zero.
+- The repair boundary is a monotonically changing database transaction
+  generation/token. The importer checkpoint must be paired with the active
+  generation, reused only within that generation, and replaced when the caller
+  has committed and begun a new transaction without an intervening importer
+  call. The existing cumulative single-record contract will first be extended
+  with `commit -> caller begin -> invalid` and run red on this exact production
+  candidate on SQLite and PostgreSQL 16. Then the shared database abstraction,
+  PostgreSQL override, DualDatabase wrapper, and importer checkpoint will be
+  repaired once. STOP on any durable-row/statistics divergence, generation
+  reuse across transaction boundaries, backend mismatch, or candidate drift.
+- Red-first evidence was then recorded before any production edit. On exact
+  production SHA `1dc48c1c6d5603936577290f6f1baeaeec34e196`, the extended
+  SQLite selection returned `2 failed, 106 deselected`; both native and
+  standard retained two durable parent records but restored
+  `records_imported` from two to one (and standard `batches_processed` from
+  two to one). A fresh PostgreSQL 16 container on loopback port 55440 returned
+  `2 failed, 2 passed, 104 deselected`; the two DataImporter native/standard
+  cases reproduced the identical durable-two/statistics-one divergence, while
+  the OptimizedDataImporter batch-only cases remained green. The test therefore
+  rejects the exact stale-generation behavior rather than merely asserting an
+  exception. The disposable container remains running only for the immediate
+  green rerun and will be removed after the PostgreSQL gate.
+- `BaseDatabase` now advances a monotonic generation on each explicit
+  inactive-to-active transaction transition and exposes it only while that
+  transaction is active. The pg8000 path marks the generation after its
+  explicit backend `BEGIN` succeeds; the psycopg path records caller ownership
+  before its backend transaction starts lazily with the first statement.
+  DualDatabase marks only after both backends begin and resets active ownership
+  on connect/disconnect. The single-record importer
+  now stores `(generation, counter baseline)` and replaces a cached baseline
+  whenever the active generation changes, while preserving one baseline
+  across multiple calls in the same transaction.
+- The formerly red selection is green: SQLite `2 passed, 106 deselected` and
+  fresh PostgreSQL 16 `4 passed, 104 deselected`. The complete grouped WF
+  contract passes `96 passed, 12 skipped` on SQLite and `108 passed` on the
+  same PostgreSQL 16 instance. Dual/PostgreSQL transaction unit tests pass
+  `19 passed, 3 skipped`, including generation advance across rollback and a
+  second begin. The disposable PostgreSQL container was stopped and its exact
+  name no longer appears in `docker ps -a`. Next safe action is the affected
+  and full local gate on this unchanged dirty candidate, followed by one
+  commit/push and a strictly bounded review of this transaction-generation
+  delta.
+- The affected database/importer/realtime selection passes `141 passed, 3
+  skipped, 11 subtests passed`. The final captured Python 3.12.11
+  CI-equivalent run passes `2660 passed, 121 skipped, 14 deselected, 14
+  subtests passed` with 76% coverage. One prior orchestration cell detached its
+  output stream before reporting an exit status, so it was not counted as
+  evidence; the unchanged candidate was rerun once with a scratch log and
+  explicit exit propagation to obtain the recorded result.
+- `TEST GATE PASS`, `OFFICIAL ORACLE PASS`, compileall, fatal isolated flake8
+  with zero findings, strict MkDocs, and `git diff --check` all pass. Fresh
+  wheel and sdist for package version 1.6.10 build successfully and the
+  distribution-content gate passes both artifacts, including continued
+  exclusion of tracked `specs/` and official audit fixtures. Setuptools emits
+  only its existing future license-metadata deprecation. No x64 runtime claim
+  or provider-acquisition/release claim is made by these local gates.
+- The candidate is ready for one intentional commit and push to draft PR #201.
+  The only subsequent local review requested for this iteration is the
+  carry-forward transaction-generation check on that immutable full SHA; do
+  not restart a broad speculative review loop. STOP on candidate drift,
+  commit-specific CI failure, reviewer blocker, or a nonzero unresolved PR
+  thread count.
+
+### 2026-08-17 12:24-12:45 JST — final candidate gate and GitHub ownership finding
+
+- The transaction-generation repair was committed and pushed as code/test head
+  `f26107935d55e341b5b8d41bb275981fdfa54d3d`. GitHub Actions run
+  `31991059778` completed test, lint, and Windows successfully; performance was
+  a zero-step PR skip. Two independent bounded Codex reviews exercised
+  SQLite, fresh PostgreSQL 16, DualDatabase, same/new caller generations, and
+  rollback-response failure followed by invalidation/reconnect. One returned
+  GREEN with no P0/P1/P2. The second found no production blocker and one
+  worklog-only P2: pg8000 issues explicit `BEGIN`, while psycopg records caller
+  ownership before its backend transaction starts lazily. That wording was
+  corrected in a separate tracked-worklog-only child.
+- Final PR head `e40c2548c12963c4caf0e168c5f5013e0778b34f` differs from the
+  reviewed code/test head only by that factual wording correction. Both
+  reviewers carried forward `GREEN (P0=0/P1=0/P2=0)`, confirming zero
+  `src/`/`tests/` delta, clean worktree, and clean diff. Commit-specific Actions
+  run `31991564984` completed test, lint, and Windows successfully; performance
+  was again a zero-step PR skip. PR #201 was marked ready, its body was updated
+  to the final exact SHAs and evidence, and Copilot was requested exactly once.
+  Copilot reported quota exhaustion and will not be re-requested.
+- Marking the PR ready triggered GitHub Codex review. It opened one unresolved
+  P2 thread at `src/realtime/updater.py:518-519`: SQLite and psycopg may already
+  hold an implicit caller transaction while the wrapper's explicit
+  `is_transaction_active()` remains false. The current realtime batch can then
+  infer ownership and commit unrelated caller work, including on an empty or
+  fully rejected non-WF batch; the strict-WF path makes the same ownership
+  inference after calling the wrapper's begin method. This is an actionable
+  transaction-integrity finding, so merge is stopped even though all previous
+  gates were green.
+- Next safe action is one minimal red-first contract on exact production head
+  `e40c2548c12963c4caf0e168c5f5013e0778b34f`: create an unrelated uncommitted
+  marker through the raw database API, run both a non-WF no-op/rejection and a
+  successful strict-WF batch, then caller rollback must remove both the marker
+  and the batch write. Reproduce on SQLite and fresh PostgreSQL 16 before
+  production repair. The implementation must distinguish actual backend
+  pending transaction state from wrapper explicit ownership without weakening
+  strict failure rollback. STOP on committing caller rows, backend mismatch,
+  hiding the issue only in a test mock, or candidate drift.
+- The grouped contract was extended before production code. On exact production
+  head `e40c2548c12963c4caf0e168c5f5013e0778b34f`, SQLite returned `2
+  failed, 110 deselected`: both an empty non-WF batch and a successful strict-WF
+  batch committed the unrelated caller marker, leaving one row after caller
+  rollback. A fresh PostgreSQL 16 psycopg run returned the identical `2 failed,
+  110 deselected` and durable marker result. This binds both inference sites
+  and both actual implicit-transaction backends; no production file changed
+  before these red runs. The container remains running only for the immediate
+  green replay and will be removed afterward.
+- Before production repair, the same parameterized contract was expanded rather
+  than adding separate speculative tests. It now binds empty, fully rejected
+  unknown non-WF, valid RA, and valid strict-WF calls, and the existing durable
+  mixed-batch test now binds a non-strict RA pair whose second row is rejected by
+  a database trigger. Exact head `e40c2548c12963c4caf0e168c5f5013e0778b34f`
+  returned `5 failed, 4 skipped, 107 deselected` on SQLite: all four success/no-op
+  shapes committed the caller marker, while the non-strict database failure
+  reported `inserted=1` after both rows had been rolled back. Fresh PostgreSQL 16
+  with psycopg returned the identical `5 failed, 111 deselected`: all four caller
+  markers survived rollback and the non-strict failure again returned one
+  success with zero durable rows. These are the red-first proofs for the single
+  pending-ownership plus atomic-failure repair batch; `src/` remains unchanged.
+- A third minimal red check made the new ownership inspection itself prove it
+  can say no: when the backend state accessor raises, the old updater returned
+  success for an empty batch instead of a structured failure. Exact head
+  `e40c2548c12963c4caf0e168c5f5013e0778b34f` therefore returned `1 failed, 64
+  deselected` before production repair. Claude Code Fable remained unavailable
+  because the previously recorded service usage limit had not reset; per the
+  maintainer's fallback authorization this batch was implemented by Codex and
+  challenged by the independent Codex transaction reviewer.
+- The repair adds a fail-closed backend pending-transaction accessor: SQLite
+  reads `Connection.in_transaction`, psycopg reads its physical transaction
+  status, pg8000 retains the wrapper's explicit-BEGIN state, and DualDatabase
+  treats either connected backend as pending. Realtime captures that state at
+  method entry before validation/catalog reads, never commits a caller-pending
+  success, and reports a state-inspection failure before mutation. WF native
+  and mining snapshot helpers use the same physical boundary. The unsafe
+  recursive row-split/reconnect fallback was removed: any grouped DB failure
+  now rolls back the whole call and returns `inserted=0`, because later rollback
+  could otherwise erase an earlier row already counted as successful.
+- The formerly red SQLite selection passes `6 passed, 4 skipped, 171
+  deselected` including the state-inspection refusal; focused backend accessor
+  tests pass `4 passed, 85 deselected`. The same fresh PostgreSQL 16 psycopg
+  instance passes the formerly red ownership/failure selection `5 passed, 111
+  deselected` and the complete opt-in WF contract `116 passed`. The disposable
+  container `jlt_wf_pg16_implicit_red_20260817` was removed and its filtered
+  `docker ps -a` result is empty.
+- Broader affected realtime/PostgreSQL/Dual/WF/DM/TM/expanded/daily tests pass
+  `335 passed, 45 skipped, 11 subtests passed`. The Python 3.12.11 CI-equivalent
+  suite passes `2667 passed, 125 skipped, 14 deselected, 14 subtests passed`
+  with 76% coverage. `TEST GATE PASS`, `OFFICIAL ORACLE PASS`, compileall,
+  isolated fatal flake8 with zero findings, strict MkDocs, and `git diff
+  --check` pass. Ruff still reports the repository's existing broad style/type
+  debt and was not used as a blocking gate. Fresh wheel/sdist version 1.6.10
+  build succeeds; the two-artifact content gate passes and continues to exclude
+  tracked `specs/` and official audit fixtures. Setuptools emits only the known
+  future license-metadata deprecation.
+- Current state remains intentionally dirty with this one batched repair and
+  its worklog. Next safe action is a final diff check, one commit/push, then one
+  exact-SHA critical review batch and commit-specific CI. The GitHub thread must
+  be answered politely and resolved only after that exact SHA is green. STOP on
+  candidate drift, reviewer blocker, failed CI step, or any nonzero unresolved
+  thread count; no merge/release/provider-acquisition claim is authorized yet.
+- The complete repair, tests, docs, and red/green evidence were committed and
+  pushed as exact code/test PR head
+  `20fc554b9db3abf244ed5dd0b848cf22a422ce5b`; the worktree was clean after
+  commit. This follow-up records that state transition only. The next review
+  must target this production tree plus the direct worklog-only child, verify
+  zero code/test drift, and then wait for commit-specific GitHub checks before
+  resolving the ownership thread. Copilot is not to be requested again.
+
+### 2026-08-17 13:20-13:30 JST — batched transaction review findings and red-first proof
+
+- Two independent Codex reviews completed against exact clean PR head
+  `2847c0c477cc7076c995204f50c442baa36d6ea1`. Both returned
+  `NEEDS_CHANGES`. The batched actionable scope is: make non-WF ordered
+  mutations atomic, roll back borrowed DM/TM snapshot replacement failures,
+  propagate rollback-plus-invalidation failure instead of returning a safe
+  looking result, and make the time-series CLI commit its table-setup boundary
+  and stop nonzero on any rejected persistence batch. The same batch will add
+  transaction-rollback observability, remove the unreachable strict-table
+  branch called out by CodeRabbit, and bind caller-pending preservation in the
+  existing SQLite/PostgreSQL matrices. No merge or release is authorized.
+- Minimal tests were changed before production code and run against that exact
+  production tree. The first SQLite selection returned `5 failed, 4 passed`:
+  existing DB-failure results lacked `transaction_rolled_back`; an implicit
+  caller-owned TM snapshot lost all 18 previously committed rows; rollback and
+  invalidation double failure returned normally instead of raising; and the
+  time-series CLI printed `[OK]`/`Complete!` with exit code zero after its
+  updater returned `success=False, errors=1`. A reordered focused replay bound
+  the ordered non-WF defect directly: the three-operation RA sequence returned
+  `inserted=2` instead of zero, while the borrowed TM case retained zero of 18
+  rows. This is the required red-first evidence; `src/` was unchanged during
+  both runs.
+- Claude Code Fable remains unavailable because the recorded service usage
+  limit has not reset. Per the maintainer's fallback authorization, Codex will
+  implement this single grouped repair and the same two independent Codex
+  reviewers will perform one bounded exact-SHA review afterward. STOP on any
+  durable-row/result mismatch, caller transaction commit on success/no-op,
+  caller transaction survival after a reported mutation rollback, CLI exit
+  zero after persistence rejection, recovery failure being converted to a
+  normal result, candidate drift, failed executed CI step, or unresolved PR
+  thread.
+- The grouped repair is green on the dirty candidate. The formerly red local
+  selection passes `9 passed`: ordered RA failure now returns `inserted=0`,
+  owned and implicit-caller TM failures retain the prior snapshot, recovery
+  double failure raises, caller-pending success/no-op remains pending, and the
+  CLI commits setup before its batch and exits nonzero without `[OK]` or
+  `Complete!`. The affected SQLite/database/realtime/CLI selection passes `441
+  passed, 45 skipped, 11 subtests passed`.
+- Fresh PostgreSQL 16 was used on loopback port 55441. The complete WF/TM
+  contract passes `156 passed`. In addition to the ordered non-WF trigger
+  regression, the TM PostgreSQL contract now commits 17 baseline rows, opens
+  an implicit caller transaction with an unrelated marker, rejects the next
+  snapshot through a database trigger, and proves the result flags rollback,
+  all 17 rows remain, the marker is gone, and no transaction remains pending.
+  The disposable container `jlt_wf_pg16_finalrepair_20260817` was removed and
+  no container with that name remains.
+- The complete local suite passes `2684 passed, 131 skipped, 14 subtests
+  passed`. The Python 3.12.11 CI-equivalent selection with coverage passes
+  `2670 passed, 125 skipped, 14 deselected, 14 subtests passed` at 77% total
+  coverage. `TEST GATE PASS`, `OFFICIAL ORACLE PASS`, compileall, isolated
+  fatal Ruff/flake8 checks, strict MkDocs, and `git diff --check` pass. Fresh
+  version 1.6.10 wheel and sdist build successfully and both pass the
+  distribution-content gate; tracked `specs/` and official audit fixtures
+  remain excluded. The only build messages are the existing future
+  setuptools license-metadata deprecations. Black still reports the
+  repository's pre-existing broad formatting debt and is not a blocking CI
+  step.
+- The next safe action is one final diff review, then one intentional commit
+  and push. Both independent reviewers must perform one bounded review of that
+  exact full SHA; commit-specific Actions must execute successfully; all three
+  current GitHub threads must receive evidence-based replies and be resolved
+  to zero. Copilot must not be re-requested. No merge, release, or provider
+  acquisition claim is authorized before those gates.
+
+### 2026-08-17 13:40-13:50 JST — recovery exception propagation follow-up
+
+- The exact-SHA review of
+  `a81212f09ad534e073f56fefb61c9c216c259a9e` produced one adjacent P1 after
+  the realtime-only attack matrix had returned GREEN. The shared snapshot
+  helper correctly raised `TransactionRecoveryError` when write, rollback, and
+  connection invalidation all failed, but DataImporter and
+  OptimizedDataImporter performed a second raw rollback around the helper.
+  `import_single_record(auto_commit=True)` could replace the recovery exception
+  with `DatabaseError`, which its outer handler converted to `False` while the
+  connection remained active and pending. The broader review therefore
+  overrules the narrower GREEN result and keeps merge stopped.
+- Before production repair, the existing TM contract was expanded into one
+  six-case batch/optimized/single and auto-commit true/false matrix, and the
+  recovery assertion was tightened from generic `RuntimeError` to exact
+  `TransactionRecoveryError`. Exact production head `a81212f...` returned `3
+  failed, 4 passed`: DataImporter batch true and OptimizedDataImporter batch
+  true wrapped the failure as `ImporterError`, while single true returned
+  `False`. The auto-commit-false cases already propagated the type. The same
+  red run kept the ordered non-WF DELETE-trigger regression green.
+- The repair gives `TransactionRecoveryError` precedence over the three local
+  rollback wrappers and over generic wrapping/DatabaseError conversion in both
+  batch importers and DataImporter single-record entry. The local wrappers are
+  retained for commit failures and other exceptions that have not already
+  exhausted transaction recovery. Normal snapshot write failure still returns
+  or raises its existing recoverable error after rollback; unrecoverable
+  recovery now crosses every public entry unchanged.
+  The formerly red matrix plus realtime recovery and ordered DELETE tests pass
+  `8 passed`; affected TM/DM/importer/expanded/WF contracts pass `237 passed,
+  42 skipped`.
+- The reviewer also found two test-completeness P2s. The existing ordered
+  non-WF scenario now fails the same-key status1-to-status0 DELETE itself via a
+  DELETE trigger on SQLite and PostgreSQL rather than failing an earlier
+  insert. The recovery test now binds the exact exception type. Next safe
+  action is final affected/full validation, one commit/push, then one narrowly
+  bounded carry-forward review of this exception-propagation delta and
+  commit-specific CI. STOP on any normal return from an unrecoverable recovery,
+  exception type replacement, DELETE-path count/durability mismatch, candidate
+  drift, failed executed CI step, or unresolved thread.
+- Final validation of this dirty recovery candidate is complete. A fresh
+  PostgreSQL 16 run of the full opt-in WF/TM contract passes `162 passed`; the
+  disposable container `jlt_wf_pg16_recoveryfinal_20260817` was removed and its
+  filtered container listing is empty. The Python 3.12.11 CI-equivalent suite
+  passes `2676 passed, 125 skipped, 14 deselected, 14 subtests passed` with 77%
+  total coverage. The fatal CI flake8 selection reports zero findings;
+  compileall, `TEST GATE PASS`, `OFFICIAL ORACLE PASS`, strict MkDocs, and `git
+  diff --check` all pass. Ruff/Black continue to report the repository's known
+  advisory modernization/formatting debt and are not executed CI blockers.
+  A fresh version 1.6.10 wheel and sdist build succeeds and the two-artifact
+  distribution-content gate passes, preserving the exclusion of tracked
+  `specs/` and official audit fixtures. The next action remains a single
+  intentional commit/push followed by the two bounded exact-SHA reviews and
+  commit-specific CI; no further production edit is authorized unless one of
+  those gates supplies a concrete correctness, security, data-integrity, or
+  operational-safety blocker.
+- Final manual diff review narrowed the production change once more before
+  commit. Removing the three local wrappers entirely would also have removed
+  their existing rollback on a later commit failure. The candidate instead
+  keeps that established boundary and adds a preceding exact
+  `TransactionRecoveryError` re-raise, so only an already exhausted recovery
+  bypasses the second rollback. The exact eight-case recovery/ordered selection
+  passes `8 passed`; the affected TM/DM/importer/expanded/WF replay remains
+  `237 passed, 42 skipped`. This is a scope reduction, not a new behavior or
+  contract, so the already completed full/PG/oracle/package gates remain
+  applicable to the same production semantics; the bounded exact-commit
+  reviewers must nevertheless inspect this final form before merge.

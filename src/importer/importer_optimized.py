@@ -21,7 +21,10 @@ from src.importer.importer import (
     _STANDARD_VOTE_CONFIG_BY_OWNER,
     _STRICT_NONADDITIVE_STANDARD_TABLES,
     _TK_CHILD_STORAGE_TABLES,
+    _WF_NATIVE_STORAGE_TABLES,
+    _WF_STANDARD_STORAGE_TABLES,
     _YS_STORAGE_TABLES,
+    TransactionRecoveryError,
     _ck_child_tables,
     _delete_mining_race_rows,
     _delete_official_record,
@@ -46,16 +49,21 @@ from src.importer.importer import (
     insert_standard_odds_batch,
     insert_standard_vote_batch,
     insert_tk_coupled_batch,
+    insert_wf_native_batch,
+    insert_wf_standard_batch,
     preflight_standard_schema_migrations,
     prepare_ch_coupled_rows,
     prepare_ck_coupled_rows,
     prepare_ks_coupled_rows,
     prepare_tk_coupled_record,
+    prepare_wf_standard_record,
     replace_mining_native_snapshot,
     resolve_standard_storage_table_name,
     resolve_standard_table_name,
+    rollback_failed_import,
     validate_jg_record,
     validate_wc_record,
+    validate_wf_record,
     verify_bt_storage_schema,
     verify_ch_coupled_table,
     verify_ck_coupled_tables,
@@ -66,6 +74,7 @@ from src.importer.importer import (
     verify_rc_storage_schema,
     verify_tk_coupled_tables,
     verify_wc_storage_schema,
+    verify_wf_storage_schema,
     verify_ys_storage_schema,
 )
 from src.utils.logger import get_logger
@@ -106,6 +115,7 @@ class OptimizedDataImporter:
         self._verified_bt_tables: set[str] = set()
         self._verified_jg_tables: set[str] = set()
         self._verified_wc_tables: set[str] = set()
+        self._verified_wf_tables: set[str] = set()
         self._verified_ck_child_tables: dict[str, tuple[str, str]] = {}
         self._verified_rc_tables: set[str] = set()
         self._verified_ys_tables: set[str] = set()
@@ -284,7 +294,15 @@ class OptimizedDataImporter:
         """
         if not auto_commit:
             self.database.begin_transaction()
-        self._ensure_jravan_tables_ready(auto_commit=auto_commit)
+        try:
+            self._ensure_jravan_tables_ready(auto_commit=auto_commit)
+        except Exception:
+            if not auto_commit:
+                rollback_failed_import(
+                    self.database,
+                    context="optimized standard-schema preflight in caller-owned import",
+                )
+            raise
 
         # Reset statistics
         self._records_imported = 0
@@ -334,6 +352,10 @@ class OptimizedDataImporter:
                     if verify_wc_storage_schema(self.database, table_name):
                         self._verified_wc_tables.add(table_name)
                 validate_wc_record(record, table_name)
+                if table_name not in self._verified_wf_tables:
+                    if verify_wf_storage_schema(self.database, table_name):
+                        self._verified_wf_tables.add(table_name)
+                validate_wf_record(record, table_name)
 
                 if table_name not in self._verified_rc_tables:
                     if verify_rc_storage_schema(self.database, table_name):
@@ -445,6 +467,8 @@ class OptimizedDataImporter:
                         )
                         if auto_commit:
                             self.database.commit()
+                    except TransactionRecoveryError:
+                        raise
                     except Exception:
                         self.database.rollback()
                         raise
@@ -452,7 +476,12 @@ class OptimizedDataImporter:
                     self._batches_processed += 1
                     continue
 
-                if table_name in _TK_CHILD_STORAGE_TABLES:
+                if (
+                    table_name in _TK_CHILD_STORAGE_TABLES
+                    or table_name in _WF_STANDARD_STORAGE_TABLES
+                ):
+                    # Coupled parent/child writers prepare the raw record at
+                    # flush time so header conversion cannot drop child payload.
                     if table_name not in batch_buffers:
                         batch_buffers[table_name] = []
                     batch_buffers[table_name].append(record)
@@ -621,9 +650,21 @@ class OptimizedDataImporter:
 
             return stats
 
+        except TransactionRecoveryError:
+            raise
         except SchemaMigrationError:
+            if not auto_commit:
+                rollback_failed_import(
+                    self.database,
+                    context="validation/schema failure in optimized caller-owned import",
+                )
             raise
         except Exception as e:
+            if not auto_commit:
+                rollback_failed_import(
+                    self.database,
+                    context="unexpected failure in optimized caller-owned import",
+                )
             logger.error("Import failed", error=str(e))
 
             from src.importer.importer import ImporterError
@@ -730,6 +771,22 @@ class OptimizedDataImporter:
                 self._batches_processed += 1
             return
 
+        if table_name in _WF_STANDARD_STORAGE_TABLES:
+            # WF standard failures propagate directly and never enter the
+            # generic per-row fallback below.
+            prepared_wf = [prepare_wf_standard_record(record) for record in batch]
+            succeeded, failed = insert_wf_standard_batch(
+                self.database,
+                prepared_wf,
+                commit_batch=commit_batch,
+                optimized=True,
+            )
+            self._records_imported += succeeded
+            self._records_failed += failed
+            if succeeded:
+                self._batches_processed += 1
+            return
+
         prepared_ch = []
         for record in batch:
             coupled = record.get(_PREPARED_CH_SEISEKI_ROWS_KEY)
@@ -803,6 +860,19 @@ class OptimizedDataImporter:
             self._records_imported += succeeded
             self._records_failed += failed
             if succeeded:
+                self._batches_processed += 1
+            return
+
+        if table_name in _WF_NATIVE_STORAGE_TABLES:
+            rows = insert_wf_native_batch(
+                self.database,
+                table_name,
+                batch,
+                commit_batch=commit_batch,
+                optimized=True,
+            )
+            self._records_imported += rows
+            if rows:
                 self._batches_processed += 1
             return
 
