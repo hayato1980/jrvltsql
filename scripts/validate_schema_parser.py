@@ -170,6 +170,10 @@ class SchemaParserValidator:
 
         probe = bytearray(b" " * length)
         probe[0:2] = parser_type.upper().encode("ascii")[:2]
+        # パーサーは固定長レコードの枠を検証するので、probe も枠を満たす必要が
+        # ある。CRLF 終端が無いと parse() は種別を問わず弾き、採取が丸ごと
+        # 静的スキャンへ戻ってしまう。
+        probe[-2:] = b"\r\n"
         try:
             result = parser.parse(bytes(probe))
         except Exception as e:
