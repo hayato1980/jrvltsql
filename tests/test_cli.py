@@ -63,23 +63,17 @@ class TestInitCommand(unittest.TestCase):
         self.runner = CliRunner()
 
     def test_init_creates_directories(self):
-        """Test that init creates required directories."""
+        """An installed CLI initializes its writable current directory."""
         with self.runner.isolated_filesystem():
-            # Create config example file in current directory
-            config_dir = Path('config')
-            config_dir.mkdir(exist_ok=True)
-            example_file = config_dir / 'config.yaml.example'
-            example_file.write_text('# Example config')
+            installed_module = Path.cwd() / "site-packages/src/cli/main.py"
+            with patch("src.cli.main.__file__", str(installed_module)):
+                result = self.runner.invoke(cli, ["init"])
 
-            # Also create data and logs dirs to simulate init
-            Path('data').mkdir(exist_ok=True)
-            Path('logs').mkdir(exist_ok=True)
-
-            result = self.runner.invoke(cli, ['init'])
-
-            # Init should succeed and config should exist
             self.assertEqual(result.exit_code, 0)
-            self.assertTrue(Path('config').exists())
+            self.assertTrue(Path("config/config.yaml").is_file())
+            self.assertTrue(Path("data").is_dir())
+            self.assertTrue(Path("logs").is_dir())
+            self.assertNotIn("service key", result.output.lower())
 
     def test_init_with_force(self):
         """Test init with --force flag."""
@@ -97,6 +91,59 @@ class TestInitCommand(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 0)
             self.assertIn('Created configuration file', result.output)
+
+    def test_init_rejects_a_global_config_path_instead_of_ignoring_it(self):
+        """Init has a CWD target and must not silently ignore --config."""
+        with self.runner.isolated_filesystem():
+            explicit = Path("existing.yaml")
+            explicit.write_text("sentinel", encoding="utf-8")
+
+            result = self.runner.invoke(
+                cli,
+                ["--config", str(explicit), "init", "--force"],
+            )
+
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertEqual(explicit.read_text(encoding="utf-8"), "sentinel")
+            self.assertFalse(Path("config/config.yaml").exists())
+
+    def test_init_default_is_a_valid_sqlite_configuration(self):
+        with self.runner.isolated_filesystem():
+            init_result = self.runner.invoke(cli, ["init"])
+            show_result = self.runner.invoke(cli, ["config", "--show"])
+
+            self.assertEqual(init_result.exit_code, 0, init_result.output)
+            self.assertEqual(show_result.exit_code, 0, show_result.output)
+            self.assertIn("Type: sqlite", show_result.output)
+
+    def test_init_rejects_an_existing_invalid_configuration(self):
+        with self.runner.isolated_filesystem():
+            Path("config").mkdir()
+            Path("config/config.yaml").write_text("database: invalid\n", encoding="utf-8")
+
+            result = self.runner.invoke(cli, ["init"])
+
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn("Configuration Error", result.output)
+            self.assertNotIn("Initialization complete", result.output)
+
+
+class TestUpdateCommand(unittest.TestCase):
+    def setUp(self):
+        self.runner = CliRunner()
+
+    def test_failed_wheel_update_does_not_print_git_checkout_instructions(self):
+        with self.runner.isolated_filesystem():
+            self.assertEqual(self.runner.invoke(cli, ["init"]).exit_code, 0)
+            with (
+                patch("src.cli.main.check_for_updates", return_value=None),
+                patch("src.cli.main.perform_update", return_value=False),
+            ):
+                result = self.runner.invoke(cli, ["update", "--force"])
+
+            self.assertEqual(result.exit_code, 1)
+            self.assertIn("Update failed", result.output)
+            self.assertNotIn("git pull", result.output)
 
 
 class TestCreateTablesCommand(unittest.TestCase):
@@ -589,12 +636,17 @@ class TestConfigCommand(unittest.TestCase):
 database:
   type: sqlite
   path: data/keiba.db
+databases:
+  sqlite:
+    enabled: true
+    path: data/keiba.db
 jvlink:
   sid: JLTSQL
-  service_key: test_key
 logging:
   level: INFO
-  file: logs/jltsql.log
+  file:
+    enabled: true
+    path: logs/jltsql.log
 """)
 
             result = self.runner.invoke(cli, ['config', '--show'])
@@ -629,6 +681,11 @@ jvlink:
             Path('config/config.yaml').write_text("""
 database:
   type: sqlite
+databases:
+  sqlite:
+    enabled: true
+    path: data/keiba.db
+jvlink: {}
 """)
 
             result = self.runner.invoke(cli, ['config', '--get', 'nonexistent.key'])
@@ -644,6 +701,11 @@ database:
             Path('config/config.yaml').write_text("""
 database:
   type: sqlite
+databases:
+  sqlite:
+    enabled: true
+    path: data/keiba.db
+jvlink: {}
 """)
 
             result = self.runner.invoke(cli, ['config', '--set', 'database.type=sqlite'])
@@ -659,6 +721,10 @@ database:
 database:
   type: sqlite
   path: data/test.db
+databases:
+  sqlite:
+    enabled: true
+    path: data/test.db
 jvlink:
   sid: TEST
 logging:
@@ -669,6 +735,147 @@ logging:
 
             # Should show config tree
             self.assertEqual(result.exit_code, 0)
+
+    def test_config_uses_the_validating_loader_and_expands_environment(self):
+        with self.runner.isolated_filesystem():
+            Path("config").mkdir()
+            Path("config/config.yaml").write_text(
+                """
+database:
+  type: sqlite
+databases:
+  sqlite:
+    enabled: true
+    path: ${JLTSQL_TEST_DB_PATH:fallback.db}
+jvlink: {}
+""",
+                encoding="utf-8",
+            )
+            with patch.dict(
+                "os.environ",
+                {"JLTSQL_TEST_DB_PATH": "expanded.db"},
+            ):
+                result = self.runner.invoke(
+                    cli,
+                    ["config", "--get", "databases.sqlite.path"],
+                )
+
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertIn("expanded.db", result.output)
+            self.assertNotIn("${", result.output)
+
+    def test_empty_config_fails_with_a_controlled_configuration_error(self):
+        with self.runner.isolated_filesystem():
+            Path("config").mkdir()
+            Path("config/config.yaml").write_text("", encoding="utf-8")
+
+            result = self.runner.invoke(cli, ["config", "--show"])
+
+            self.assertEqual(result.exit_code, 1)
+            self.assertIn("Configuration Error", result.output)
+            self.assertNotIn("Traceback", result.output)
+
+    def test_invalid_logging_shape_fails_with_a_controlled_error(self):
+        with self.runner.isolated_filesystem():
+            Path("config").mkdir()
+            Path("config/config.yaml").write_text(
+                """
+database:
+  type: sqlite
+databases:
+  sqlite:
+    enabled: true
+    path: data/keiba.db
+jvlink: {}
+logging:
+  file: logs/jltsql.log
+""",
+                encoding="utf-8",
+            )
+
+            result = self.runner.invoke(cli, ["config", "--show"])
+
+            self.assertEqual(result.exit_code, 1)
+            self.assertIn("Configuration Error", result.output)
+            self.assertNotIn("Traceback", result.output)
+
+    def test_invalid_config_shapes_fail_with_a_controlled_error(self):
+        invalid_documents = (
+            """
+database: sqlite
+databases:
+  sqlite: {enabled: true, path: data/keiba.db}
+jvlink: {}
+""",
+            """
+database: {type: unsupported}
+databases:
+  sqlite: {enabled: true, path: data/keiba.db}
+jvlink: {}
+""",
+            """
+database: {type: postgresql}
+databases:
+  sqlite: {enabled: true, path: data/keiba.db}
+jvlink: {}
+""",
+            """
+database: {type: sqlite}
+databases:
+  sqlite: {enabled: true, path: data/keiba.db}
+jvlink: {}
+logging: {level: []}
+""",
+            """
+database: {type: sqlite}
+databases:
+  sqlite: {enabled: true, path: data/keiba.db}
+jvlink: {}
+logging:
+  file: {enabled: true, path: 123}
+""",
+            """
+databases:
+  postgresql: {enabled: true}
+jvlink: {}
+""",
+            """
+database: {type: sqlite}
+databases:
+  sqlite: {enabled: true, path: data/keiba.db}
+jvlink: {}
+logging: {level: VERBOSE}
+""",
+            """
+database: {type: sqlite}
+databases:
+  sqlite: {enabled: true, path: data/keiba.db}
+jvlink: {}
+auto_update_check: "false"
+""",
+        )
+        for document in invalid_documents:
+            with self.subTest(document=document), self.runner.isolated_filesystem():
+                Path("config").mkdir()
+                Path("config/config.yaml").write_text(document, encoding="utf-8")
+
+                result = self.runner.invoke(cli, ["config", "--show"])
+
+                self.assertEqual(result.exit_code, 1)
+                self.assertIn("Configuration Error", result.output)
+                self.assertNotIn("Traceback", result.output)
+
+    def test_config_option_rejects_a_directory_without_traceback(self):
+        with self.runner.isolated_filesystem():
+            Path("config-dir").mkdir()
+
+            result = self.runner.invoke(
+                cli,
+                ["--config", "config-dir", "config", "--show"],
+            )
+
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertNotIn("Traceback", result.output)
 
 
 if __name__ == '__main__':

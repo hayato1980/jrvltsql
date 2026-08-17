@@ -289,11 +289,8 @@ class TestQuickstartBatchRoles:
 
         for launcher in launchers:
             text = launcher.read_text(encoding="utf-8")
-            assert "py -3.12 --version" in text, launcher.name
             assert "py -3.12-32 --version" in text, launcher.name
-            assert text.index("py -3.12-32 --version") < text.index(
-                "py -3.12 --version"
-            ), launcher.name
+            assert "py -3.12 --version" not in text, launcher.name
             assert "64-bit Python may not support JV-Link" not in text
             assert "Python 3.10+" not in text
 
@@ -319,6 +316,15 @@ class TestQuickstartBatchRoles:
             assert 'set "PYTHON_CMD=%PYTHON%"' not in text, launcher.name
             assert "sys.version_info ^<" not in text, launcher.name
             assert "sys.version_info < (3, 12)" in text, launcher.name
+            venv32_probes = [
+                line
+                for line in text.splitlines()
+                if "venv32" in line.lower() and " -c " in line
+            ]
+            assert venv32_probes, launcher.name
+            assert all(
+                "struct.calcsize('P') != 4" in line for line in venv32_probes
+            ), launcher.name
 
     def test_launcher_command_assignment_defers_paths_until_execution(self):
         """Parentheses in Program Files paths must not close an IF block early."""
@@ -370,17 +376,20 @@ class TestQuickstartBatchRoles:
         assert "PYTHON must be a full path to python.exe" in batch
         assert "PYTHON must be a full path to python.exe" in powershell
 
-    def test_timeseries_fetch_prefers_installed_cli_before_global_python(self):
-        """A working PATH installation must win over an unrelated global Python."""
+    def test_timeseries_fetch_uses_only_explicit_or_32bit_interpreters(self):
+        """An arbitrary PATH entry must not bypass the bitness contract."""
         batch = Path(__file__).resolve().parents[1] / "fetch_timeseries_postgres.bat"
         text = batch.read_text(encoding="utf-8")
 
-        assert "where jltsql" in text
-        assert text.index("if defined PYTHON") < text.index("if defined VIRTUAL_ENV")
+        assert "where jltsql" not in text
+        assert 'set "JLTSQL="' not in text.splitlines()
+        assert "if not defined JLTSQL if defined PYTHON" in text
+        assert text.index("if not defined JLTSQL if defined PYTHON") < text.index(
+            "if not defined JLTSQL if defined VIRTUAL_ENV"
+        )
         assert text.index("if defined VIRTUAL_ENV") < text.index("venv32\\Scripts")
         assert text.index("venv32\\Scripts") < text.index(".venv\\Scripts")
-        assert text.index(".venv\\Scripts") < text.index("where jltsql")
-        assert text.index("where jltsql") < text.index("py -3.12-32 --version")
+        assert text.index(".venv\\Scripts") < text.index("py -3.12-32 --version")
 
     def test_installers_default_to_release_validated_32bit_python(self):
         root = Path(__file__).resolve().parents[1]
@@ -388,11 +397,14 @@ class TestQuickstartBatchRoles:
         powershell = (root / "install.ps1").read_text(encoding="utf-8")
 
         assert "Checking Python 3.12" in batch
-        assert batch.index("py -3.12-32 --version") < batch.index("py -3.12 --version")
+        assert "py -3.12-32 --version" in batch
+        assert "py -3.12 --version" not in batch
         assert "Checking 32-bit Python" not in batch
         assert "32-bit Python 3.12 not found" not in batch
 
         assert "Checking Python $PYTHON_VERSION" in powershell
+        assert 'Arguments = @("-$PYTHON_VERSION-32")' in powershell
+        assert 'Arguments = @("-$PYTHON_VERSION")' not in powershell
         assert "Checking 32-bit Python" not in powershell
         assert "32-bit Python $PYTHON_VERSION not found" not in powershell
 

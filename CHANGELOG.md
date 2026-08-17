@@ -7,14 +7,35 @@
 
 ## [Unreleased]
 
+次回リリースは互換性を破る変更を含むため `2.0.0` とする。1.xとしては配布しない。
+
+### Removed
+
+- `JVLinkWrapper.jv_set_service_key` / `JVLinkBridge.jv_set_service_key` と、
+  レジストリをプログラムから変更する経路を削除。利用登録はDataLabで行う
+- O1〜O6を単独JVOpen data specのように見せる重複定数を削除。これらはRACEに
+  含まれるrecord typeであり、`RECORD_TYPE_O1`〜`RECORD_TYPE_O6`を使用する
+
 ### Changed
 
+- 非Windowsのbridge起動は暗黙の実装選択を廃止し、外部runnerを
+  `JVLINK_BRIDGE_RUNNER`で明示する。公開propertyは
+  `uses_external_runner`へ変更
+- CLIの既定config/log/dataはinstalled package配下ではなく実行時の作業場所と
+  user stateを使う。`jltsql init`はカレントディレクトリをSQLite-onlyの安全な
+  既定で初期化し、`--config`との併用は曖昧さを避けるため拒否する
 - JV-Link SDK 5.0.0 で公式 64-bit 版が追加されたことを文書へ反映。ただし
   jrvltsql の 64-bit 実行経路は未検証であり、x64 SDK の実導入・取得・parse・
   DB保存を完了するまでは対応済みとしない。インストーラとランチャーは、
   リリース検証済みの 32-bit Python / JV-Link 経路を既定として維持
 - Python の実行要件を `pyproject.toml` と一致する 3.12 以上へ統一
 - 公式 64-bit 版と競合し得る旧レジストリ回避ツールを削除
+- 公式 fixed-width parser、DataKubun、primary key、native/standard child
+  schema を現行契約へ揃え、SQLite/PostgreSQL の transaction recovery と
+  durable statistics を fail closed 化
+- 1.x DB は事前 backup のうえ v2 schema で rebuild/reimport し、件数・key・
+  取消・readback を確認する。rollback は部分移行DBの再利用ではなく、backup と
+  旧releaseの復元で行う。詳細は `docs/data_support.md` と v2 release notes を参照
 
 ### Fixed
 

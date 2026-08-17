@@ -1,12 +1,17 @@
 """Auto-update and version checking utilities for JLTSQL."""
 
 import json
+import os
 import subprocess
 import sys
 import time
+import tomllib
 from datetime import datetime, timezone
+from importlib import metadata
 from pathlib import Path
 from typing import Optional
+
+from packaging.version import InvalidVersion, Version
 
 from src.utils.logger import get_logger
 
@@ -19,16 +24,71 @@ GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}"
 
 # Update check state file
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-UPDATE_CHECK_FILE = PROJECT_ROOT / "data" / ".update_check.json"
+
+
+def _default_update_check_file() -> Path:
+    explicit_state = os.environ.get("JLTSQL_STATE_DIR")
+    if explicit_state:
+        state_root = Path(explicit_state)
+    elif sys.platform == "win32":
+        state_root = Path(
+            os.environ.get(
+                "LOCALAPPDATA",
+                Path.home() / "AppData" / "Local",
+            )
+        ) / "jltsql"
+    else:
+        state_root = Path(
+            os.environ.get(
+                "XDG_STATE_HOME",
+                Path.home() / ".local" / "state",
+            )
+        ) / "jltsql"
+    return state_root / "update_check.json"
+
+
+UPDATE_CHECK_FILE = _default_update_check_file()
 
 
 def get_current_version() -> str:
-    """Get the current installed version from git tags or pyproject.toml.
+    """Get the current version from source or installed package metadata.
 
     Returns:
         Version string (e.g., "2.2.0" or "v2.2.0")
     """
-    # Try git describe first
+    # A source checkout may intentionally be ahead of the latest release tag.
+    # Its project metadata is therefore the source of truth.
+    try:
+        toml_path = PROJECT_ROOT / "pyproject.toml"
+        if toml_path.exists():
+            project = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+            project_version = project["project"]["version"]
+            if not isinstance(project_version, str) or not project_version:
+                raise TypeError("project.version must be a non-empty string")
+            return project_version
+    except (
+        OSError,
+        UnicodeError,
+        tomllib.TOMLDecodeError,
+        KeyError,
+        TypeError,
+    ) as error:
+        logger.debug(
+            "Could not read source version metadata",
+            error_type=type(error).__name__,
+        )
+
+    # Installed wheels do not carry their source pyproject.
+    try:
+        return metadata.version("jltsql")
+    except metadata.PackageNotFoundError as error:
+        logger.debug(
+            "Installed distribution metadata was not found",
+            error_type=type(error).__name__,
+        )
+
+    # Last-resort compatibility for an unpacked git checkout without project
+    # metadata. A tag is not allowed to override either authoritative source.
     try:
         result = subprocess.run(
             ["git", "describe", "--tags", "--abbrev=0"],
@@ -39,20 +99,11 @@ def get_current_version() -> str:
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except Exception:
-        pass
-
-    # Fallback: read from pyproject.toml
-    try:
-        toml_path = PROJECT_ROOT / "pyproject.toml"
-        if toml_path.exists():
-            content = toml_path.read_text(encoding="utf-8")
-            for line in content.splitlines():
-                if line.strip().startswith("version"):
-                    # version = "2.2.0"
-                    return line.split("=")[1].strip().strip('"').strip("'")
-    except Exception:
-        pass
+    except (OSError, subprocess.SubprocessError) as error:
+        logger.debug(
+            "Could not read version from Git metadata",
+            error_type=type(error).__name__,
+        )
 
     return "unknown"
 
@@ -85,8 +136,8 @@ def check_for_updates() -> Optional[dict]:
         dict with 'latest_version', 'current_version', 'update_available', 'html_url'
         or None on failure
     """
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     current = get_current_version()
 
@@ -143,25 +194,17 @@ def check_for_updates() -> Optional[dict]:
 
 
 def _version_newer(latest: str, current: str) -> bool:
-    """Compare version strings (strip 'v' prefix).
+    """Compare PEP 440 versions after stripping an optional ``v`` prefix.
 
     Returns:
         True if latest is newer than current
     """
-    def normalize(v: str) -> list[int]:
-        v = v.lstrip("v")
-        parts = []
-        for p in v.split("."):
-            try:
-                parts.append(int(p))
-            except ValueError:
-                parts.append(0)
-        return parts
-
     try:
-        return normalize(latest) > normalize(current)
-    except Exception:
-        return latest != current
+        return Version(latest.lstrip("v")) > Version(current.lstrip("v"))
+    except InvalidVersion:
+        # Unparseable or unavailable metadata is unknown, not evidence that an
+        # update is safe or required.
+        return False
 
 
 def should_check_updates(interval_hours: int = 24) -> bool:
@@ -204,6 +247,14 @@ def perform_update(verbose: bool = True) -> bool:
     Returns:
         True if update succeeded
     """
+    if not (PROJECT_ROOT / ".git").exists():
+        if verbose:
+            print(
+                "This installation is not a git checkout. "
+                "Upgrade it with pip or the release installer."
+            )
+        return False
+
     try:
         # Step 1: git pull
         if verbose:

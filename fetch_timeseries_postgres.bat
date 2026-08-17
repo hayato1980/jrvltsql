@@ -30,8 +30,9 @@ if not exist "config\config.yaml" (
     exit /b 1
 )
 
-set "JLTSQL="
-if defined PYTHON (
+REM JLTSQL is an explicit operator override for a separately validated SDK
+REM environment. This script deliberately does not discover jltsql from PATH.
+if not defined JLTSQL if defined PYTHON (
     if not exist "%PYTHON%" (
         echo [ERROR] PYTHON must be a full path to python.exe.
         exit /b 1
@@ -48,39 +49,28 @@ if not defined JLTSQL if defined VIRTUAL_ENV (
         echo [ERROR] VIRTUAL_ENV must point to Python 3.12 or later.
         exit /b 1
     )
-    "%VIRTUAL_ENV%\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    "%VIRTUAL_ENV%\Scripts\python.exe" -c "import struct,sys; raise SystemExit(sys.version_info < (3, 12) or struct.calcsize('P') != 4)" >nul 2>&1
     if !errorlevel! neq 0 (
-        echo [ERROR] VIRTUAL_ENV must point to Python 3.12 or later.
+        echo [ERROR] VIRTUAL_ENV must point to 32-bit Python 3.12 or later.
         exit /b 1
     )
     set "JLTSQL="!VIRTUAL_ENV!\Scripts\python.exe" -m src.cli.main"
 )
 if not defined JLTSQL if exist "venv32\Scripts\python.exe" (
-    "venv32\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    "venv32\Scripts\python.exe" -c "import struct,sys; raise SystemExit(sys.version_info < (3, 12) or struct.calcsize('P') != 4)" >nul 2>&1
     if !errorlevel!==0 set "JLTSQL=venv32\Scripts\python.exe -m src.cli.main"
 )
 if not defined JLTSQL if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
+    ".venv\Scripts\python.exe" -c "import struct,sys; raise SystemExit(sys.version_info < (3, 12) or struct.calcsize('P') != 4)" >nul 2>&1
     if !errorlevel!==0 set "JLTSQL=.venv\Scripts\python.exe -m src.cli.main"
-)
-if not defined JLTSQL (
-    where jltsql >nul 2>&1
-    if !errorlevel!==0 set "JLTSQL=jltsql"
 )
 if not defined JLTSQL (
     py -3.12-32 --version >nul 2>&1
     if !errorlevel!==0 set "JLTSQL=py -3.12-32 -m src.cli.main"
 )
 if not defined JLTSQL (
-    py -3.12 --version >nul 2>&1
-    if !errorlevel!==0 set "JLTSQL=py -3.12 -m src.cli.main"
-)
-if not defined JLTSQL (
-    python -c "import sys; raise SystemExit(sys.version_info < (3, 12))" >nul 2>&1
-    if !errorlevel!==0 set "JLTSQL=python -m src.cli.main"
-)
-if not defined JLTSQL (
-    echo [ERROR] Python or jltsql not found.
+    echo [ERROR] 32-bit Python was not found. For a separately validated SDK,
+    echo         set JLTSQL to a fully quoted executable command explicitly.
     exit /b 1
 )
 

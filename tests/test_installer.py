@@ -6,22 +6,23 @@ and update flow with mocked subprocess/network calls.
 
 import json
 import time
+from importlib import metadata
 from pathlib import Path
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
 from src.utils.updater import (
-    _version_newer,
-    should_check_updates,
-    save_update_check_time,
-    get_current_version,
-    _find_pip,
-    perform_update,
-    check_for_updates,
-    auto_update_check_notice,
-    UPDATE_CHECK_FILE,
     PROJECT_ROOT,
+    UPDATE_CHECK_FILE,
+    _find_pip,
+    _version_newer,
+    auto_update_check_notice,
+    check_for_updates,
+    get_current_version,
+    perform_update,
+    save_update_check_time,
+    should_check_updates,
 )
 
 
@@ -110,10 +111,17 @@ class TestGetCurrentVersion:
     """Tests for get_current_version."""
 
     @patch("subprocess.run")
-    def test_from_git_tag(self, mock_run):
+    def test_from_git_tag_without_source_or_installed_metadata(self, mock_run, tmp_path):
         mock_run.return_value = MagicMock(returncode=0, stdout="v2.5.0\n")
-        version = get_current_version()
-        assert version == "v2.5.0"
+        with (
+            patch("src.utils.updater.PROJECT_ROOT", tmp_path),
+            patch(
+                "importlib.metadata.version",
+                side_effect=metadata.PackageNotFoundError,
+            ),
+        ):
+            version = get_current_version()
+            assert version == "v2.5.0"
 
     @patch("subprocess.run")
     def test_fallback_to_pyproject(self, mock_run):
@@ -145,9 +153,11 @@ class TestPerformUpdate:
     """Tests for perform_update."""
 
     @patch("subprocess.run")
-    def test_successful_update(self, mock_run):
+    def test_successful_update(self, mock_run, tmp_path):
         mock_run.return_value = MagicMock(returncode=0, stdout="Already up to date.\n")
-        result = perform_update(verbose=False)
+        (tmp_path / ".git").mkdir()
+        with patch("src.utils.updater.PROJECT_ROOT", tmp_path):
+            result = perform_update(verbose=False)
         assert result is True
         assert mock_run.call_count == 2  # git pull + pip install
 

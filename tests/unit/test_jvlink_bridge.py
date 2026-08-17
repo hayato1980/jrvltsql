@@ -75,26 +75,44 @@ class TestJVLinkBridgeInit:
         with pytest.raises(JVLinkBridgeError, match="JVLINK_BRIDGE_EXE"):
             find_bridge_executable()
 
-    def test_non_windows_bridge_builds_a_wine_command(self, tmp_path):
+    def test_non_windows_bridge_uses_only_the_explicit_external_runner(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr("src.jvlink.bridge.sys.platform", "linux")
         exe = tmp_path / "JVLinkBridge.exe"
         exe.touch()
+        monkeypatch.setenv("JVLINK_BRIDGE_RUNNER", "external-runner")
         bridge = JVLinkBridge(bridge_path=exe)
-        bridge._use_wine = True
 
-        with patch("src.jvlink.bridge.shutil.which", return_value="/usr/bin/wine"):
-            assert bridge._build_command() == ["wine", str(exe)]
+        with patch(
+            "src.jvlink.bridge.shutil.which",
+            return_value="/usr/bin/external-runner",
+        ):
+            assert bridge._build_command() == ["external-runner", str(exe)]
 
-    def test_non_windows_bridge_fails_closed_when_wine_is_missing(self, tmp_path):
+    def test_non_windows_bridge_fails_closed_without_an_external_runner(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr("src.jvlink.bridge.sys.platform", "linux")
         exe = tmp_path / "JVLinkBridge.exe"
         exe.touch()
+        monkeypatch.delenv("JVLINK_BRIDGE_RUNNER", raising=False)
         bridge = JVLinkBridge(bridge_path=exe)
-        bridge._use_wine = True
 
-        with patch("src.jvlink.bridge.shutil.which", return_value=None):
-            with pytest.raises(JVLinkBridgeError, match="Wine") as exc_info:
-                bridge._build_command()
+        with pytest.raises(JVLinkBridgeError, match="JVLINK_BRIDGE_RUNNER"):
+            bridge._build_command()
 
-        assert "非Windows" in str(exc_info.value)
+    def test_windows_bridge_uses_direct_execution(self, tmp_path, monkeypatch):
+        exe = tmp_path / "JVLinkBridge.exe"
+        exe.touch()
+        monkeypatch.setattr("src.jvlink.bridge.sys.platform", "win32")
+        monkeypatch.setenv("JVLINK_BRIDGE_RUNNER", "external-runner")
+
+        bridge = JVLinkBridge(bridge_path=exe)
+
+        assert bridge.uses_external_runner is False
+        assert bridge._build_command() == [str(exe)]
+        assert bridge._dialog_watcher_enabled() is False
 
     def test_known_update_dialog_is_rejected_instead_of_accepted(
         self, tmp_path, monkeypatch
@@ -102,7 +120,8 @@ class TestJVLinkBridgeInit:
         exe = tmp_path / "JVLinkBridge.exe"
         exe.touch()
         bridge = JVLinkBridge(bridge_path=exe)
-        bridge._use_wine = True
+        bridge._use_external_runner = True
+        bridge._runner = "external-runner"
         bridge._process = MagicMock(pid=777)
         bridge._process.poll.return_value = None
         monkeypatch.setenv("DISPLAY", ":1")
@@ -147,7 +166,8 @@ class TestJVLinkBridgeInit:
         exe = tmp_path / "JVLinkBridge.exe"
         exe.touch()
         bridge = JVLinkBridge(bridge_path=exe)
-        bridge._use_wine = True
+        bridge._use_external_runner = True
+        bridge._runner = "external-runner"
         monkeypatch.setenv("DISPLAY", ":1")
         monkeypatch.setenv("JVLINK_AUTO_CLOSE_DIALOGS", "0")
 
@@ -165,9 +185,9 @@ class TestJVLinkBridgeInit:
         ):
             assert bridge._dialog_watch_interval() == 0.5
 
-    def test_bridge_response_consumes_buffered_json_after_wine_preamble(self, bridge):
+    def test_bridge_response_consumes_buffered_json_after_runner_preamble(self, bridge):
         bridge._process.stdout.readline.side_effect = [
-            "wine runtime preamble\n",
+            "external runner preamble\n",
             '\ufeff{"status":"ready","version":"test"}\n',
         ]
         with patch(
@@ -356,11 +376,6 @@ class TestJVLinkBridgeAPI:
         code, rc = bridge.jv_rt_open("0B12")
         assert code == 0
         assert rc == 0
-
-    def test_jv_set_service_key_stub(self, bridge):
-        """Service key setting is a stub in bridge mode."""
-        assert bridge.jv_set_service_key("test-key") == 0
-
 
 class TestJVLinkBridgeLifecycle:
     def test_cleanup(self, bridge):

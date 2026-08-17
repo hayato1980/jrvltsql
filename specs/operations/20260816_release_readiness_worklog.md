@@ -2663,8 +2663,8 @@
   superseded audit pages are not distributed. Existing setuptools license
   deprecation messages are advisory build debt and did not weaken the build or
   content result.
-- A final tracked-Markdown/public-doc scan reports no maintainer-prohibited
-  runtime term, no public `a6` mention, and no maintainer-local home path. All
+- A final tracked-Markdown/public-doc scan reports no retired infrastructure
+  term and no maintainer-local home path. All
   public x64/64-bit references explicitly say the project acquisition/parse/
   storage path remains unverified and must not be treated as supported. Sixteen
   historical absolute scratch paths found in this worklog were sanitized to
@@ -3197,3 +3197,349 @@
   contract, so the already completed full/PG/oracle/package gates remain
   applicable to the same production semantics; the bounded exact-commit
   reviewers must nevertheless inspect this final form before merge.
+
+### 2026-08-17 14:25 JST — public release-surface security iteration start
+
+- This bounded pre-release iteration targets repository
+  `miyamamoto/jrvltsql` in a dedicated release worktree, branch
+  `agent/release-public-surface-20260817`, from exact current
+  `origin/master` / base / HEAD
+  `98ec163222aab3eadaa82f048273c8a0be8722e6`. The published production release
+  remains v1.6.10; this iteration does not select, tag, or publish a new
+  version.
+- The exact committed master is still undergoing separate read-only official
+  layout/status and authenticated-acquisition audits. This worktree exists so
+  an urgent independent public-surface finding can be prepared without moving
+  that evidence SHA. Minimum scope is: remove a credential-shaped value from
+  distributable source without recording it here, remove private runtime and
+  adapter provenance from the public archive, correct setup/config text that
+  contradicts the current provider contract, and make the distribution gate
+  fail closed on those content classes. No parser, schema, importer, provider
+  cache, release tag, or external credential state is changed in this branch.
+- The credential-shaped value must be treated as compromised unless the owner
+  proves it was synthetic. Source removal cannot revoke a value already
+  published in Git history, so owner-side rotation remains an explicit release
+  blocker if it was real. Tests must first show the current archive gate accepts
+  a credential-shaped or private-runtime payload, then retain a paired safe
+  archive case. Error output must name only the archive member and finding
+  category, never the matched value.
+- The optional secondary implementation reviewer was unavailable and is not
+  counted as evidence. Implementation and review use Codex with at
+  least two independent critical reviews on one frozen candidate SHA after the
+  audit findings are batched. STOP on any credential disclosure in output or
+  tracked evidence, compatibility-layer regression, archive scanner
+  false-negative/secret echo, candidate drift during review, failed executed
+  CI step, unresolved review thread, or attempt to merge/release before the
+  official-status and fresh-acquisition blockers are independently cleared.
+- Red-first evidence was captured on unchanged production base `98ec163...`
+  before implementing the public-surface repair. The minimal selection returned
+  `4 failed`: the existing archive gate accepted both a synthetic complete
+  credential shape and synthetic private-runtime/short-SHA provenance; an
+  installed-module simulation made `jltsql init` exit 1 instead of creating a
+  writable-CWD config; and the public setup contract found stale service-key
+  config guidance. Synthetic values only were used and pytest did not print or
+  retain the repository's credential-shaped value. The paired clean archive
+  test remains green. The same tests must pass after one grouped repair.
+- A second two-case red selection binds the public subprocess boundary without
+  naming a compatibility implementation. On base `98ec163...`, the bridge
+  ignored `JVLINK_BRIDGE_RUNNER` and selected an implicit implementation; with
+  no generic runner configured it raised implementation-specific guidance
+  instead of failing on the generic contract. Both cases failed as intended.
+  The repair will require an explicit external runner on non-Windows hosts and
+  will preserve direct execution on Windows; private deployments must migrate
+  the environment before this breaking 2.0 release can be validated.
+- The grouped repair now generates bootstrap configuration in the caller's
+  writable current directory, keeps an explicitly requested config path for
+  the `config` command without parsing it during bootstrap, removes the
+  programmatic registry-writing API and its credential-shaped example,
+  requires an explicitly configured generic external bridge runner on
+  non-Windows systems, and removes private runtime/project provenance. The
+  example and installer guidance now direct registration through DataLab and
+  no longer advertise the retired standalone O1-O6 JVOpen specs. The release
+  archive checker scans bounded text members for credential-shaped values and
+  private runtime/commit provenance without echoing matched content. A new
+  built-wheel smoke runs `jltsql init` in a fresh writable directory.
+- The formerly red public-surface/config/bridge/content selection and the
+  broader affected selection are green: `77 passed`, then `257 passed, 11
+  subtests passed`. `git diff --check` passes. A fresh isolated PEP 517 build
+  produced the 1.6.10 wheel and sdist without the prior setuptools license
+  deprecation warning; the new two-artifact content scan and the extracted
+  wheel init smoke both pass. These artifacts are validation-only and are not
+  a release candidate because the version metadata and official status/key
+  contracts are separate blocked iterations.
+- Next safe action is one final static/focused gate, then commit this single
+  public-surface iteration and obtain two independent Codex reviews against
+  its frozen full SHA. STOP on any public occurrence of the private bridge
+  implementation/provenance, archive secret-scan false-negative or content
+  echo, non-Windows implicit runner selection, installed-wheel init failure,
+  test failure, or candidate drift during review.
+- The final pre-commit public/install surface selection passes `91 passed, 5
+  skipped`; the skips are existing environment-dependent launcher cases. The
+  fail-closed test gate reports `TEST GATE PASS`, compileall succeeds, fatal
+  flake8 (`E9,F63,F7,F82`) reports zero findings, and strict MkDocs succeeds.
+  The MkDocs tool emitted only its upstream 2.0 project warning. The dirty
+  candidate remains based on exact `98ec163...`; no release/version claim is
+  attached to these pre-commit results.
+- Three independent Codex reviews of exact committed/pushed candidate
+  `9aab8418b15db40c3b2fc91e5c8adeb2d5374ebc` returned NEEDS_CHANGES. The
+  findings were batched before repair: archive scanning skipped common and
+  encoded members, did not sanitize sensitive member names, did not reject
+  Windows-drive paths or archive links, and used a provenance heuristic with
+  both false positives and false negatives; the wheel smoke could import the
+  already editable-installed checkout; config inspection bypassed the normal
+  validator; init silently ignored a global config path; installer manual
+  commands no longer bound the install-directory config; default SQLite
+  bootstrap imported an optional PostgreSQL driver; default log/update state
+  targeted installed package directories; installed version metadata had no
+  fallback; and removed public bridge/setup interfaces lacked a 2.0 migration
+  record. Reviewers independently used fresh built artifacts and writable and
+  read-only installed-wheel probes. No current candidate artifact contained a
+  newly discovered credential/private-project hit, but the gates could not
+  prove that absence for future artifacts.
+- One grouped red-first selection was added before the follow-up production
+  repair. On unchanged production candidate `9aab841...` it returned `22
+  failed, 37 passed`. The failures directly cover the archive encoding/name/
+  path/link cases, public provenance positive, hashed private-token denylist,
+  extracted-wheel origin binding, validated/expanded config, explicit init
+  target rejection, canonical SQLite default, installer config binding,
+  SQLite without PostgreSQL extras, 2.0 removal record, Windows direct branch,
+  writable-CWD default log, installed metadata version fallback, and update
+  state outside the package tree. The Windows direct positive was already
+  green, which confirms the production branch is sound while still binding it
+  against regression. No matched sensitive value is recorded here.
+- The grouped follow-up repair now scans every bounded regular archive member
+  and sanitized member name, normalizes NUL-separated encoded text, rejects
+  Windows-drive paths and archive link/device entries, uses project-scoped
+  private-runtime rules plus a hash-only runner denylist, and never renders a
+  sensitive member/artifact name. The wheel smoke executes with isolated
+  import precedence, asserts the loaded package is under the extracted wheel,
+  blocks optional PostgreSQL drivers, then validates init, config display,
+  installed version, SQLite table creation/readback, and absence of runtime
+  state under the extracted package tree.
+- CLI config inspection again uses the canonical loader and environment
+  expansion; invalid shapes return controlled ConfigError output. Init rejects
+  an otherwise ignored global config path and creates an explicitly
+  SQLite-only valid default. SQLite database construction lazily imports only
+  its backend. Default logs use the writable working directory; update-check
+  state uses platform user state; installed wheels use distribution metadata
+  for their version. Installer manual commands bind the install-directory
+  config. The breaking branch is now `2.0.0.dev0`, with Unreleased changelog
+  and draft release-note migration boundaries; it is not a published release.
+- The formerly red grouped selection passes `60 passed`; the broader affected
+  public/CLI/database/logger/updater/installer/bridge selection passes `414
+  passed, 5 skipped, 11 subtests passed`. A fresh 2.0.0.dev0 wheel and sdist
+  pass the all-member distribution gate and expanded wheel smoke. An
+  independent disposable `python:3.12-slim` container installed the wheel with
+  base dependencies only, made the installed package read-only, and then
+  successfully ran init, config display, SQLite table creation, and version;
+  the SQLite DB was created and no package-tree log/data state appeared. The
+  container was removed automatically.
+- Final diff review found one adjacent version-identity defect before freezing
+  the repair: a source checkout still preferred the latest Git tag over the
+  candidate version in `pyproject.toml`. The existing version test was first
+  tightened against a deliberately stale tag and failed red as
+  `v1.6.10 != 2.0.0.dev0`. The repair now uses source project metadata first,
+  installed distribution metadata second, and a Git tag only as the final
+  compatibility fallback. The focused source/installed/tag matrix passes
+  `3 passed`, and the duplicated installer version contract was updated to the
+  same ordering.
+- The last import-time logging change is now covered by the affected
+  CLI/logger/updater/distribution/public/bridge selection (`127 passed`). The
+  first complete pre-commit suite then reached `2715 passed, 131 skipped, 14
+  subtests passed` with one failure: an older installer unit test still encoded
+  the superseded Git-tag-first expectation. After binding that fallback to an
+  environment with neither source nor installed metadata, the combined
+  version/logger selection passes `16 passed`. This was a stale test oracle,
+  not a production regression; the exact committed candidate will receive one
+  final full-suite run.
+- Static and packaging gates on the final dirty content pass: test-gate
+  self-check, compileall, fatal flake8 (`E9,F63,F7,F82`), strict MkDocs, and
+  `git diff --check`. A fresh PEP 517 `2.0.0.dev0` wheel plus sdist passes the
+  all-member archive scan and the isolated extracted-wheel init/config/version/
+  SQLite-create/readback smoke. The next safe action is one intentional commit,
+  followed by exact-full-SHA tests and the two bounded carry-forward critical
+  reviews; no release or merge is authorized by these pre-commit results.
+- Three independent Codex carry-forward reviews of exact candidate
+  `c08b5170c59d30c630876a0ae976b4823ed32cd5` returned NEEDS_CHANGES. The
+  optional secondary reviewer remained unavailable and was not counted.
+  Findings were
+  consolidated before any repair: the archive gate still missed several
+  split/encoded sensitive-content and path/member-boundary cases and could
+  expose a sensitive member through an exception; a partial wheel could borrow
+  modules from an editable checkout; nested config values and backend selection
+  were not fully validated; `uv.lock` retained the prior package version;
+  automatic 64-bit interpreter fallbacks contradicted the explicit-validation-
+  only policy; and the 2.0 migration/rebuild/reimport documentation was too
+  narrow. No reviewer found a new sensitive value in the built candidate
+  artifacts, but the negative gates were insufficient to prove future absence.
+- Red-first evidence was captured before the second grouped production repair.
+  The minimal negative/positive selection returned `20 failed, 31 passed`
+  (`5` subtest failures), covering the archive split/setter/member/path and
+  no-echo boundaries, partial-wheel isolation, nested config/backend validation,
+  invalid existing bootstrap config, prerelease update comparison, installer
+  interpreter policy, source/CLI version parity, and migration documentation.
+  Separately, `uv lock --check` failed because the lock still identified
+  `1.6.10`. These failures bind the newly modified gates before their repair;
+  synthetic values only were used and no sensitive matched value was printed
+  or recorded.
+- The grouped repair now checks sensitive archive content in normalized and
+  adjacent-literal forms, rejects unsafe or ambiguous archive members across
+  platform path rules, redacts archive-read failures, and verifies a required
+  wheel member set plus every loaded package module origin. Configuration
+  loading validates nested value types, supported and enabled database
+  backends, and filesystem-read failures with controlled errors. Source and
+  installed CLI version identity share the package constant; the update
+  comparison is PEP 440 aware; `uv.lock` is regenerated and CI runs
+  `uv lock --check`.
+- Windows launchers and installers no longer choose an unvalidated 64-bit
+  interpreter automatically. The default discovery path is the validated
+  32-bit interpreter; a different architecture is available only through an
+  explicit operator override for separate SDK validation. This is not a
+  64-bit support claim. Manual installer commands now bind relative config,
+  database, and log paths to the installation directory. Release notes and
+  changelog now summarize the cumulative parser/schema/key/transaction changes
+  and require backup, schema rebuild, provider reimport, readback verification,
+  and rollback planning before migration.
+- The repaired focused selection passes `46 passed, 5 subtests passed`. The
+  broader affected CLI/config/updater/installer/logging/archive/public/Windows/
+  bridge/database/quickstart selection passes `270 passed, 5 skipped, 5
+  subtests passed`. `git diff --check` passes and the regenerated lock now
+  passes `uv lock --check`. The next safe step is the full dirty-tree suite and
+  static/build/install gates, followed by one intentional commit and two
+  independent exact-SHA reviews. STOP on any test/build/content/readback
+  failure, public sensitive identifier, implicit unvalidated architecture
+  fallback, candidate drift during review, unresolved review thread, or
+  release action before the later official DataKubun/key/storage iterations.
+- The first full dirty-tree suite stopped with `3 failed, 2731 passed, 131
+  skipped, 19 subtests passed`. All three failures were stale tests that treated
+  an empty, bare-prefix, or otherwise unknown version as numeric zero. The new
+  update gate deliberately treats unparseable metadata as unknown/non-update,
+  while valid PEP 440 prereleases compare normally. After correcting that test
+  oracle, the focused version selection passes `54 passed` and the complete
+  suite passes `2734 passed, 131 skipped, 19 subtests passed`.
+- Static gates then passed: fail-closed test-gate self-check, compileall, fatal
+  flake8 (`E9,F63,F7,F82`), strict MkDocs, lock check, and `git diff --check`.
+  The first real sdist content scan correctly failed because setuptools had
+  auto-included the repository test suite, whose negative scanner fixtures
+  intentionally contain synthetic sensitive shapes. This was not a product
+  source leak, but tests are not runtime distribution content. Before changing
+  the gate, two new negative cases proved that wheel/sdist `tests/` members
+  were accepted (`2 failed, 4 passed`). The repair adds an explicit sdist
+  prune and rejects any future test-suite archive member.
+- The repaired distribution negative suite passes `31 passed`. A fresh PEP 517
+  build now yields a 98-member wheel and a 119-member sdist; the sdist contains
+  zero `tests/` and zero `specs/` members. Both artifacts pass the all-member
+  content scan, and the extracted-wheel smoke passes init, config/version,
+  SQLite table creation, and readback. The built artifacts remain local
+  validation outputs outside the repository and are not a release claim.
+- After the archive exclusion contract and stale version-oracle corrections,
+  the final dirty-tree full suite passes `2736 passed, 131 skipped, 19 subtests
+  passed`. No broad suite is rerun again until the content is committed and an
+  exact full SHA exists. Next safe action: commit the complete grouped repair,
+  verify a clean worktree, replay the necessary exact-SHA full/static/artifact
+  gates once, push PR #202, and request two independent bounded reviews.
+- The grouped repair was committed and pushed as exact candidate
+  `e5a18b3a19b90e0a9d36137e7fff082c802958e2`. Its locked full suite passed
+  `2736 passed, 131 skipped, 19 subtests passed`; fail-closed test-gate,
+  compileall, fatal flake8, strict MkDocs, lock check, and diff check passed.
+  Exact `git archive` wheel/sdist content and extracted-wheel smoke passed. A
+  fresh Python 3.12 venv installed only that wheel plus base dependencies and
+  successfully initialized config, created/read 80 SQLite tables, and kept
+  tests/specs out of the sdist. GitHub test/lint/Windows-batch checks passed;
+  performance was the expected conditional skip.
+- Two independent Codex reviews of that frozen SHA both returned
+  NEEDS_CHANGES. Findings were consolidated before editing: explicit `+`
+  concatenation bypassed the archive sensitive-shape normalization; missing
+  database selector with only PostgreSQL enabled, unknown logging level, and
+  string-valued update flag passed config validation; six launchers trusted a
+  `venv32` directory name without measuring bitness and one accepted an
+  arbitrary PATH CLI; one tracked worklog sentence itself named a retired
+  infrastructure token; and v2 notes lacked concrete public API replacement
+  guidance. Prior c08 wheel-origin, path/member, install-root, version, update,
+  and archive-checkout findings were independently confirmed closed.
+- Minimal tests were extended before production repair. On unchanged e5
+  production they returned `8 failed, 8 passed, 5 subtests passed`: one archive
+  concatenation failure, three config semantic failures, two launcher policy
+  failures, one tracked-Markdown privacy failure, and one release-note API
+  migration failure. A ResourceWarning followed the intentionally accepted
+  invalid logging level because the pre-repair CLI opened a handler before
+  crashing; validation now rejects it before logging setup. No sensitive value
+  was printed or recorded by the tests.
+- The batched follow-up strips explicit concatenation operators during bounded
+  archive normalization, validates default/selected backend coherence, logging
+  levels, and boolean update policy, verifies bitness for every automatically
+  discovered virtual environment, and preserves only explicit CLI/interpreter
+  overrides. The tracked sentence was generalized and a hash-only Markdown
+  privacy contract added. Release notes now map removed registry methods and
+  odds constants to their supported registration/record-ID replacements and
+  direct users to the generic runner property without naming private
+  implementation details. The formerly red selection passes `13 passed, 8
+  subtests passed`; broader/full and artifact gates remain pending on this
+  uncommitted repair.
+- The broader affected selection passes `326 passed, 5 skipped, 8 subtests
+  passed`; the complete dirty-tree suite passes `2738 passed, 131 skipped, 22
+  subtests passed`. Fail-closed test-gate, compileall, fatal flake8, strict
+  MkDocs, lock check, and diff check pass. Fresh wheel/sdist content inspection
+  and extracted-wheel init/config/version/SQLite smoke also pass. The next safe
+  action is one follow-up commit, exact-SHA verification, push, and a bounded
+  two-reviewer closure check; no tag/release is authorized.
+- Follow-up commit `a48ff3723c321e85aa6e51b791e2fea7a85f6f49`
+  passed the exact locked full suite (`2738 passed, 131 skipped, 22 subtests
+  passed`), static gates, exact-archive content/smoke, and fresh base-dependency
+  wheel install with 80 SQLite tables and integrity `ok`. One bounded reviewer
+  returned GREEN for archive/config closure. The Windows/docs reviewer verified
+  all four prior findings closed but returned NEEDS_CHANGES because the exact
+  GitHub Windows job executed and failed: `1 failed, 4 passed`. The remaining
+  runtime test still required the deliberately removed PATH CLI auto-selection,
+  while production and the Linux static contract correctly required explicit
+  or bitness-verified selection. This is an executed CI failure and cannot use
+  the billing/startup exception.
+- The existing Windows runtime test is updated as a paired contract: a PATH-only
+  shim must not be selected, then the same command supplied through explicit
+  `JLTSQL` override must succeed. The batch and public script guide document
+  that the override is operator-selected only after separate SDK validation
+  and is not a 64-bit support claim. Local Linux cannot execute this cmd.exe
+  branch, so the exact follow-up SHA Windows Actions job is mandatory before
+  merge.
+- Follow-up candidate `20b1926a190384f609e34aa5001ae39f93512425`
+  passed the locked full suite (`2738 passed, 131 skipped, 22 subtests
+  passed`), the static/artifact gates, and GitHub test/lint/32-bit Windows
+  launcher jobs. The bounded closure reviewer returned GREEN. After the draft
+  was marked ready, GitHub Codex and CodeRabbit supplied one aggregated final
+  review batch; no further reviewer was requested before evaluating the whole
+  batch.
+- Nine inline findings were independently checked. The actionable set is:
+  require a setuptools release that implements string SPDX metadata; preserve
+  an explicit `JLTSQL` command when `PYTHON` is also present; make the tracked
+  `specs/` exclusion explicit in `MANIFEST.in`; make wheel smoke exit/origin/
+  extraction/path/SQLite cleanup fail closed; narrow and log expected version
+  metadata fallbacks; and bind non-Windows bridge tests to a non-Windows
+  platform. The worklog keeps branch and full-SHA provenance required for
+  auditability, while replacing its maintainer-local absolute path and private
+  service-state detail with generic evidence.
+- Tests were extended before the production repair. On unchanged production
+  candidate `20b1926...`, the local review selection returned `5 failed, 153
+  passed`: the declared setuptools minimum was too old, explicit `JLTSQL` was
+  overwritten, wheel smoke mishandled a successful no-value exit and a corrupt
+  stream, and an unexpected source-version exception was silently swallowed.
+  The paired normal paths remained green. The Windows runtime half is also
+  encoded as PATH-only rejection plus explicit-command success and requires the
+  exact follow-up GitHub Windows job.
+- The grouped repair pins the build minimum at setuptools 77.0.3 and the CI uv
+  version at the version already exercised by the prior successful run. Wheel
+  smoke now accepts a no-value successful exit, validates regular and namespace
+  module origins without raising from `finally`, resolves the extraction root,
+  converts corrupt/encrypted archive failures into gate errors, and closes the
+  SQLite readback connection deterministically. The distribution gate retains
+  its intentionally conservative credential-shape rejection; weakening it for
+  hypothetical false positives was rejected because this security gate must
+  fail closed. The scan-cost micro-optimization is non-blocking and is not mixed
+  into this release-safety repair. Existing corrupt-member coverage plus one
+  bounded oversize-member case cover the unread/size-limit rejection paths.
+- The formerly red and adjacent affected selection now passes `189 passed`.
+  A no-isolation PEP 517 build using the declared minimum setuptools 77.0.3
+  produced both artifacts; the content gate and extracted-wheel init/config/
+  version/SQLite readback smoke passed. Fatal flake8, lock check, and diff check
+  pass. These are dirty-tree repair results only; next safe action is one commit,
+  exact-SHA affected/full/static/artifact validation, one bounded review of only
+  this final batch, and courteous replies resolving every review thread.

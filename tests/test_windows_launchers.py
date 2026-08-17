@@ -95,12 +95,12 @@ def test_quickstart_rejects_invalid_active_virtual_environment(tmp_path):
     result = _run_batch(batch, "--yes", "--help", env=env, cwd=checkout)
 
     assert result.returncode != 0
-    assert "VIRTUAL_ENV must point to Python 3.12 or later" in result.stdout
+    assert "VIRTUAL_ENV must point to 32-bit Python 3.12 or later" in result.stdout
     assert "UNEXPECTED_FALLBACK" not in result.stdout
 
 
-def test_timeseries_fetch_uses_path_installed_cli_before_global_python(tmp_path):
-    """A working PATH CLI must win over unrelated global launcher fallbacks."""
+def test_timeseries_fetch_requires_an_explicit_cli_override(tmp_path):
+    """PATH-only commands are ignored; an explicit validated command is used."""
     checkout = tmp_path / "checkout"
     (checkout / "config").mkdir(parents=True)
     batch = checkout / "fetch_timeseries_postgres.bat"
@@ -118,10 +118,17 @@ def test_timeseries_fetch_uses_path_installed_cli_before_global_python(tmp_path)
     env.pop("PYTHON", None)
     env.pop("VIRTUAL_ENV", None)
     env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
-    result = _run_batch(batch, "20260801", "20260801", env=env, cwd=checkout)
+    path_only = _run_batch(batch, "20260801", "20260801", env=env, cwd=checkout)
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "PATH_JLTSQL_SELECTED" in result.stdout
+    assert path_only.returncode != 0
+    assert "PATH_JLTSQL_SELECTED" not in path_only.stdout
+
+    env["JLTSQL"] = f'"{bin_dir / "jltsql.cmd"}"'
+    env["PYTHON"] = str(tmp_path / "must-not-override-jltsql.exe")
+    explicit = _run_batch(batch, "20260801", "20260801", env=env, cwd=checkout)
+
+    assert explicit.returncode == 0, explicit.stdout + explicit.stderr
+    assert "PATH_JLTSQL_SELECTED" in explicit.stdout
 
 
 def test_daily_sync_preserves_password_without_command_line_exposure(tmp_path):

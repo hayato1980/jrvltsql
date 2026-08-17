@@ -2,6 +2,7 @@
 
 import json
 import time
+from importlib import metadata
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -42,26 +43,82 @@ class TestVersionComparison:
         assert _version_newer("2.2.1", "2.2.0") is True
         assert _version_newer("2.2.0", "2.2.1") is False
 
+    def test_final_release_is_newer_than_its_development_prerelease(self):
+        from src.utils.updater import _version_newer
+
+        assert _version_newer("2.0.0", "2.0.0.dev0") is True
+
 
 class TestGetCurrentVersion:
     """Test getting current version."""
 
     @patch("subprocess.run")
-    def test_from_git_tag(self, mock_run):
+    def test_from_git_tag_when_source_metadata_is_absent(self, mock_run, tmp_path):
         from src.utils.updater import get_current_version
 
         mock_run.return_value = MagicMock(returncode=0, stdout="v2.2.0\n")
-        version = get_current_version()
-        assert version == "v2.2.0"
+        with (
+            patch("src.utils.updater.PROJECT_ROOT", tmp_path),
+            patch(
+                "importlib.metadata.version",
+                side_effect=metadata.PackageNotFoundError,
+            ),
+        ):
+            version = get_current_version()
+            assert version == "v2.2.0"
 
     @patch("subprocess.run")
     def test_fallback_to_pyproject(self, mock_run):
         from src.utils.updater import get_current_version
 
-        mock_run.return_value = MagicMock(returncode=1, stdout="")
+        mock_run.return_value = MagicMock(returncode=0, stdout="v1.6.10\n")
         version = get_current_version()
-        # Should fall back to pyproject.toml
-        assert version != "unknown"
+        # Source metadata is the candidate version; a stale release tag must
+        # not make a development checkout report the previous release.
+        assert version == "2.0.0.dev0"
+
+    @patch("subprocess.run")
+    def test_fallback_to_installed_distribution_metadata(
+        self,
+        mock_run,
+        tmp_path,
+    ):
+        from src.utils.updater import get_current_version
+
+        mock_run.return_value = MagicMock(returncode=1, stdout="")
+        with (
+            patch("src.utils.updater.PROJECT_ROOT", tmp_path),
+            patch("importlib.metadata.version", return_value="9.8.7"),
+        ):
+            assert get_current_version() == "9.8.7"
+
+    def test_unexpected_source_metadata_failure_is_not_silently_ignored(
+        self,
+        tmp_path,
+    ):
+        from src.utils.updater import get_current_version
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\nversion = "1.0.0"\n', encoding="utf-8")
+        with (
+            patch("src.utils.updater.PROJECT_ROOT", tmp_path),
+            patch.object(Path, "read_text", side_effect=RuntimeError("unexpected")),
+            pytest.raises(RuntimeError, match="unexpected"),
+        ):
+            get_current_version()
+
+    def test_invalid_source_metadata_falls_back_to_installed_metadata(
+        self,
+        tmp_path,
+    ):
+        from src.utils.updater import get_current_version
+
+        (tmp_path / "pyproject.toml").write_text("not valid toml = [", encoding="utf-8")
+        with (
+            patch("src.utils.updater.PROJECT_ROOT", tmp_path),
+            patch("importlib.metadata.version", return_value="9.8.7"),
+        ):
+            assert get_current_version() == "9.8.7"
 
 
 class TestShouldCheckUpdates:
@@ -72,6 +129,11 @@ class TestShouldCheckUpdates:
 
         with patch("src.utils.updater.UPDATE_CHECK_FILE", tmp_path / "nonexistent.json"):
             assert should_check_updates() is True
+
+    def test_default_state_file_is_outside_the_installed_package_tree(self):
+        from src.utils.updater import PROJECT_ROOT, UPDATE_CHECK_FILE
+
+        assert PROJECT_ROOT not in UPDATE_CHECK_FILE.parents
 
     def test_recent_check_should_skip(self, tmp_path):
         from src.utils.updater import should_check_updates
@@ -127,13 +189,23 @@ class TestPerformUpdate:
     """Test update execution."""
 
     @patch("subprocess.run")
-    def test_successful_update(self, mock_run):
+    def test_successful_update(self, mock_run, tmp_path):
         from src.utils.updater import perform_update
 
         mock_run.return_value = MagicMock(returncode=0, stdout="Already up to date.\n", stderr="")
-        result = perform_update(verbose=False)
+        (tmp_path / ".git").mkdir()
+        with patch("src.utils.updater.PROJECT_ROOT", tmp_path):
+            result = perform_update(verbose=False)
         assert result is True
         assert mock_run.call_count == 2  # git pull + pip install
+
+    @patch("subprocess.run")
+    def test_installed_distribution_update_fails_before_subprocess(self, mock_run, tmp_path):
+        from src.utils.updater import perform_update
+
+        with patch("src.utils.updater.PROJECT_ROOT", tmp_path):
+            assert perform_update(verbose=False) is False
+        mock_run.assert_not_called()
 
     @patch("subprocess.run")
     def test_git_pull_failure(self, mock_run):

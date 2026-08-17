@@ -68,10 +68,7 @@ if ($env:PYTHON) {
     $candidates += @{ Command = $env:PYTHON; Arguments = @(); Display = $env:PYTHON }
 } else {
     $candidates += @(
-        @{ Command = "py"; Arguments = @("-$PYTHON_VERSION-32"); Display = "py -$PYTHON_VERSION-32" },
-        @{ Command = "py"; Arguments = @("-$PYTHON_VERSION"); Display = "py -$PYTHON_VERSION" },
-        @{ Command = "py"; Arguments = @("-3"); Display = "py -3" },
-        @{ Command = "python"; Arguments = @(); Display = "python" }
+        @{ Command = "py"; Arguments = @("-$PYTHON_VERSION-32"); Display = "py -$PYTHON_VERSION-32" }
     )
 }
 
@@ -101,7 +98,7 @@ if (-not $pythonCommand) {
     }
     Write-Fail "Python $PYTHON_VERSION or later not found."
     Write-Host ""
-    Write-Host "  Install Python with the same bitness as JV-Link:" -ForegroundColor Yellow
+    Write-Host "  Install 32-bit Python, or set PYTHON to a full path only for explicit SDK validation:" -ForegroundColor Yellow
     Write-Host "    1. Download from: https://www.python.org/downloads/" -ForegroundColor White
     Write-Host "    2. Check 'Add Python to PATH' during install" -ForegroundColor White
     Write-Host "    3. Re-run this installer" -ForegroundColor White
@@ -217,9 +214,10 @@ if (Test-Path $configFile) {
 } elseif (Test-Path $configExample) {
     Copy-Item $configExample $configFile
     Write-Ok "Created config.yaml from template"
-    Write-Warn "Edit $configFile to set your service keys"
+    Write-Warn "Review $configFile for database settings"
+    Write-Warn "Register JV-Link in the JRA-VAN DataLab application"
 } else {
-    Write-Warn "config.yaml.example not found, run 'jltsql init' later"
+    Write-Warn "config.yaml.example not found; re-run the installer after restoring the checkout"
 }
 
 # Create data and logs directories
@@ -267,8 +265,8 @@ Write-Host "       -> Interactive setup: DB creation, data fetch, all-in-one" -F
 Write-Host ""
 Write-Host "  Or manual setup:" -ForegroundColor Yellow
 Write-Host "    1. Edit config: $configFile" -ForegroundColor White
-Write-Host "    2. Run: jltsql init" -ForegroundColor White
-Write-Host "    3. Run: jltsql fetch --from 20240101 --to 20241231 --spec RACE" -ForegroundColor White
+Write-Host "    2. Run: Set-Location `"$INSTALL_DIR`"" -ForegroundColor White
+Write-Host "       jltsql --config `".\config\config.yaml`" fetch --from 20240101 --to 20241231 --spec RACE" -ForegroundColor White
 Write-Host ""
 Write-Host "  Commands:" -ForegroundColor Yellow
 Write-Host "    jltsql version     Show version info" -ForegroundColor DarkGray

@@ -1,13 +1,14 @@
 """JLTSQL Command Line Interface."""
 
-import sys
 import os
+import sys
 from pathlib import Path
 
 import click
 from rich.console import Console
 
-from src.utils.config import ConfigError, load_config
+from src import __version__
+from src.utils.config import ConfigError, get_default_config, load_config
 from src.utils.logger import get_logger, setup_logging_from_config
 from src.utils.updater import (
     auto_update_check_notice,
@@ -17,30 +18,6 @@ from src.utils.updater import (
     perform_update,
 )
 
-# Version - single source of truth from pyproject.toml
-def _read_version():
-    """Read version from pyproject.toml."""
-    try:
-        from importlib.metadata import version as _get_version
-        for dist_name in ("jltsql", "jrvltsql"):
-            try:
-                return _get_version(dist_name)
-            except Exception:
-                pass
-    except Exception:
-        pass
-    try:
-        from pathlib import Path
-        import re
-        pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
-        match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.M)
-        if match:
-            return match.group(1)
-    except Exception:
-        pass
-    return "unknown"
-
-__version__ = _read_version()
 
 # Console for rich output (Windows cp932-safe)
 console = Console(legacy_windows=True)
@@ -72,7 +49,7 @@ FETCH_NOTE_DATE_FIELDS = (
     "対応する日付を持たないレコードは JV-Link 取得時に除外されず、"
     "その取得範囲は完全キャッシュとして記録されません。"
 )
-CONFIG_OPTIONAL_COMMANDS = frozenset({"init", "status", "version"})
+CONFIG_OPTIONAL_COMMANDS = frozenset({"config", "init", "status", "version"})
 
 
 def _reject_retired_data_spec(data_spec: str) -> None:
@@ -120,7 +97,7 @@ def _print_fetch_guardrail_notes(jv_option: int) -> None:
 @click.option(
     "--config",
     "-c",
-    type=click.Path(exists=True),
+    type=click.Path(exists=True, dir_okay=False, readable=True),
     default=None,
     help="Path to configuration file (default: config/config.yaml)",
 )
@@ -149,14 +126,23 @@ def cli(ctx, config, verbose):
     """
     # Store context
     ctx.ensure_object(dict)
+    requested_config_path = (
+        Path(config) if config else Path.cwd() / "config" / "config.yaml"
+    )
+    ctx.obj["config_path"] = requested_config_path
+    ctx.obj["config_explicit"] = config is not None
 
     # Load configuration
-    if config:
-        config_path = config
+    if ctx.invoked_subcommand == "init":
+        # Bootstrap must work before a configuration exists. An explicit
+        # global path is rejected by the command instead of being ignored.
+        config_path = None
+    elif config:
+        config_path = requested_config_path
     else:
-        # Try default path
-        project_root = Path(__file__).parent.parent.parent
-        config_path = project_root / "config" / "config.yaml"
+        # The default is user-writable and independent of the package install
+        # location. This is also the exact path created by ``jltsql init``.
+        config_path = requested_config_path
 
         if not config_path.exists():
             # Read-only bootstrap commands must work before initialization.
@@ -175,8 +161,15 @@ def cli(ctx, config, verbose):
             cfg = load_config(str(config_path))
             ctx.obj["config"] = cfg
 
-            # Setup logging from config
-            setup_logging_from_config(cfg.to_dict())
+            # Setup logging from config. Invalid leaf types are rejected by
+            # load_config; filesystem failures are still rendered as a
+            # controlled configuration error rather than a traceback.
+            try:
+                setup_logging_from_config(cfg.to_dict())
+            except (OSError, TypeError, ValueError) as exc:
+                raise ConfigError(
+                    f"Could not initialize logging ({type(exc).__name__})"
+                ) from exc
 
             # Override log level if verbose
             if verbose:
@@ -188,7 +181,12 @@ def cli(ctx, config, verbose):
 
             # Auto-update check (if enabled in config)
             auto_check = cfg.get("auto_update_check", True)
-            if auto_check and ctx.invoked_subcommand not in ("update", "version"):
+            if auto_check and ctx.invoked_subcommand not in (
+                "config",
+                "init",
+                "update",
+                "version",
+            ):
                 notice = auto_update_check_notice()
                 if notice:
                     console.print(f"[dim yellow]{notice}[/dim yellow]")
@@ -213,12 +211,32 @@ def init(ctx, force):
 
     Creates configuration files and database directories.
     """
-    console.print("[bold cyan]Initializing JLTSQL project...[/bold cyan]")
+    if ctx.obj.get("config_explicit"):
+        console.print(
+            "[red]Error:[/red] --config cannot be used with init; "
+            "run init from the directory to initialize.",
+            style="bold",
+        )
+        ctx.exit(2)
 
-    project_root = Path(__file__).parent.parent.parent
+    project_root = Path.cwd()
     config_dir = project_root / "config"
     data_dir = project_root / "data"
     logs_dir = project_root / "logs"
+    config_yaml = config_dir / "config.yaml"
+
+    if config_yaml.exists() and not force:
+        try:
+            load_config(config_yaml)
+        except ConfigError as exc:
+            console.print(
+                f"[red]Configuration Error:[/red] {exc}. "
+                "Repair the file or rerun with --force.",
+                style="bold",
+            )
+            ctx.exit(1)
+
+    console.print("[bold cyan]Initializing JLTSQL project...[/bold cyan]")
 
     # Create directories
     for directory in [config_dir, data_dir, logs_dir]:
@@ -228,32 +246,31 @@ def init(ctx, force):
         else:
             console.print(f"  Directory exists: {directory}")
 
-    # Create config.yaml from example
-    config_example = config_dir / "config.yaml.example"
-    config_yaml = config_dir / "config.yaml"
-
+    # Generate a complete default without relying on a source-checkout-only
+    # template that is absent from installed wheels.
     if config_yaml.exists() and not force:
         console.print(
             f"[yellow]Warning:[/yellow] {config_yaml} already exists. "
             "Use --force to overwrite."
         )
     else:
-        if config_example.exists():
-            import shutil
+        import yaml
 
-            shutil.copy(config_example, config_yaml)
-            console.print(f"[green]+[/green] Created configuration file: {config_yaml}")
-        else:
-            console.print(
-                f"[red]Error:[/red] {config_example} not found.",
-                style="bold",
-            )
-            sys.exit(1)
+        config_yaml.write_text(
+            yaml.safe_dump(
+                get_default_config(),
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        console.print(f"[green]+[/green] Created configuration file: {config_yaml}")
 
     console.print("\n[bold green]Initialization complete![/bold green]")
     console.print("\nNext steps:")
-    console.print("  1. Edit config/config.yaml and set your JV-Link service key")
-    console.print("  2. Run: jltsql fetch --help")
+    console.print("  1. Register JV-Link in the JRA-VAN DataLab application")
+    console.print("  2. Review the SQLite-only config/config.yaml default")
+    console.print("  3. Run: jltsql fetch --help")
 
 
 @cli.command()
@@ -355,7 +372,7 @@ def update(ctx, force):
     else:
         console.print()
         console.print("[bold red][ERROR] Update failed.[/bold red]")
-        console.print("Try manually: git pull && pip install -e .")
+        console.print("Review the update guidance above and retry.")
         sys.exit(1)
 
 
@@ -1319,25 +1336,25 @@ def config(ctx, show, set_value, get_key):
       jltsql config --set database.type=sqlite    # Set value (not implemented yet)
     """
     from pathlib import Path
-    import yaml
 
-    # Find config file
+    # Find config file. The path is captured before the bootstrap command
+    # deliberately skips normal configuration loading.
+    config_path = Path(
+        ctx.obj.get("config_path", Path.cwd() / "config" / "config.yaml")
+    )
     if ctx.obj.get("config"):
         config_obj = ctx.obj["config"]
         config_dict = config_obj.to_dict()
-        config_path = Path(ctx.params.get("config", "config/config.yaml"))
     else:
-        project_root = Path(__file__).parent.parent.parent
-        config_path = project_root / "config" / "config.yaml"
-
         if not config_path.exists():
             console.print("[red]Error:[/red] Configuration file not found.")
             console.print("Run 'jltsql init' first.")
             sys.exit(1)
-
-        # Load config manually
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_dict = yaml.safe_load(f)
+        console.print(
+            "[red]Error:[/red] Configuration could not be loaded.",
+            style="bold",
+        )
+        ctx.exit(1)
 
     # Show all configuration
     if show or (not set_value and not get_key):
@@ -1368,7 +1385,10 @@ def config(ctx, show, set_value, get_key):
         log_tree = tree.add("Logging")
         log_config = config_dict.get("logging", {})
         log_tree.add(f"Level: {log_config.get('level', 'INFO')}")
-        log_tree.add(f"File: {log_config.get('file', 'logs/jltsql.log')}")
+        log_file = log_config.get("file", "logs/jltsql.log")
+        if isinstance(log_file, dict):
+            log_file = log_file.get("path", "logs/jltsql.log")
+        log_tree.add(f"File: {log_file}")
 
         console.print(tree)
         console.print()
