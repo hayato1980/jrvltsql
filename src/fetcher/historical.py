@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Iterator, Optional
 
 from src.fetcher.base import BaseFetcher, FetcherError
-from src.jvlink.constants import validate_jvopen_combination
+from src.jvlink.constants import build_jvopen_fromtime, validate_jvopen_combination
 from src.utils.logger import get_logger
 from src.utils.progress import JVLinkProgressDisplay
 
@@ -31,8 +31,11 @@ class HistoricalFetcher(BaseFetcher):
     """Fetcher for historical JV-Data.
 
     Fetches accumulated (蓄積) data from JV-Link for a specified date range
-    and data specification. The JV-Link API retrieves all data from the
-    start date onwards, then filters records client-side based on the end date.
+    and data specification. Where the dataspec allows it, the end date is
+    handed to JVOpen as the end of a range fromtime so the server only sends
+    that window; otherwise JV-Link sends everything from the start date
+    onwards. Either way the end date is also applied as a client-side filter,
+    because even a bounded window arrives in files that spill past it.
 
     Note:
         Service key must be configured in JRA-VAN DataLab application
@@ -179,7 +182,10 @@ class HistoricalFetcher(BaseFetcher):
         Args:
             data_spec: Data specification code (e.g., "RACE", "DIFN")
             from_date: Start date in YYYYMMDD format
-            to_date: End date in YYYYMMDD format (filters records up to this date)
+            to_date: End date in YYYYMMDD format. Passed to JVOpen as the end
+                     of a range fromtime for the dataspecs that honour it (see
+                     RANGE_FROMTIME_DATA_SPECS), which bounds the download
+                     itself; always applied as a client-side filter as well.
             option: JVOpen option:
                     1=通常データ（差分データ取得、蓄積系メンテナンス用）
                     2=今週データ（直近のレースのみ、非蓄積系用）
@@ -251,11 +257,12 @@ class HistoricalFetcher(BaseFetcher):
             # jv_init() does not accept service_key parameter
             self.jvlink.jv_init()
 
-            # Convert dates to fromtime format
-            # fromtime format: "YYYYMMDDhhmmss" (single timestamp)
-            # JV-Link retrieves data from this timestamp onwards
+            # Whether to_date becomes JVOpen's end bound follows from the
+            # dataspec, so callers pass --from/--to and nothing else; see
+            # build_jvopen_fromtime in src/jvlink/constants.py for which
+            # dataspecs get which form and why. The form is logged below.
             # Option meanings: 1=通常データ, 2=今週データ, 3/4=セットアップ
-            fromtime = f"{from_date}000000"
+            fromtime = build_jvopen_fromtime(data_spec, from_date, to_date, option)
             self._jvd_self_repair_attempts = 0
             self._jvd_replay_records_remaining = 0
             self._jv_open_context = (data_spec, fromtime, option)

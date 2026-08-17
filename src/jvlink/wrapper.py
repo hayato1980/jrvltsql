@@ -282,9 +282,15 @@ class JVLinkWrapper:
 
         Args:
             data_spec: Data specification code (e.g., "RACE", "DIFN")
-            fromtime: Start time in YYYYMMDDhhmmss format (14 digits)
-                     Example: "20241103000000"
-                     Retrieves data from this timestamp onwards
+            fromtime: Either a start time in YYYYMMDDhhmmss format (14 digits,
+                     e.g. "20241103000000"), which retrieves everything from
+                     that timestamp onwards, or the range form
+                     "YYYYMMDDhhmmss-YYYYMMDDhhmmss" (e.g.
+                     "20220101000000-20221231235959"), which also bounds the
+                     end and so bounds what the server sends. Build it with
+                     src.jvlink.constants.build_jvopen_fromtime: the range form
+                     returns zero records, with no error, for the dataspecs
+                     that carry no date field.
             option: Option flag:
                     1=通常データ（差分データ取得）
                     2=今週データ（直近のレースのみ）

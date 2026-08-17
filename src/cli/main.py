@@ -57,15 +57,27 @@ FETCH_NOTE_OPTION2_RANGE = (
     "任意の --from/--to 範囲の完全性を保証できないため、"
     "NL キャッシュは使用・作成しません。"
 )
-FETCH_NOTE_TO_CLIENT_FILTER = (
-    "--to は JVOpen の終端ではなく、取得後のクライアント側フィルタです。"
+# それぞれ {fromtime} に、この実行が実際に JVOpen へ渡す文字列が入る。
+# 「何が起きるか」を説明で伝えるより、渡る値そのものを見せるほうが速い。
+FETCH_NOTE_TO_RANGE_FROMTIME = (
+    "JVOpen fromtime = {fromtime}（--from と --to をハイフンで繋いだ範囲形式）。"
+    "サーバから降ってくるのはこの窓のぶんだけです。"
+    "窓の外の日付を含むファイルも届くので、取得後のクライアント側フィルタも働きます。"
 )
-FETCH_NOTE_TO_SINGLE_OPEN = (
-    "option=1/2/4 では --to を狭めてもサーバからのダウンロード量は減りません。"
+FETCH_NOTE_TO_START_ONLY_SPEC = (
+    "JVOpen fromtime = {fromtime}（開始のみ。--to は繋ぎません）。"
+    "このデータ種別は範囲形式で窓に絞れることを実測していないためです"
+    "（マスタ系は範囲形式だと JV-Link がエラーを返さず0件になることを実測済み）。"
+    "--from 以降が全部降ってきます。--to は取得後のクライアント側フィルタとしてのみ働きます。"
+)
+FETCH_NOTE_TO_START_ONLY_OPTION2 = (
+    "JVOpen fromtime = {fromtime}（開始のみ。--to は繋ぎません）。"
+    "option=2 の fromtime は開催サイクル内の連続性管理用で、過去の窓を選べないためです。"
+    "--to は取得後のクライアント側フィルタとしてのみ働きます。"
 )
 FETCH_NOTE_TO_SETUP_CHUNKS = (
     "option=3 の370日超の範囲は年単位の JVOpen に分割され、"
-    "--to の延長で年次チャンクが追加される場合に呼び出し回数とダウンロード量が増えます。"
+    "--to の延長で年次チャンクが追加される場合に呼び出し回数が増えます。"
 )
 FETCH_NOTE_DATE_FIELDS = (
     "--to は Year+MonthDay または ChokyoDate（HC/WC の調教日）で判定します。"
@@ -101,18 +113,30 @@ def _reject_invalid_jvopen_combination(data_spec: str, option: int) -> None:
         sys.exit(1)
 
 
-def _print_fetch_guardrail_notes(jv_option: int) -> None:
-    """Emit option-dependent date-range caveats after input validation."""
+def _print_fetch_guardrail_notes(
+    jv_option: int, data_spec: str, date_from: str, date_to: str
+) -> None:
+    """Emit spec- and option-dependent date-range caveats after validation."""
+    from src.jvlink.constants import build_jvopen_fromtime, supports_range_fromtime
+
+    fromtime = build_jvopen_fromtime(data_spec, date_from, date_to, jv_option)
+
     if jv_option in (3, 4):
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_SETUP_MODE}")
     if jv_option == 2:
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_OPTION2_RANGE}")
 
-    err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_CLIENT_FILTER}")
+    if supports_range_fromtime(data_spec, jv_option):
+        note = FETCH_NOTE_TO_RANGE_FROMTIME
+    elif jv_option == 2:
+        # Name the real cause: under option=2 the option decides, not the spec.
+        note = FETCH_NOTE_TO_START_ONLY_OPTION2
+    else:
+        note = FETCH_NOTE_TO_START_ONLY_SPEC
+    err_console.print(f"[yellow]Note:[/yellow] {note.format(fromtime=fromtime)}")
+
     if jv_option == 3:
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_SETUP_CHUNKS}")
-    else:
-        err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_SINGLE_OPEN}")
     err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_DATE_FIELDS}")
 
 
@@ -376,11 +400,16 @@ def update(ctx, force):
     "date_to",
     required=True,
     help=(
-        "Client-side end date (YYYYMMDD), not a JVOpen end bound. Filters "
-        "Year+MonthDay and HC/WC ChokyoDate; records without either date are "
-        "kept and prevent a complete-cache marker. With option=3, ranges over "
-        "370 days are split into calendar-year chunks; extending --to increases "
-        "downloads only when it adds another chunk."
+        "End date (YYYYMMDD), always required. It reaches JVOpen in one of two "
+        "forms. Range form '<from>000000-<to>235959' for RACE/SLOP/WOOD under "
+        "option 1/3/4: --from and --to joined by a hyphen, and the server sends "
+        "only that window. Start-only form '<from>000000' for every other spec, "
+        "and for option=2: no end is joined on, so everything from --from "
+        "onwards is downloaded (those specs return zero records under the range "
+        "form). Either way --to also filters Year+MonthDay and HC/WC ChokyoDate "
+        "client-side; records with neither date are kept and prevent a "
+        "complete-cache marker. option=3 splits ranges over 370 days into "
+        "calendar-year chunks."
     ),
 )
 @click.option("--spec", "data_spec", required=True, help="Data specification (RACE, DIFN, etc.)")
@@ -445,7 +474,7 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
         console.print(f"       option={jv_option} で取得可能: {', '.join(valid_specs)}")
         sys.exit(1)
 
-    _print_fetch_guardrail_notes(jv_option)
+    _print_fetch_guardrail_notes(jv_option, data_spec, date_from, date_to)
     console.print()
 
     try:
