@@ -29,8 +29,9 @@ Public API replacements:
 ## Data-contract and reliability changes since v1.6.10
 
 - parser contracts now bind current official fixed-width layouts, reject
-  malformed CP932 and unsupported historical/synthetic lengths, and preserve
-  explicitly supported old/new semantic boundaries instead of guessing them
+  malformed CP932 in interpreted fields and unsupported historical/synthetic
+  lengths, and preserve explicitly supported old/new semantic boundaries
+  instead of guessing them
 - native and standard schemas now verify primary keys, types, capacities,
   child-table constraints, and cancellation/delete behavior before mutation;
   several record families gained complete child storage or corrected keys
@@ -46,6 +47,20 @@ Public API replacements:
   reason-field initial representations remain supported. Existing keyless,
   nullable-key, legacy `AVOIDENCE`-only, or otherwise unsafe AV tables require
   rebuild and reimport
+- HR payout/refund storage now preserves every official repeat in the 719-byte
+  record, including all three reserved entries as text rather than invented
+  numeric values, and uses the exact six-part
+  race key in `NL_HR`, `RT_HR`, and standard `HARAI`. Existing keyless,
+  nullable-key, incomplete-repeat, or otherwise unsafe HR tables require
+  backup, rebuild, and RACE reimport. Records before trifecta sales began on
+  2004-08-14 preserve bytes 604-717 as an opaque hexadecimal compatibility
+  value instead of labeling undocumented old reserved bytes as trifecta
+  payouts. Status 0 remains an exact-key erase. Status 9 remains stored as a
+  cancellation state, while its unspecified body is retained only as an opaque
+  raw audit value instead of being interpreted as ordinary payout fields.
+  HR header/key bytes and all interpreted body ranges remain strict CP932;
+  only the declared status-0/status-9 body and pre-2004-08-14 legacy tail are
+  preserved byte-for-byte without text decoding
 - imports and realtime updates preserve provider order and use fail-closed
   transaction recovery so returned statistics agree with durable rows across
   SQLite and PostgreSQL

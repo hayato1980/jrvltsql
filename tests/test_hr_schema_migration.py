@@ -1,55 +1,21 @@
 # -*- coding: utf-8 -*-
-"""NL_HR/RT_HR の numbered 払戻列が additive migration で追加されることの回帰テスト。
+"""Incomplete HR storage must be rebuilt instead of additively blessed.
 
-PR #121 は schema.py に FukuUmaban2..5 / WideKumi2..7 等を追加した。
-既存 DB (旧スキーマで作成済み) は CREATE TABLE IF NOT EXISTS では列が増えないため、
-migrate_all_tables の additive ALTER で追従することを保証する。
+Even with the current non-null key, missing repeated payout values cannot be
+reconstructed from stored rows. Strict preflight must therefore stop before
+adding columns and require backup/rebuild/reimport.
 """
 
-import sqlite3
-import tempfile
-from pathlib import Path
+import pytest
 
-from src.database.schema import SCHEMAS
-from src.database.migration import migrate_all_tables
-
-
-class _SqliteDB:
-    """migration.py が要求する最小インターフェースの SQLite ラッパー。"""
-
-    def __init__(self, path):
-        self.conn = sqlite3.connect(path)
-        self.conn.row_factory = sqlite3.Row
-        self.db_type = "sqlite"
-
-    def get_db_type(self):
-        return self.db_type
-
-    def table_exists(self, name):
-        cur = self.conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
-        )
-        return cur.fetchone() is not None
-
-    def execute(self, sql, params=None):
-        return self.conn.execute(sql, params or [])
-
-    def fetch_all(self, sql, params=None):
-        return self.conn.execute(sql, params or []).fetchall()
-
-    def commit(self):
-        self.conn.commit()
-
-    def close(self):
-        self.conn.close()
+from src.database.migration import SchemaMigrationError
+from src.database.schema import SCHEMAS, create_all_tables
+from src.database.sqlite_handler import SQLiteDatabase
 
 
-def _old_nl_hr_schema() -> str:
-    """numbered 列追加前の旧 NL_HR 定義 (1件目のみ) を再現。"""
-    sql = SCHEMAS["NL_HR"]
-    drop_markers = [
-        "TanUmaban2", "TanPay2", "TanNinki2", "TanUmaban3", "TanPay3", "TanNinki3",
-    ]
+def _old_hr_schema(table_name: str) -> str:
+    """numbered 列追加前の旧HR定義（1件目のみ）を再現。"""
+    sql = SCHEMAS[table_name]
     lines = []
     for line in sql.splitlines():
         stripped = line.strip()
@@ -64,29 +30,46 @@ def _old_nl_hr_schema() -> str:
             + [f"{p}{i}" for p in ("SanrentanKumi", "SanrentanPay", "SanrentanNinki") for i in range(2, 7)]
         )):
             continue
+        if any(f"Yobi{i} " in line for i in range(4, 10)):
+            continue
+        if "LegacyReserved604_717Hex" in line or "OpaqueStatus9Body28_717Hex" in line:
+            continue
         lines.append(line)
     return "\n".join(lines)
 
 
-def test_numbered_payout_columns_added_by_migration(tmp_path, request):
-    db = _SqliteDB(tmp_path / "old.db")
-    request.addfinalizer(db.close)
-    db.execute(_old_nl_hr_schema())
-    db.execute(
-        "INSERT INTO NL_HR (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, FukuUmaban, FukuPay)"
-        " VALUES ('2026', 611, '05', 3, 8, 11, '07', 150)"
-    )
-    db.commit()
+@pytest.mark.parametrize("table_name", ("NL_HR", "RT_HR"))
+def test_legacy_nonempty_hr_requires_rebuild_before_any_additive_migration(
+    tmp_path, table_name: str
+):
+    database = SQLiteDatabase({"path": str(tmp_path / f"old-{table_name}.db")})
+    with database:
+        database.execute(_old_hr_schema(table_name))
+        database.execute(
+            f"INSERT INTO {table_name} "
+            "(Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, FukuUmaban, FukuPay)"
+            " VALUES ('2026', 611, '05', 3, 8, 11, '07', 150)"
+        )
+        database.commit()
+        before = database.fetch_all(f'PRAGMA table_info("{table_name}")')
+        key_nullability = {
+            row["name"]: row["notnull"]
+            for row in before
+            if row["name"] in {"Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum"}
+        }
+        assert key_nullability == {
+            "Year": 1,
+            "MonthDay": 1,
+            "JyoCD": 1,
+            "Kaiji": 1,
+            "Nichiji": 1,
+            "RaceNum": 1,
+        }
 
-    cols_before = {r[1] for r in db.fetch_all("PRAGMA table_info(NL_HR)")}
-    assert "FukuUmaban2" not in cols_before
+        with pytest.raises(SchemaMigrationError):
+            create_all_tables(database)
 
-    migrate_all_tables(db, {"NL_HR": SCHEMAS["NL_HR"]})
-
-    cols_after = {r[1] for r in db.fetch_all("PRAGMA table_info(NL_HR)")}
-    for col in ("FukuUmaban2", "FukuPay5", "WideKumi7", "SanrentanNinki6"):
-        assert col in cols_after, col
-
-    # 既存行が保持されること
-    row = db.fetch_all("SELECT FukuUmaban, FukuPay, FukuUmaban2 FROM NL_HR")[0]
-    assert row[0] == "07" and row[1] == 150 and row[2] is None
+        assert database.fetch_all(f'PRAGMA table_info("{table_name}")') == before
+        assert database.fetch_one(
+            f"SELECT FukuUmaban, FukuPay FROM {table_name}"
+        ) == {"FukuUmaban": "07", "FukuPay": 150}
