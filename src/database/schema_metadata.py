@@ -1,16 +1,25 @@
 """Schema metadata for MCP (Model Context Protocol) integration.
 
 This module provides detailed descriptions of tables and columns
-for LLM-based applications to understand the database schema.
+for LLM-based applications to understand the database schema. ``nullable``
+describes the portable logical contract, including primary-key non-nullability
+even where SQLite's raw catalog flag differs. ``indexes`` is the distinct
+physical-column union used by configured secondary indexes, not an export of
+complete index definitions.
 """
 
+import re
 from copy import deepcopy
 from typing import Dict, List, TypedDict
 
+from src.database.indexes import INDEXES
 from src.database.schema_types import (
+    get_all_executable_tables,
+    get_table_column_nullability,
     get_table_column_types,
     get_table_primary_key_columns,
 )
+from src.database.table_mappings import JRAVAN_TO_JLTSQL, TABLE_TO_RECORD_TYPE
 
 
 class ColumnMetadata(TypedDict):
@@ -44,6 +53,7 @@ def _schema_backed_metadata(
     """Build metadata from the executable schema so public names cannot drift."""
 
     primary_key = get_table_primary_key_columns(table_name)
+    nullability = get_table_column_nullability(table_name)
     return {
         "table_name": table_name,
         "record_type": record_type,
@@ -55,7 +65,7 @@ def _schema_backed_metadata(
                 "type": column_type,
                 "description": column_name,
                 "example": "",
-                "nullable": column_name not in primary_key,
+                "nullable": nullability[column_name],
             }
             for column_name, column_type in get_table_column_types(table_name).items()
         ],
@@ -1800,6 +1810,109 @@ for _source_table, _target_table in (
     TABLE_METADATA[_target_table] = _metadata
 
 
+def _ensure_all_executable_metadata() -> None:
+    """Create a metadata owner for every executable storage table."""
+
+    for table_name in get_all_executable_tables():
+        if table_name in TABLE_METADATA:
+            continue
+
+        native_owner = JRAVAN_TO_JLTSQL.get(table_name)
+        owner_metadata = TABLE_METADATA.get(native_owner or "")
+        record_type = (
+            owner_metadata["record_type"]
+            if owner_metadata is not None
+            else TABLE_TO_RECORD_TYPE.get(table_name, table_name.removeprefix("NL_"))
+        )
+        if owner_metadata is not None:
+            description = f"{owner_metadata['description']}（JRA-VAN標準）"
+            purpose = (
+                f"{owner_metadata['purpose']}。"
+                "JRA-VAN標準レイアウトの実行可能テーブル"
+            )
+        else:
+            description = f"実行可能テーブル {table_name}"
+            purpose = "jrvltsqlが作成・参照する実行可能な物理テーブル"
+
+        TABLE_METADATA[table_name] = _schema_backed_metadata(
+            table_name,
+            record_type=record_type,
+            description=description,
+            purpose=purpose,
+            indexes=[],
+        )
+
+
+_INDEX_COLUMNS_PATTERN = re.compile(
+    r'\bON\s+(?P<table>[^\s(]+)\s*\((?P<columns>[^)]*)\)',
+    re.IGNORECASE,
+)
+
+
+def _get_executable_index_columns(table_name: str) -> List[str]:
+    """Return distinct physical columns referenced by configured SQL indexes."""
+
+    physical_columns = get_table_column_types(table_name)
+    result: List[str] = []
+    for statement in INDEXES.get(table_name, []):
+        match = _INDEX_COLUMNS_PATTERN.search(statement)
+        if match is None:
+            raise ValueError(f"Unrecognized index definition for {table_name}")
+        index_table = match.group("table").strip().strip('`"[]')
+        if index_table.lower() != table_name.lower():
+            raise ValueError(
+                f"Index for {table_name} targets a different table: {index_table}"
+            )
+        for raw_column in match.group("columns").split(','):
+            column_name = raw_column.strip().strip('`"[]')
+            if column_name not in physical_columns:
+                raise ValueError(
+                    f"Index for {table_name} references unknown column {column_name}"
+                )
+            if column_name not in result:
+                result.append(column_name)
+    return result
+
+
+def _bind_all_metadata_to_executable_schemas() -> None:
+    """Replace display-only column labels with the complete executable schema."""
+
+    for table_name, metadata in TABLE_METADATA.items():
+        column_types = get_table_column_types(table_name)
+        nullability = get_table_column_nullability(table_name)
+        if not column_types or set(column_types) != set(nullability):
+            raise ValueError(f"Executable metadata schema is unavailable for {table_name}")
+
+        existing_columns = {
+            column["name"]: column for column in metadata.get("columns", [])
+        }
+        bound_columns: List[ColumnMetadata] = []
+        for column_name, column_type in column_types.items():
+            existing = existing_columns.get(column_name)
+            if existing is None:
+                bound_columns.append({
+                    "name": column_name,
+                    "type": column_type,
+                    "description": column_name,
+                    "example": "",
+                    "nullable": nullability[column_name],
+                })
+                continue
+
+            bound_column = deepcopy(existing)
+            bound_column["type"] = column_type
+            bound_column["nullable"] = nullability[column_name]
+            bound_columns.append(bound_column)
+
+        metadata["columns"] = bound_columns
+        metadata["primary_key"] = get_table_primary_key_columns(table_name)
+        metadata["indexes"] = _get_executable_index_columns(table_name)
+
+
+_ensure_all_executable_metadata()
+_bind_all_metadata_to_executable_schemas()
+
+
 def get_table_description(table_name: str) -> str:
     """Get table description for MCP.
 
@@ -1840,7 +1953,11 @@ def export_schema_for_mcp() -> Dict:
         Dictionary containing all table and column metadata
     """
     return {
-        "version": "1.0.0",
+        "version": "2.0.0",
         "description": "JRA-VAN JV-Data database schema",
-        "tables": TABLE_METADATA
+        "semantics": {
+            "nullable": "logical portable schema contract",
+            "indexes": "distinct physical columns used by configured secondary indexes",
+        },
+        "tables": TABLE_METADATA,
     }
