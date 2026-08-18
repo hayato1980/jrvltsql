@@ -138,6 +138,21 @@ def resolve_standard_table_name(database: BaseDatabase, native_table_name: str) 
             "does not. Automatic JC import is refused; rebuild the standard table "
             "as KISYU_CHANGE and reimport current 161-byte source records."
         )
+    if native_table_name == "NL_TC":
+        from src.database.migration import _migration_targets
+
+        for target in _migration_targets(database):
+            if (
+                target.is_connected()
+                and target.table_exists("COMMENT")
+                and not target.table_exists(standard_name)
+            ):
+                raise SchemaMigrationError(
+                    "Legacy standard table COMMENT exists but canonical "
+                    "HASSOU_JIKOKU_CHANGE does not. Automatic TC import is refused; "
+                    "rebuild the standard table as HASSOU_JIKOKU_CHANGE and reimport "
+                    "current 45-byte source records."
+                )
     if (
         native_table_name == "NL_WF"
         and database.is_connected()
@@ -576,8 +591,27 @@ _HC_LOSSLESS_TEXT_WIDTHS = {
         "KettoNum": 10,
     },
 }
+_TC_STORAGE_TABLES = frozenset({"NL_TC", "RT_TC", "HASSOU_JIKOKU_CHANGE"})
+_TC_KEY_COLUMNS = ("Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum")
+_TC_LOSSLESS_TEXT_WIDTHS = {
+    table_name: {
+        "RecordSpec": 2,
+        "DataKubun": 1,
+        "JyoCD": 2,
+        "HappyoTime": 8,
+        "AtoJi": 2,
+        "AtoFun": 2,
+        "MaeJi": 2,
+        "MaeFun": 2,
+    }
+    for table_name in _TC_STORAGE_TABLES
+}
 _PROVIDER_OPERATION_COUNT_STORAGE_TABLES = (
-    _AV_STORAGE_TABLES | _HR_STORAGE_TABLES | _HS_STORAGE_TABLES | _HC_STORAGE_TABLES
+    _AV_STORAGE_TABLES
+    | _HR_STORAGE_TABLES
+    | _HS_STORAGE_TABLES
+    | _HC_STORAGE_TABLES
+    | _TC_STORAGE_TABLES
 )
 _JC_STORAGE_TABLES = frozenset({"NL_JC", "RT_JC", "KISYU_CHANGE"})
 _JC_KEY_COLUMNS = (
@@ -637,6 +671,7 @@ _STRICT_NONADDITIVE_STANDARD_TABLES = frozenset(
         "HARAI",
         "SALE",
         "HANRO",
+        "HASSOU_JIKOKU_CHANGE",
         "KISYU_CHANGE",
         "TORIKESI_JYOGAI",
         "TENKO_BABA",
@@ -649,6 +684,7 @@ _LEGACY_STANDARD_PREFLIGHT_NATIVE_TABLES = (
     "NL_JG",
     "NL_AV",
     "NL_JC",
+    "NL_TC",
     "NL_SK",
     "NL_BR",
     "NL_HY",
@@ -882,7 +918,8 @@ def _verify_strict_storage_column_contract(
     if database.get_db_type() == "postgresql":
         rows = database.fetch_all(
             "SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type, "
-            "a.attnotnull AS not_null FROM pg_attribute a "
+            "a.attnotnull AS not_null, a.attgenerated AS generated, "
+            "a.attidentity AS identity FROM pg_attribute a "
             "WHERE a.attrelid = to_regclass(?) AND a.attnum > 0 AND NOT a.attisdropped",
             (table_name.lower(),),
         )
@@ -897,13 +934,7 @@ def _verify_strict_storage_column_contract(
             f"{storage_label} column contract cannot be verified for database type "
             f"{database.get_db_type()!r}"
         )
-    actual = {
-        str(row.get("name") or "").lower(): (
-            str(row.get("type") or ""),
-            bool(row.get("not_null", row.get("notnull", 0))),
-        )
-        for row in rows
-    }
+    actual = {str(row.get("name") or "").lower(): row for row in rows}
     mismatches: list[str] = []
     if not allow_extra_columns:
         expected_columns = {column.lower() for column in definitions}
@@ -916,7 +947,20 @@ def _verify_strict_storage_column_contract(
             if not allow_missing_columns:
                 mismatches.append(f"{column_name} missing")
             continue
-        actual_type, actual_not_null = actual[column]
+        actual_row = actual[column]
+        actual_type = str(actual_row.get("type") or "")
+        actual_not_null = bool(
+            actual_row.get("not_null", actual_row.get("notnull", 0))
+        )
+        generated = str(actual_row.get("generated") or "")
+        identity = str(actual_row.get("identity") or "")
+        hidden = int(actual_row.get("hidden") or 0)
+        if generated or identity or hidden:
+            mismatches.append(
+                f"{column_name} is generated/identity/hidden "
+                f"(generated={generated or '<none>'}, identity={identity or '<none>'}, "
+                f"hidden={hidden})"
+            )
         expected_type = _normalize_strict_storage_type(_definition_type(definition))
         normalized_actual_type = _normalize_strict_storage_type(actual_type)
         compatible_type = _strict_storage_type_is_compatible(normalized_actual_type, expected_type)
@@ -1775,6 +1819,163 @@ def validate_hc_record(record: dict, table_name: str | None = None) -> bool:
     try:
         data_kubun = resolve_record_data_kubun(record)
         HCParser.validate_current_fields(record, data_kubun=data_kubun)
+    except ValueError as error:
+        raise SchemaMigrationError(str(error)) from error
+    return True
+
+
+def _sqlite_schema_code(definition: str) -> str:
+    """Remove SQLite comments and quoted tokens before keyword inspection."""
+
+    code: list[str] = []
+    index = 0
+    while index < len(definition):
+        current = definition[index]
+        following = definition[index + 1] if index + 1 < len(definition) else ""
+        if current == "-" and following == "-":
+            index += 2
+            while index < len(definition) and definition[index] not in "\r\n":
+                index += 1
+            code.append("\n")
+            continue
+        if current == "/" and following == "*":
+            end = definition.find("*/", index + 2)
+            index = len(definition) if end < 0 else end + 2
+            code.append(" ")
+            continue
+        if current in {"'", '"', "`"}:
+            quote = current
+            index += 1
+            while index < len(definition):
+                if definition[index] == quote:
+                    if index + 1 < len(definition) and definition[index + 1] == quote:
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            code.append(" ")
+            continue
+        if current == "[":
+            index += 1
+            while index < len(definition):
+                if definition[index] == "]":
+                    if index + 1 < len(definition) and definition[index + 1] == "]":
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            code.append(" ")
+            continue
+        code.append(current)
+        index += 1
+    return "".join(code)
+
+
+def _verify_tc_no_unapproved_constraints(
+    database: BaseDatabase,
+    table_name: str,
+) -> None:
+    """Reject constraints beyond TC's one official immediate primary key."""
+
+    from src.database.migration import _migration_targets
+
+    targets = _migration_targets(database)
+    if targets != (database,):
+        for target in targets:
+            _verify_tc_no_unapproved_constraints(target, table_name)
+        return
+
+    db_type = database.get_db_type()
+    if db_type == "sqlite":
+        if database.fetch_all(f'PRAGMA foreign_key_list("{table_name}")'):
+            raise SchemaMigrationError(
+                f"TC storage {table_name} has unsupported FOREIGN KEY constraints"
+            )
+        row = database.fetch_one(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        )
+        definition = str((row or {}).get("sql") or "")
+        if re.search(
+            r"\bCHECK\s*\(",
+            _sqlite_schema_code(definition),
+            flags=re.IGNORECASE,
+        ):
+            raise SchemaMigrationError(
+                f"TC storage {table_name} has unsupported CHECK constraints"
+            )
+        return
+    if db_type == "postgresql":
+        unexpected = database.fetch_all(
+            "SELECT conname AS constraint_name, contype AS constraint_type "
+            "FROM pg_constraint WHERE conrelid = to_regclass(?) "
+            "AND contype NOT IN ('p', 'n') ORDER BY conname",
+            (table_name.lower(),),
+        )
+        if unexpected:
+            raise SchemaMigrationError(
+                f"TC storage {table_name} has unsupported additional constraints: "
+                f"{unexpected}"
+            )
+        return
+    raise SchemaMigrationError(
+        f"TC constraints cannot be verified for database type {db_type!r}"
+    )
+
+
+def verify_tc_storage_schema(database: BaseDatabase, table_name: str) -> bool:
+    """Fail closed unless TC storage preserves every field and official key."""
+
+    if table_name not in _TC_STORAGE_TABLES:
+        return False
+    transaction_snapshot = _snapshot_validation_transactions(database)
+    from src.database.migration import verify_table_schema
+    from src.database.schema import SCHEMAS
+    from src.database.schema_jravan import JRAVAN_SCHEMAS
+
+    try:
+        schema_sql = SCHEMAS.get(table_name) or JRAVAN_SCHEMAS.get(table_name)
+        if schema_sql is None:
+            raise SchemaMigrationError(f"TC storage schema is undefined: {table_name}")
+        verify_table_schema(database, table_name, schema_sql)
+        _verify_strict_storage_column_contract(
+            database,
+            table_name,
+            schema_sql,
+            allow_missing_columns=False,
+            storage_label="TC",
+            lossless_text_widths=_TC_LOSSLESS_TEXT_WIDTHS[table_name],
+            allow_extra_columns=False,
+        )
+        _verify_tc_no_unapproved_constraints(database, table_name)
+        _verify_replacement_key_constraints(database, table_name, "TC storage")
+        return True
+    except Exception:
+        _rollback_call_created_validation_transactions(
+            transaction_snapshot,
+            context="failed TC schema validation",
+        )
+        raise
+
+
+def validate_tc_record(record: dict, table_name: str | None = None) -> bool:
+    """Validate one caller-built TC row before coercion or mutation."""
+
+    if table_name is not None and table_name not in _TC_STORAGE_TABLES:
+        return False
+    if _record_type_from_record(record) != "TC":
+        if table_name is None:
+            return False
+        raise SchemaMigrationError(f"{table_name} received a non-TC record")
+
+    from src.parser.tc_parser import TCParser
+
+    try:
+        if resolve_record_data_kubun(record) != "1":
+            raise ValueError("TC DataKubun must be current official value 1")
+        TCParser.validate_current_fields(record)
     except ValueError as error:
         raise SchemaMigrationError(str(error)) from error
     return True
@@ -2898,6 +3099,8 @@ def _preflight_standard_schema_migrations(
             verify_hs_storage_schema(database, standard_name)
         if standard_name == "HANRO":
             verify_hc_storage_schema(database, standard_name)
+        if standard_name == "HASSOU_JIKOKU_CHANGE":
+            verify_tc_storage_schema(database, standard_name)
         if standard_name == "KISYU_CHANGE":
             verify_jc_storage_schema(database, standard_name)
         if standard_name in {"UMA", "COURSE"}:
@@ -3552,6 +3755,8 @@ def validate_import_record_header(record: dict) -> tuple[str, str]:
             validate_hs_record(record)
         if record_type == "HC":
             validate_hc_record(record)
+        if record_type == "TC":
+            validate_tc_record(record)
         if record_type == "JC":
             validate_jc_record(record)
         return record_type, data_kubun
@@ -6097,6 +6302,7 @@ class DataImporter:
         self._verified_hr_tables: set[str] = set()
         self._verified_hs_tables: set[str] = set()
         self._verified_hc_tables: set[str] = set()
+        self._verified_tc_tables: set[str] = set()
         self._verified_jc_tables: set[str] = set()
         self._verified_cs_tables: set[str] = set()
         self._verified_jg_tables: set[str] = set()
@@ -6452,6 +6658,10 @@ class DataImporter:
                     if verify_hc_storage_schema(self.database, table_name):
                         self._verified_hc_tables.add(table_name)
                 validate_hc_record(record, table_name)
+                if table_name not in self._verified_tc_tables:
+                    if verify_tc_storage_schema(self.database, table_name):
+                        self._verified_tc_tables.add(table_name)
+                validate_tc_record(record, table_name)
                 if table_name not in self._verified_jc_tables:
                     if verify_jc_storage_schema(self.database, table_name):
                         self._verified_jc_tables.add(table_name)
@@ -7187,6 +7397,10 @@ class DataImporter:
                 if verify_hc_storage_schema(self.database, table_name):
                     self._verified_hc_tables.add(table_name)
             validate_hc_record(record, table_name)
+            if table_name not in self._verified_tc_tables:
+                if verify_tc_storage_schema(self.database, table_name):
+                    self._verified_tc_tables.add(table_name)
+            validate_tc_record(record, table_name)
             if table_name not in self._verified_jc_tables:
                 if verify_jc_storage_schema(self.database, table_name):
                     self._verified_jc_tables.add(table_name)

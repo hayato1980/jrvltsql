@@ -1184,7 +1184,7 @@ class TestRealtimeUpdater(unittest.TestCase):
         for call_args in self.mock_db.execute.call_args_list:
             self.assertEqual(call_args.args[1], (2026, 715))
 
-    def test_drain_0b14_replaces_date_snapshot_before_import(self):
+    def test_drain_0b14_replaces_date_snapshot_but_0b16_does_not(self):
         monitor = RealtimeMonitor(database=self.mock_db)
         jvlink = MagicMock()
         jvlink.jv_rt_open.return_value = (0, 0)
@@ -1197,6 +1197,14 @@ class TestRealtimeUpdater(unittest.TestCase):
 
         self.assertEqual((imported, failed), (0, 0))
         updater.replace_date_snapshot.assert_called_once_with("20260715")
+
+        updater.reset_mock()
+        imported, failed = monitor._drain_key(
+            jvlink, updater, "0B16", "event-key"
+        )
+
+        self.assertEqual((imported, failed), (0, 0))
+        updater.replace_date_snapshot.assert_not_called()
 
     def test_drain_0b14_interruption_rejects_partial_snapshot(self):
         monitor = RealtimeMonitor(database=self.mock_db)
@@ -1696,7 +1704,10 @@ class TestRealtimeUpdater(unittest.TestCase):
         self.mock_db.insert_many.assert_not_called()
         self.mock_db.execute.assert_not_called()
 
-    def test_matching_legacy_aliases_are_canonicalized_before_batch_routing(self):
+    @patch("src.realtime.updater.verify_tc_storage_schema", return_value=True)
+    def test_matching_legacy_aliases_are_canonicalized_before_batch_routing(
+        self, _verify_tc
+    ):
         updater = RealtimeUpdater(self.mock_db)
         record = {
             "headRecordSpec": "TC",
@@ -1705,9 +1716,14 @@ class TestRealtimeUpdater(unittest.TestCase):
             "Year": "2026",
             "MonthDay": "0817",
             "JyoCD": "05",
-            "Kaiji": "3",
-            "Nichiji": "8",
+            "Kaiji": "03",
+            "Nichiji": "08",
             "RaceNum": "11",
+            "HappyoTime": "08171200",
+            "AtoJi": "12",
+            "AtoFun": "10",
+            "MaeJi": "12",
+            "MaeFun": "00",
         }
 
         result = updater.process_parsed_records_batch([record])
