@@ -37,6 +37,8 @@ from src.importer.importer import (
     _is_standard_odds_record_erase,
     _is_standard_vote_record_erase,
     _mining_native_snapshot_rows,
+    _rollback_call_created_validation_transactions,
+    _snapshot_validation_transactions,
     _standard_odds_physical_fingerprint,
     _standard_vote_physical_fingerprint,
     apply_rc_batch,
@@ -65,6 +67,7 @@ from src.importer.importer import (
     rollback_failed_import,
     validate_av_record,
     validate_hr_record,
+    validate_hs_record,
     validate_import_record_header,
     validate_jc_record,
     validate_jg_record,
@@ -79,6 +82,7 @@ from src.importer.importer import (
     verify_cs_storage_schema,
     verify_hy_storage_schema,
     verify_hr_storage_schema,
+    verify_hs_storage_schema,
     verify_jc_storage_schema,
     verify_jg_storage_schema,
     verify_ks_coupled_table,
@@ -131,6 +135,7 @@ class OptimizedDataImporter:
         self._verified_we_tables: set[str] = set()
         self._verified_av_tables: set[str] = set()
         self._verified_hr_tables: set[str] = set()
+        self._verified_hs_tables: set[str] = set()
         self._verified_jc_tables: set[str] = set()
         self._verified_cs_tables: set[str] = set()
         self._verified_jg_tables: set[str] = set()
@@ -237,7 +242,19 @@ class OptimizedDataImporter:
             from src.importer.importer import ImporterError
 
             raise ImporterError("JRA-VAN schema import requires a connected database")
-        self._migrate_existing_jravan_tables(commit=auto_commit)
+        transaction_snapshot = _snapshot_validation_transactions(self.database)
+        try:
+            self._migrate_existing_jravan_tables(commit=auto_commit)
+        except Exception:
+            _rollback_call_created_validation_transactions(
+                transaction_snapshot,
+                context="failed standard-schema preparation",
+            )
+            raise
+        _rollback_call_created_validation_transactions(
+            transaction_snapshot,
+            context="completed standard-schema preparation",
+        )
         if auto_commit:
             self._jravan_tables_ready = True
 
@@ -335,6 +352,7 @@ class OptimizedDataImporter:
                     validate_we_record(first_record, first_table_name)
                     validate_av_record(first_record, first_table_name)
                     validate_hr_record(first_record, first_table_name)
+                    validate_hs_record(first_record, first_table_name)
                     validate_jc_record(first_record, first_table_name)
                 records = chain((first_record,), records)
         except Exception:
@@ -424,6 +442,10 @@ class OptimizedDataImporter:
                     if verify_hr_storage_schema(self.database, table_name):
                         self._verified_hr_tables.add(table_name)
                 validate_hr_record(record, table_name)
+                if table_name not in self._verified_hs_tables:
+                    if verify_hs_storage_schema(self.database, table_name):
+                        self._verified_hs_tables.add(table_name)
+                validate_hs_record(record, table_name)
                 if table_name not in self._verified_jc_tables:
                     if verify_jc_storage_schema(self.database, table_name):
                         self._verified_jc_tables.add(table_name)
