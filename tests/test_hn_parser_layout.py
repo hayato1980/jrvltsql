@@ -32,10 +32,10 @@ FIELDS = [
     ("RecordSpec", 1, 2, b"HN"),
     ("DataKubun", 3, 1, b"1"),
     ("MakeDate", 4, 8, b"20260815"),
-    ("HansyokuNum", 12, 10, b"1234567890"),
-    ("reserved", 22, 8, b"RSV00022"),
+    ("HansyokuNum", 12, 10, b"1234567891"),
+    ("reserved", 22, 8, b"00000000"),
     ("KettoNum", 30, 10, b"2019900002"),
-    ("DelKubun", 40, 1, b"2"),
+    ("DelKubun", 40, 1, b"0"),
     ("Bamei", 41, 36, _pad("テスト繁殖馬", 36, zenkaku=True)),
     ("BameiKana", 77, 40, _pad("ﾃｽﾄﾊﾝｼｮｸﾊﾞ", 40)),
     ("BameiEng", 117, 80, _pad("Distinct Breeding Horse Sentinel", 80)),
@@ -43,7 +43,7 @@ FIELDS = [
     ("SexCD", 201, 1, b"3"),
     ("HinsyuCD", 202, 1, b"4"),
     ("KeiroCD", 203, 2, b"05"),
-    ("MochiKubun", 205, 1, b"6"),
+    ("MochiKubun", 205, 1, b"9"),
     ("ImportYear", 206, 4, b"2025"),
     ("SanchiName", 210, 20, _pad("テスト産地", 20, zenkaku=True)),
     ("FHansyokuNum", 230, 10, b"1111111111"),
@@ -98,7 +98,7 @@ class TestHNParserExactLayoutEnforcement:
         self.record = build_record()
 
     def test_exact_current_record_is_accepted(self):
-        assert self.parser.parse(self.record)["HansyokuNum"] == "1234567890"
+        assert self.parser.parse(self.record)["HansyokuNum"] == "1234567891"
 
     @pytest.mark.parametrize(
         "mutate",
@@ -129,15 +129,15 @@ def test_standard_import_refuses_the_obsolete_keyless_schema(tmp_path):
     current_schema = JRAVAN_SCHEMAS["HANSYOKU"]
     obsolete_schema = (
         current_schema.replace(
-            "            HansyokuNum                    VARCHAR(10)         ,  -- 繁殖登録番号\n",
+            "            HansyokuNum                    VARCHAR(10) NOT NULL,  -- 繁殖登録番号\n",
             "",
         )
         .replace(
-            "            HansyokuFNum                   VARCHAR(10)         ,  -- 父馬繁殖登録番号\n",
+            "            HansyokuFNum                   VARCHAR(10) NOT NULL,  -- 父馬繁殖登録番号\n",
             "            HansyokuFNum                   VARCHAR(255)          -- テキスト\n",
         )
         .replace(
-            "            HansyokuMNum                   VARCHAR(10)         ,  -- 母馬繁殖登録番号\n"
+            "            HansyokuMNum                   VARCHAR(10) NOT NULL,  -- 母馬繁殖登録番号\n"
             "            PRIMARY KEY (HansyokuNum)\n",
             "",
         )
@@ -198,13 +198,13 @@ def test_current_record_round_trips_through_supported_storage(
             use_jravan_schema=use_jravan_schema,
         ).import_records(iter([record]))
         row = database.fetch_one(
-            f"SELECT HansyokuNum, BameiEng, {father_column}, {mother_column} " f"FROM {table_name}"
+            f"SELECT HansyokuNum, BameiEng, {father_column}, {mother_column} FROM {table_name}"
         )
 
     assert stats["records_imported"] == 1
     assert stats["records_failed"] == 0
     assert stats["batches_processed"] == 1
-    assert row["HansyokuNum"] == "1234567890"
+    assert row["HansyokuNum"] == "1234567891"
     assert row["BameiEng"] == "Distinct Breeding Horse Sentinel"
     assert row[father_column] == "1111111111"
     assert row[mother_column] == "2222222222"
