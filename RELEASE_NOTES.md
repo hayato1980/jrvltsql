@@ -1,9 +1,24 @@
 # jrvltsql v2.0.0 Release Notes (unreleased draft)
 
-`2.0.0` is not released yet. `2.0.0.dev3` is a **development-test prerelease**
+`2.0.0` is not released yet. `2.0.0.dev4` is a **development-test prerelease**
 of the official data-contract work. It is **not** a production compatibility
 claim: the 64-bit SDK path, 1.x database migration, and long-run collection are
 still unverified.
+
+What `2.0.0.dev4` adds over `2.0.0.dev3`:
+
+- accepts the exact H1 race-cancellation shape observed during the registered
+  five-year provider setup: `DataKubun=9` may retain a known combination while
+  the physical vote field is exactly eleven spaces. The parser exposes
+  `Hyo=""` and native numeric vote storage uses SQL `NULL`; blank values on
+  live statuses 2/4/5 and non-space whitespace remain rejected before
+  mutation. Existing expanded caller rows with status 9 and `Hyo=""` are also
+  accepted as SQL `NULL`, so this release does not claim raw-record provenance
+  for caller-created mappings
+- retains the strict H6 boundary. The official format permits an unregistered
+  space value, but the audit found no available combination-bearing H6
+  status-9 instance in the current RACE cache or development database, so dev4
+  does not widen H6 by analogy
 
 What `2.0.0.dev3` adds over `2.0.0.dev2`:
 
