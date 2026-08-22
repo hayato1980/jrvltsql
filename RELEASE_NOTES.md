@@ -5,6 +5,16 @@ of the official data-contract work. It is **not** a production compatibility
 claim: the 64-bit SDK path, 1.x database migration, and long-run collection are
 still unverified.
 
+Changes queued for the next development prerelease after `2.0.0.dev2`:
+
+- option 3/4 setup uses one inclusive-start, start-only `JVOpen`. The official
+  historical setup tail is all setup data after `fromtime`; an end timestamp
+  only limits the current-month normal-data portion, so `--to` remains a
+  client-side record filter and calendar-year recursion is not used
+- the finite `JVLINK_OPEN_TIMEOUT_SECONDS` ceiling is raised to 86,400 seconds
+  for monitored multi-hour setup recovery; the default remains 120 seconds
+  and invalid, non-finite, or larger values fail closed
+
 What `2.0.0.dev2` adds over `2.0.0.dev1`:
 
 - `JVOpen` no longer imposes a fixed 120s response budget. A deployment sets
@@ -320,8 +330,10 @@ Everything merged since v1.6.9: PR #149, #150, #151, #152, and #153.
   `ChokyoDate` for the `--to` filter and the cache date key. A master row with
   no corresponding event date suppresses the complete-cache marker and rolls
   back the partial cache appended by the same fetch.
-- Invalidates legacy cache completeness markers under schema v2, separating
-  legacy raw from active raw.
+- Invalidates pre-fix cache completeness markers under schema v3, separating
+  schema-v2 raw records from the active cache generation. A v2 marker cannot
+  prove that the corrected inclusive setup start retained a record stamped
+  exactly at midnight.
 - Corrects the `fetch --option 2` note and `--from` help to match the official
   JV-Link specification: `fromtime` manages continuity within the current race
   cycle rather than selecting an arbitrary retained week, and Sunday/Monday can

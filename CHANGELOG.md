@@ -9,6 +9,14 @@
 
 次回リリースは互換性を破る変更を含むため `2.0.0` とする。1.xとしては配布しない。
 
+### 次の開発検証用prerelease
+
+- 公式 option 3/4 の historical setup tail は終了時刻で上限を切れないため、
+  setup を年単位に再帰して後続tailを反復しない。要求開始日を包含する
+  start-only `JVOpen` を1回だけ使い、`--to` はclient-side filterとして扱う
+- 複数年setupを有限に監視できるよう `JVLINK_OPEN_TIMEOUT_SECONDS` の許容範囲を
+  1〜86,400秒へ拡張する（既定120秒は維持、非有限値と範囲外はfail closed）
+
 ### 2.0.0.dev2 (開発検証用prerelease)
 
 実デプロイ設定を読み込んだ結果の修正。
@@ -249,7 +257,8 @@
 - HC/WC を日付なし master として扱わず、時系列の `ChokyoDate` で `--to` filter と
   cache 日付を判定。対応する event date を持たない master 行を検出した場合は完全
   cache marker を付けず、同一取得の部分 cache append も rollback する
-- 旧 cache の完全性 marker を schema v2 で失効させ、legacy raw と active raw を分離
+- setup開始境界の修正前に作成された schema v2 の完全性 marker を schema v3 で
+  失効させ、旧 raw と active raw を分離
 
 ### Changed
 

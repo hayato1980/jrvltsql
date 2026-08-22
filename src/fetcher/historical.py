@@ -4,11 +4,15 @@ This module fetches historical JV-Data from JV-Link.
 """
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterator, Optional
 
 from src.fetcher.base import BaseFetcher, FetcherError
-from src.jvlink.constants import validate_jvopen_combination
+from src.jvlink.constants import (
+    JVOPEN_OPTION_SETUP,
+    JVOPEN_OPTION_SETUP_SPLIT,
+    validate_jvopen_combination,
+)
 from src.utils.logger import get_logger
 from src.utils.progress import JVLinkProgressDisplay
 
@@ -27,12 +31,61 @@ def _extract_record_date(record: dict) -> Optional[str]:
     return None
 
 
+def validate_date_range(from_date: str, to_date: str) -> None:
+    """Reject malformed, non-calendar, or inverted date ranges.
+
+    JVOpen・キャッシュ・スキーマ作成のいずれに触れるよりも前に呼ぶこと。
+    fromtime はここで検証済みの日付からしか組み立てない。
+    """
+    for label, value in (("from_date", from_date), ("to_date", to_date)):
+        if not isinstance(value, str) or len(value) != 8 or not value.isdigit():
+            raise ValueError(
+                f"{label} must be an 8-digit YYYYMMDD string, got {value!r}"
+            )
+        try:
+            datetime.strptime(value, "%Y%m%d")
+        except ValueError:
+            raise ValueError(
+                f"{label} must be a real calendar date in YYYYMMDD format, "
+                f"got {value!r}"
+            ) from None
+    if from_date > to_date:
+        raise ValueError(
+            f"from_date must not be after to_date: {from_date} > {to_date}"
+        )
+
+
+def _jvopen_fromtime(from_date: str, option: int) -> str:
+    """Build the official JVOpen fromtime for this request.
+
+    公式仕様（4.9.0.1 p.17-20）の対象条件は開始時刻より大きいデータ。
+    要求された from_date を包含させるため、セットアップ (option 3/4) では
+    排他的開始点を前日23:59:59に符号化する。
+
+    p.20 は option 3/4 について、前月までのセットアップ用データは fromtime
+    より大きい全件を返し、終了時刻が制限するのは今月の通常データ部分だけと
+    明記する。したがって過去setup dataを ``to_date`` でboundedにできるとは
+    扱わず、setupはstart-onlyを1回だけ呼ぶ。option 1の差分cursor・option 2の
+    今週データ契約は変更しない。
+    """
+    if option not in (JVOPEN_OPTION_SETUP, JVOPEN_OPTION_SETUP_SPLIT):
+        return f"{from_date}000000"
+    return (
+        datetime.strptime(from_date, "%Y%m%d") - timedelta(seconds=1)
+    ).strftime("%Y%m%d%H%M%S")
+
+
 class HistoricalFetcher(BaseFetcher):
     """Fetcher for historical JV-Data.
 
     Fetches accumulated (蓄積) data from JV-Link for a specified date range
-    and data specification. The JV-Link API retrieves all data from the
-    start date onwards, then filters records client-side based on the end date.
+    and data specification. For setup requests (option 3/4) the requested
+    inclusive from_date is encoded as the exclusive fromtime start point
+    (previous day 23:59:59, per the official strictly-greater rule). Setup
+    stays start-only because the official option-3/4 contract does not apply
+    an end timestamp to the historical setup tail. Options 1/2 keep the
+    legacy ``{from_date}000000`` start-only fromtime. In every mode records
+    are filtered client-side based on the end date.
 
     Note:
         Service key must be configured in JRA-VAN DataLab application
@@ -198,6 +251,12 @@ class HistoricalFetcher(BaseFetcher):
             dates up to and including to_date. Records without date fields
             (Year/MonthDay) are always included.
 
+            For option 3/4 the requested inclusive from_date is encoded as
+            the exclusive start point ``(from_date - 1 day)235959``. The
+            official p.20 setup contract returns every historical setup item
+            after that point; ``to_date`` is therefore a client-side record
+            filter, not a provider bound for the historical setup tail.
+
         Examples:
             >>> fetcher = HistoricalFetcher()  # Uses default sid="UNKNOWN"
             >>> # 通常データ取得（差分データ）
@@ -211,6 +270,9 @@ class HistoricalFetcher(BaseFetcher):
         """
         # Validate every four-character component before JV-Link/cache state.
         validate_jvopen_combination(data_spec, option)
+        # Reject malformed/inverted dates before JV-Link or cache mutation;
+        # fromtime below is built from these validated values.
+        validate_date_range(from_date, to_date)
 
         # Fetcher instances are reused across data specs and setup chunks.
         # Reset before JVOpen so no-data/error early exits cannot expose
@@ -233,12 +295,19 @@ class HistoricalFetcher(BaseFetcher):
         cache_write_committed = active_cache_manager is None
         cache_range_complete = True
 
+        # 公式の fromtime 形式をここで決める（仕様書 4.9.0.1 p.17-20）。
+        # セットアップは from_date を包含する排他的開始点（前日23:59:59）を
+        # start-onlyで送る。to_dateは過去setup tailのprovider boundにはならず、
+        # 下流のclient-side filterとしてのみ使う。
+        fromtime = _jvopen_fromtime(from_date, option)
+
         try:
             # Info for setup mode (option 3 or 4) - ログのみ、画面表示はしない
             if option in (3, 4):
                 logger.info(
-                    "セットアップモード - 全データを取得します",
+                    "セットアップモード",
                     option=option,
+                    provider_tail="start_only",
                 )
 
             # Initialize JV-Link
@@ -250,12 +319,6 @@ class HistoricalFetcher(BaseFetcher):
             # Note: Service key must be pre-configured in Windows registry
             # jv_init() does not accept service_key parameter
             self.jvlink.jv_init()
-
-            # Convert dates to fromtime format
-            # fromtime format: "YYYYMMDDhhmmss" (single timestamp)
-            # JV-Link retrieves data from this timestamp onwards
-            # Option meanings: 1=通常データ, 2=今週データ, 3/4=セットアップ
-            fromtime = f"{from_date}000000"
             self._jvd_self_repair_attempts = 0
             self._jvd_replay_records_remaining = 0
             self._jv_open_context = (data_spec, fromtime, option)
@@ -272,7 +335,8 @@ class HistoricalFetcher(BaseFetcher):
                 note=(
                     "option=1: 通常データ（差分）; "
                     "option=2: 今週データ; "
-                    "option=3/4: セットアップ（全データ）"
+                    "option=3/4: セットアップ"
+                    "（過去setup tailはstart-only、to_dateはclient filter）"
                 ),
             )
 
@@ -379,7 +443,6 @@ class HistoricalFetcher(BaseFetcher):
 
             # Mark cached dates as complete
             if active_cache_manager and cache_range_complete:
-                from datetime import timedelta
                 d = datetime.strptime(from_date, "%Y%m%d").date()
                 end = datetime.strptime(to_date, "%Y%m%d").date()
                 completed_dates = []
@@ -518,7 +581,10 @@ class HistoricalFetcher(BaseFetcher):
             ValueError: If data_spec or option violates the JVOpen contract
         """
         # A cache hit bypasses fetch(), so validate before reading cache state.
+        # 日付検証も同様: 逆転した範囲は has_nl_range が空の全日付走査で
+        # True を返し「静かな空成功」になるため、ここで拒否する。
         validate_jvopen_combination(data_spec, option)
+        validate_date_range(from_date, to_date)
 
         if option == 2:
             # Do not trust old false-complete markers created by earlier

@@ -338,8 +338,38 @@ class TestFetchCommand(unittest.TestCase):
         self.assertIn('current race-cycle data', help_text)
         self.assertIn('Sunday or Monday may cover two cycles', help_text)
         self.assertIn('ChokyoDate', help_text)
-        self.assertIn('calendar-year chunks', help_text)
-        self.assertIn('adds another chunk', help_text)
+        self.assertIn('not a JVOpen end bound', help_text)
+        self.assertIn('historical setup tail', help_text)
+        self.assertIn('single start-only JVOpen', help_text)
+
+    @patch('src.database.create_database_from_config')
+    def test_fetch_rejects_invalid_dates_before_database_initialization(
+        self, mock_create_database
+    ):
+        example_config = (
+            Path(__file__).resolve().parents[1] / 'config' / 'config.yaml.example'
+        )
+        with self.runner.isolated_filesystem():
+            config_path = Path('config.yaml')
+            config_path.write_text(
+                example_config.read_text(encoding='utf-8'),
+                encoding='utf-8',
+            )
+            result = self.runner.invoke(
+                cli,
+                [
+                    '--config', str(config_path),
+                    'fetch',
+                    '--from', '20260820',
+                    '--to', '20250820',
+                    '--spec', 'RACE',
+                    '--db', 'sqlite',
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn('from_date must not be after to_date', result.output)
+        mock_create_database.assert_not_called()
 
     @patch('src.importer.batch.BatchProcessor')
     def test_fetch_with_all_args(self, mock_batch_processor):
@@ -381,6 +411,47 @@ jvlink:
             # Should execute (may fail due to missing JV-Link, but that's OK for CLI test)
             # Just verify command structure works
             self.assertIsNotNone(result)
+
+
+class TestCacheBuildCommand(unittest.TestCase):
+    """Test fail-before-cache contracts for ``cache build``."""
+
+    def setUp(self):
+        self.runner = CliRunner()
+
+    @patch('src.cache.CacheManager')
+    def test_commands_reject_invalid_dates_before_cache_lookup(
+        self, mock_cache_manager
+    ):
+        example_config = (
+            Path(__file__).resolve().parents[1] / 'config' / 'config.yaml.example'
+        )
+        with self.runner.isolated_filesystem():
+            config_path = Path('config.yaml')
+            config_path.write_text(
+                example_config.read_text(encoding='utf-8'),
+                encoding='utf-8',
+            )
+            for command in ('build', 'rebuild'):
+                with self.subTest(command=command):
+                    mock_cache_manager.reset_mock()
+                    result = self.runner.invoke(
+                        cli,
+                        [
+                            '--config', str(config_path),
+                            'cache', command,
+                            '--spec', 'RACE',
+                            '--from', '20260820',
+                            '--to', '20250820',
+                            '--option', '4',
+                        ],
+                    )
+
+                    self.assertEqual(result.exit_code, 1, result.output)
+                    self.assertIn(
+                        'from_date must not be after to_date', result.output
+                    )
+                    mock_cache_manager.assert_not_called()
 
 
 class TestMonitorCommand(unittest.TestCase):

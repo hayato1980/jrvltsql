@@ -5,23 +5,26 @@ This module provides utilities for batch processing of JV-Data.
 
 from datetime import datetime, timedelta
 from itertools import islice
-from typing import Iterator, List, Optional, Tuple
+from typing import Iterator, List
 
 from src.database.base import BaseDatabase
 from src.database.schema import create_all_tables
-from src.fetcher.historical import HistoricalFetcher
+from src.fetcher.historical import HistoricalFetcher, validate_date_range
 from src.importer.importer import DataImporter, ImporterError
 from src.jvlink.constants import validate_jvopen_combination
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# option=4 (分割セットアップ) streams an accumulated range through a single
-# JVOpen call, so one import can run for hours. Held in a single transaction,
-# an interrupted run leaves nothing behind and the retry starts over from the
-# beginning -- a long enough range never gets imported at all. Commit it in
-# bounded chunks instead.
-SINGLE_OPEN_SETUP_OPTION = 4
+# option=4 (分割セットアップ) streams an accumulated range through JVOpen, so
+# one import can run for hours. Held in a single transaction, an interrupted
+# run leaves nothing behind and the retry starts over from the beginning -- a
+# long enough range never gets imported at all. Commit it in bounded record
+# groups instead. The official option-3/4 contract keeps the historical setup
+# data tail open after fromtime even when an end timestamp is supplied, so a
+# long request must remain one provider open; calendar chunking would repeat
+# the later tail for every chunk.
+SPLIT_SETUP_OPTION = 4
 SETUP_COMMIT_INTERVAL = 10000
 
 
@@ -143,12 +146,15 @@ class BatchProcessor:
             ValueError: If data_spec or option violates the JVOpen contract
 
         Note:
-            JV-Link fetches all data from from_date onwards, then filters
-            records client-side to only import those with dates <= to_date.
+            Setup requests (option 3/4) use one start-only JVOpen because the
+            official p.20 contract does not apply an end point to the
+            historical setup tail. In every mode records are filtered
+            client-side to only import those with dates <= to_date.
 
             option=4 commits every SETUP_COMMIT_INTERVAL records rather than
             once for the whole data spec, so an interrupted run keeps what it
-            already imported.
+            already imported after JVOpen has returned and streaming begins.
+            A failed JVOpen itself has no import progress to commit.
 
         Examples:
             >>> processor = BatchProcessor(database=db)
@@ -157,6 +163,7 @@ class BatchProcessor:
         """
         # Stop before schema creation or transaction state for invalid input.
         validate_jvopen_combination(data_spec, option)
+        validate_date_range(from_date, to_date)
 
         logger.info(
             "Starting batch processing",
@@ -165,16 +172,6 @@ class BatchProcessor:
             to_date=to_date,
             option=option,
         )
-
-        if self._should_split_setup_range(from_date, to_date, option):
-            return self._process_split_setup_range(
-                data_spec=data_spec,
-                from_date=from_date,
-                to_date=to_date,
-                option=option,
-                auto_commit=auto_commit,
-                ensure_tables=ensure_tables,
-            )
 
         # Ensure tables exist
         if ensure_tables:
@@ -192,7 +189,7 @@ class BatchProcessor:
             # Where the transaction breaks is decided here and nowhere else.
             # Committing inside DataImporter would make a later parser/import
             # rejection impossible to roll back.
-            commit_per_chunk = option == SINGLE_OPEN_SETUP_OPTION and auto_commit
+            commit_per_chunk = option == SPLIT_SETUP_OPTION and auto_commit
             groups = (
                 _chunks(records, SETUP_COMMIT_INTERVAL)
                 if commit_per_chunk
@@ -266,85 +263,6 @@ class BatchProcessor:
         failed_records = int(stats.get("records_failed", 0) or 0)
         if failed_records:
             raise ImporterError(f"Import rejected {failed_records} record(s)")
-
-    @staticmethod
-    def _should_split_setup_range(from_date: str, to_date: str, option: int) -> bool:
-        # option=4 (分割セットアップ) は JVOpen を1回だけ呼び出して全期間を一括取得する。
-        # 年単位に分割すると各チャンクで JV-Link が fromtime 以降の全データを返すため
-        # O(n^2) の処理量になる。option=3 のみ従来の年分割を維持する。
-        if option != 3:
-            return False
-        start = datetime.strptime(from_date, "%Y%m%d")
-        end = datetime.strptime(to_date, "%Y%m%d")
-        return (end - start).days > 370
-
-    def _iter_year_chunks(self, from_date: str, to_date: str) -> Iterator[Tuple[str, str]]:
-        start = datetime.strptime(from_date, "%Y%m%d")
-        end = datetime.strptime(to_date, "%Y%m%d")
-        year = start.year
-        while year <= end.year:
-            chunk_start = max(start, datetime(year, 1, 1))
-            chunk_end = min(end, datetime(year, 12, 31))
-            yield chunk_start.strftime("%Y%m%d"), chunk_end.strftime("%Y%m%d")
-            year += 1
-
-    def _process_split_setup_range(
-        self,
-        data_spec: str,
-        from_date: str,
-        to_date: str,
-        option: int,
-        auto_commit: bool,
-        ensure_tables: bool,
-    ) -> dict:
-        logger.info(
-            "Splitting setup range into yearly chunks to avoid JVOpen memory pressure",
-            data_spec=data_spec,
-            from_date=from_date,
-            to_date=to_date,
-            option=option,
-        )
-        if ensure_tables:
-            create_all_tables(self.database)
-
-        combined_stats: dict = {}
-        try:
-            begin_transaction = getattr(self.database, "begin_transaction", None)
-            if begin_transaction is not None:
-                begin_transaction()
-
-            for idx, (chunk_from, chunk_to) in enumerate(
-                self._iter_year_chunks(from_date, to_date), start=1
-            ):
-                logger.info(
-                    "Processing setup chunk",
-                    chunk_index=idx,
-                    chunk_from=chunk_from,
-                    chunk_to=chunk_to,
-                    data_spec=data_spec,
-                )
-                chunk_stats = self.process_date_range(
-                    data_spec=data_spec,
-                    from_date=chunk_from,
-                    to_date=chunk_to,
-                    option=option,
-                    auto_commit=False,
-                    ensure_tables=False,
-                )
-                _accumulate_stats(combined_stats, chunk_stats)
-
-            if auto_commit:
-                self.database.commit()
-            return combined_stats
-        except Exception:
-            try:
-                self.database.rollback()
-            except Exception as rollback_error:
-                logger.warning(
-                    "Split setup rollback failed",
-                    error=str(rollback_error),
-                )
-            raise
 
     def process_month(
         self,

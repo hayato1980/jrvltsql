@@ -1,6 +1,6 @@
-"""Tests for batch processor setup-range splitting decisions."""
+"""Tests for batch processor setup-range and transaction decisions."""
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -10,19 +10,6 @@ from src.database.sqlite_handler import SQLiteDatabase
 from src.fetcher.historical import HistoricalFetcher
 from src.importer.batch import BatchProcessor
 from src.importer.importer import DataImporter, ImporterError
-
-
-def test_option_3_setup_range_splits_long_periods():
-    assert BatchProcessor._should_split_setup_range("20200101", "20220101", 3) is True
-
-
-def test_option_4_setup_range_does_not_split_long_periods():
-    assert BatchProcessor._should_split_setup_range("20200101", "20220101", 4) is False
-
-
-def test_diff_options_do_not_split_long_periods():
-    assert BatchProcessor._should_split_setup_range("20200101", "20220101", 1) is False
-    assert BatchProcessor._should_split_setup_range("20200101", "20220101", 2) is False
 
 
 def test_historical_no_data_resets_statistics_from_previous_spec():
@@ -241,102 +228,34 @@ def test_multiple_specs_passes_auto_commit_without_overwriting_option():
     assert results["_summary"]["failed"] == 0
 
 
-def test_split_setup_commits_once_after_all_chunks_succeed():
-    processor = BatchProcessor.__new__(BatchProcessor)
-    processor.database = MagicMock()
-    processor._iter_year_chunks = MagicMock(
-        return_value=iter(
-            [("20200101", "20201231"), ("20210101", "20211231")]
-        )
-    )
-    processor.process_date_range = MagicMock(
-        side_effect=[
-            {"records_imported": 2, "records_failed": 0},
-            {"records_imported": 3, "records_failed": 0},
-        ]
-    )
-
-    stats = processor._process_split_setup_range(
-        "RACE", "20200101", "20211231", 3, True, False
-    )
-
-    assert stats["records_imported"] == 5
-    assert all(
-        call.kwargs["auto_commit"] is False
-        for call in processor.process_date_range.call_args_list
-    )
-    processor.database.commit.assert_called_once_with()
-
-
-@pytest.mark.parametrize("driver", ["pg8000", "psycopg"])
-def test_split_setup_rolls_back_postgresql_transaction_on_later_failure(
-    monkeypatch, driver
-):
-    import src.database.postgresql_handler as postgresql_handler
-
-    database = postgresql_handler.PostgreSQLDatabase({})
-    database._connection = MagicMock()
-    database._cursor = MagicMock()
-    monkeypatch.setattr(postgresql_handler, "DRIVER", driver)
-
-    processor = BatchProcessor.__new__(BatchProcessor)
-    processor.database = database
-    processor._iter_year_chunks = MagicMock(
-        return_value=iter(
-            [("20200101", "20201231"), ("20210101", "20211231")]
-        )
-    )
-    processor.process_date_range = MagicMock(
-        side_effect=[{"records_imported": 1}, RuntimeError("later chunk failed")]
-    )
-
-    with pytest.raises(RuntimeError, match="later chunk failed"):
-        processor._process_split_setup_range(
-            "RACE", "20200101", "20211231", 3, True, False
-        )
-
-    if driver == "pg8000":
-        assert database._connection.run.call_args_list == [
-            call("BEGIN"),
-            call("ROLLBACK"),
-        ]
-    else:
-        database._connection.rollback.assert_called_once_with()
-
-
-def test_split_setup_rolls_back_all_chunks_on_later_failure(tmp_path):
-    database = SQLiteDatabase({"path": str(tmp_path / "split-atomic.db")})
+def test_option_3_long_range_uses_one_open_and_remains_atomic(tmp_path):
+    """option=3は年次tailを反復せず、後段拒否時は単一transactionを戻す。"""
+    database = SQLiteDatabase({"path": str(tmp_path / "option3-single-open.db")})
     processor = BatchProcessor.__new__(BatchProcessor)
     processor.database = database
     processor.cache_manager = None
     processor.fetcher = MagicMock()
-    processor.fetcher.fetch.side_effect = [
-        iter(
-            [
-                {
-                    "RecordSpec": "RA",
-                    "DataKubun": "1",
-                    "MakeDate": "20250714",
-                    "Year": "2025",
-                    "MonthDay": "0714",
-                    "JyoCD": "05",
-                    "Kaiji": "01",
-                    "Nichiji": "01",
-                    "RaceNum": "01",
-                }
-            ]
-        ),
-        iter([{"RecordSpec": "RA", "DataKubun": "Z"}]),
-    ]
-    processor.fetcher.get_statistics.side_effect = [
-        {"records_fetched": 1, "records_parsed": 1, "records_failed": 0},
-        {"records_fetched": 1, "records_parsed": 1, "records_failed": 0},
-    ]
-    processor._iter_year_chunks = MagicMock(
-        return_value=iter(
-            [("20250101", "20251231"), ("20260101", "20261231")]
-        )
+    processor.fetcher.fetch.return_value = iter(
+        [
+            {
+                "RecordSpec": "RA",
+                "DataKubun": "1",
+                "MakeDate": "20250714",
+                "Year": "2025",
+                "MonthDay": "0714",
+                "JyoCD": "05",
+                "Kaiji": "01",
+                "Nichiji": "01",
+                "RaceNum": "01",
+            },
+            {"RecordSpec": "RA", "DataKubun": "Z"},
+        ]
     )
+    processor.fetcher.get_statistics.return_value = {
+        "records_fetched": 2,
+        "records_parsed": 2,
+        "records_failed": 0,
+    }
 
     with database:
         database.execute(SCHEMAS["NL_RA"])
@@ -344,12 +263,15 @@ def test_split_setup_rolls_back_all_chunks_on_later_failure(tmp_path):
         processor.importer = DataImporter(database, batch_size=1)
 
         with pytest.raises(SchemaMigrationError, match="DataKubun"):
-            processor._process_split_setup_range(
-                "RACE", "20250101", "20261231", 3, True, False
+            processor.process_date_range(
+                "RACE", "20200101", "20260819", option=3, ensure_tables=False
             )
 
         row_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_RA")["count"]
 
+    processor.fetcher.fetch.assert_called_once_with(
+        "RACE", "20200101", "20260819", 3
+    )
     assert row_count == 0
 
 
@@ -426,6 +348,8 @@ def _transaction_calls(database):
     return [name for name, _args, _kwargs in database.mock_calls]
 
 
+# 以下の option=4 テスト群は「1回のオープン内のコミット間隔」契約を固定する。
+# 日付範囲の長短にかかわらずprovider setup tailは1回だけopenする。
 def test_option_4_commits_once_per_interval(monkeypatch):
     monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 2)
     processor = _chunking_processor([_record(i) for i in range(5)])
@@ -584,3 +508,105 @@ def test_option_4_rejection_rolls_back_only_its_own_chunk(tmp_path, monkeypatch)
     # Chunk 1 (races 01, 02) stays committed; chunk 2 loses race 03 along
     # with the rejected record.
     assert row_count == 2
+
+
+def test_option_4_long_range_uses_one_provider_open_and_keeps_group_commits(
+    tmp_path, monkeypatch
+):
+    """長期間setupもprovider tailは1回だけopenし、group単位で耐久化する。"""
+    monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 1)
+
+    def _valid_ra(race_num):
+        return {
+            "RecordSpec": "RA",
+            "DataKubun": "1",
+            "MakeDate": "20260714",
+            "Year": "2026",
+            "MonthDay": "0714",
+            "JyoCD": "05",
+            "Kaiji": "01",
+            "Nichiji": "01",
+            "RaceNum": race_num,
+        }
+
+    database = SQLiteDatabase({"path": str(tmp_path / "option4-single-open.db")})
+    processor = BatchProcessor.__new__(BatchProcessor)
+    processor.database = database
+    processor.cache_manager = None
+    processor.fetcher = MagicMock()
+    processor.fetcher.fetch.return_value = iter([_valid_ra("01"), _valid_ra("02")])
+    processor.fetcher.get_statistics.return_value = {
+        "records_fetched": 2,
+        "records_parsed": 2,
+        "records_failed": 0,
+    }
+
+    with database:
+        database.execute(SCHEMAS["NL_RA"])
+        database.commit()
+        processor.importer = DataImporter(database, batch_size=1)
+        stats = processor.process_date_range(
+            "RACE", "20240820", "20260819", option=4, ensure_tables=False
+        )
+        row_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_RA")["count"]
+
+    processor.fetcher.fetch.assert_called_once_with(
+        "RACE", "20240820", "20260819", 4
+    )
+    assert stats["records_imported"] == 2
+    assert row_count == 2
+
+
+def test_option_4_long_range_uses_one_full_scope_cache_request():
+    """cache付きでも年窓へ分割せず、同一scopeのresume単位を維持する。"""
+    processor = BatchProcessor.__new__(BatchProcessor)
+    processor.database = MagicMock()
+    cache = MagicMock()
+    processor.cache_manager = cache
+    processor.fetcher = MagicMock()
+    processor.fetcher.fetch_with_cache.return_value = iter([])
+    processor.fetcher.get_statistics.return_value = {
+        "records_fetched": 0,
+        "records_parsed": 0,
+        "records_failed": 0,
+    }
+    processor.importer = _RecordingImporter()
+
+    processor.process_date_range(
+        "RACE", "20240820", "20260819", option=4, ensure_tables=False
+    )
+
+    processor.fetcher.fetch_with_cache.assert_called_once_with(
+        cache, "RACE", "20240820", "20260819", 4
+    )
+
+
+@pytest.mark.parametrize(
+    ("bad_from", "bad_to"),
+    [
+        ("2025-08-20", "20260819"),  # 区切り文字入り
+        ("20250820", "20260832"),    # 実在しない暦日
+        (None, "20260819"),          # 欠落
+        ("20260819", "20250820"),    # 逆転した範囲
+    ],
+)
+def test_invalid_dates_stop_before_schema_transaction_or_fetch(
+    monkeypatch, bad_from, bad_to
+):
+    processor = BatchProcessor.__new__(BatchProcessor)
+    processor.database = MagicMock()
+    processor.cache_manager = None
+    processor.fetcher = MagicMock()
+    processor.importer = MagicMock()
+    prepare_schema = MagicMock()
+    monkeypatch.setattr("src.importer.batch.create_all_tables", prepare_schema)
+
+    with pytest.raises(ValueError):
+        processor.process_date_range("RACE", bad_from, bad_to, option=4)
+
+    prepare_schema.assert_not_called()
+    processor.fetcher.fetch.assert_not_called()
+    processor.fetcher.fetch_with_cache.assert_not_called()
+    assert "begin_transaction" not in [
+        name for name, _args, _kwargs in processor.database.mock_calls
+    ]

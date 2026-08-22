@@ -35,14 +35,16 @@ FETCH_NOTE_OPTION2_RANGE = (
     "NL キャッシュは使用・作成しません。"
 )
 FETCH_NOTE_TO_CLIENT_FILTER = (
-    "--to は JVOpen の終端ではなく、取得後のクライアント側フィルタです。"
+    "--to は取得後のクライアント側日付フィルタであり、JVOpen の終端ではありません。"
 )
 FETCH_NOTE_TO_SINGLE_OPEN = (
-    "option=1/2/4 では --to を狭めてもサーバからのダウンロード量は減りません。"
+    "option=1/2 では --to は JVOpen の終端にならず、"
+    "狭めてもサーバからのダウンロード量は減りません。"
 )
-FETCH_NOTE_TO_SETUP_CHUNKS = (
-    "option=3 の370日超の範囲は年単位の JVOpen に分割され、"
-    "--to の延長で年次チャンクが追加される場合に呼び出し回数とダウンロード量が増えます。"
+FETCH_NOTE_TO_SETUP_TAIL = (
+    "option=3/4 の historical setup tail は公式仕様上 fromtime 以降の全件が"
+    "対象で、終了時刻は過去setup部分を境界付けません。排他的開始点には "
+    "--from 前日の 23:59:59 を使い、長期間でも single JVOpen を維持します。"
 )
 FETCH_NOTE_DATE_FIELDS = (
     "--to は Year+MonthDay または ChokyoDate（HC/WC の調教日）で判定します。"
@@ -86,8 +88,8 @@ def _print_fetch_guardrail_notes(jv_option: int) -> None:
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_OPTION2_RANGE}")
 
     err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_CLIENT_FILTER}")
-    if jv_option == 3:
-        err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_SETUP_CHUNKS}")
+    if jv_option in (3, 4):
+        err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_SETUP_TAIL}")
     else:
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_SINGLE_OPEN}")
     err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_DATE_FIELDS}")
@@ -389,10 +391,14 @@ def update(ctx, force):
     "date_from",
     required=True,
     help=(
-        "Start date (YYYYMMDD), passed as JVOpen fromtime for all options. "
-        "With option=2 it manages continuity within the current race-cycle "
-        "data; it does not select an arbitrary historical week, and Sunday "
-        "or Monday may cover two cycles. NL cache is bypassed."
+        "Start date (YYYYMMDD). With option=3/4 it is inclusive: the "
+        "exclusive JVOpen start point is encoded as the previous day "
+        "23:59:59 under the official strictly-greater rule. With option=1/2 "
+        "the existing cursor contract is unchanged and this date is passed "
+        "directly as YYYYMMDD000000. With option=2 it manages continuity "
+        "within the current race-cycle data; it does not select an arbitrary "
+        "historical week, and Sunday or Monday may cover two cycles. NL "
+        "cache is bypassed."
     ),
 )
 @click.option(
@@ -400,11 +406,12 @@ def update(ctx, force):
     "date_to",
     required=True,
     help=(
-        "Client-side end date (YYYYMMDD), not a JVOpen end bound. Filters "
-        "Year+MonthDay and HC/WC ChokyoDate; records without either date are "
-        "kept and prevent a complete-cache marker. With option=3, ranges over "
-        "370 days are split into calendar-year chunks; extending --to increases "
-        "downloads only when it adds another chunk."
+        "End date (YYYYMMDD). Filters Year+MonthDay and HC/WC ChokyoDate "
+        "client-side; records without either date are kept and prevent a "
+        "complete-cache marker. It is not a JVOpen end bound. Under the "
+        "official option=3/4 contract, the historical setup tail remains all "
+        "setup data after --from even when fromtime has an end point, so "
+        "setup uses a single start-only JVOpen rather than repeated year chunks."
     ),
 )
 @click.option("--spec", "data_spec", required=True, help="Data specification (RACE, DIFN, etc.)")
@@ -436,6 +443,7 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
     """
     from src.database import create_database_from_config, DatabaseError
     from src.database.schema import create_all_tables
+    from src.fetcher.historical import validate_date_range
     from src.importer.batch import BatchProcessor
 
     config = ctx.obj.get("config")
@@ -467,6 +475,16 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
         console.print(f"[red]Error:[/red] データ種別 '{data_spec}' は option={jv_option} では取得できません")
         valid_specs = JVOPEN_VALID_COMBINATIONS.get(jv_option, [])
         console.print(f"       option={jv_option} で取得可能: {', '.join(valid_specs)}")
+        sys.exit(1)
+
+    # The CLI prepares every table before BatchProcessor runs. Reject the
+    # range here as well so malformed input cannot initialize a database or
+    # apply an additive schema migration before it is diagnosed.
+    try:
+        validate_date_range(date_from, date_to)
+    except ValueError as exc:
+        console.print()
+        console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
 
     _print_fetch_guardrail_notes(jv_option)
@@ -615,7 +633,7 @@ def cache_build(ctx, data_spec, date_from, date_to, jv_option, also_import, db, 
       jltsql cache build --spec DIFN --from 20260101 --to 20260328 --also-import
     """
     from src.cache import CacheManager
-    from src.fetcher.historical import HistoricalFetcher
+    from src.fetcher.historical import HistoricalFetcher, validate_date_range
 
     _reject_invalid_jvopen_combination(data_spec, jv_option)
 
@@ -626,6 +644,11 @@ def cache_build(ctx, data_spec, date_from, date_to, jv_option, also_import, db, 
             "an arbitrary historical range, so the requested date range "
             "cannot be marked complete safely"
         )
+
+    try:
+        validate_date_range(date_from, date_to)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     config = ctx.obj.get("config", {}) if ctx.obj else {}
 
@@ -728,6 +751,13 @@ def cache_rebuild(ctx, data_spec, date_from, date_to, jv_option, cache_dir):
             "an arbitrary historical range, so the requested date range "
             "cannot be marked complete safely"
         )
+
+    from src.fetcher.historical import validate_date_range
+
+    try:
+        validate_date_range(date_from, date_to)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     from src.cache import CacheManager
     mgr = CacheManager(Path(cache_dir))
