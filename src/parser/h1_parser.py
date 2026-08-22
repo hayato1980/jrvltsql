@@ -206,7 +206,14 @@ class H1Parser:
             cls._require_ascii_digits(
                 "Kumi", record.get("Kumi"), cls.COMBINATION_WIDTHS[bet_type]
             )
-            cls._require_ascii_digits("Hyo", record.get("Hyo"), cls.VOTE_WIDTH)
+            hyo = record.get("Hyo")
+            if not (status == "9" and hyo == ""):
+                # A provider cancellation may retain a registered combination
+                # while returning the fixed-width vote field as spaces.  The
+                # parser's sole canonical representation of that field is the
+                # empty string; live snapshots and all other blank-like values
+                # remain invalid.
+                cls._require_ascii_digits("Hyo", hyo, cls.VOTE_WIDTH)
             cls._require_favourite(record.get("Ninki"), cls.FAVOURITE_WIDTHS[bet_type])
         else:
             raise ValueError("H1 BetType is not an official 賭式")
@@ -275,7 +282,16 @@ class H1Parser:
             for i in range(count):
                 offset = start + (entry_size * i)
                 kumi = self.decode_field(data[offset:offset + kumi_len])
-                hyo = self.decode_field(data[offset + kumi_len:offset + kumi_len + 11])
+                raw_hyo = data[offset + kumi_len:offset + kumi_len + self.VOTE_WIDTH]
+                hyo = self.decode_field(raw_hyo)
+                if hyo == "" and raw_hyo != b" " * self.VOTE_WIDTH:
+                    # ``str.strip()`` also removes tabs and other CP932
+                    # whitespace.  Only the official fixed-width initial
+                    # value (11 ASCII spaces) may become the canonical empty
+                    # vote used by status-9 cancellation snapshots.
+                    raise ValueError(
+                        "H1 blank Hyo must be exactly 11 ASCII spaces"
+                    )
                 ninki = self.decode_field(data[offset + kumi_len + 11:offset + kumi_len + 11 + ninki_len])
 
                 # Skip empty entries (all spaces or zeros)
