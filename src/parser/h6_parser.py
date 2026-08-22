@@ -151,7 +151,14 @@ class H6Parser:
         cls._require_ascii_digits(
             "SanrentanKumi", record.get("SanrentanKumi"), cls.COMBINATION_WIDTH
         )
-        cls._require_ascii_digits("SanrentanHyo", record.get("SanrentanHyo"), cls.VOTE_WIDTH)
+        hyo = record.get("SanrentanHyo")
+        if not (status == "9" and hyo == ""):
+            # A provider cancellation may retain a registered combination
+            # while returning the fixed-width vote field as spaces.  The
+            # parser's sole canonical representation of that field is the
+            # empty string; live snapshots and all other blank-like values
+            # remain invalid.
+            cls._require_ascii_digits("SanrentanHyo", hyo, cls.VOTE_WIDTH)
         cls._require_favourite(record.get("SanrentanNinki"))
 
     def __init__(self):
@@ -187,8 +194,22 @@ class H6Parser:
     def parse(self, data: bytes) -> Optional[List[Dict[str, str]]]:
         """Parse one official 102,890-byte H6 physical record."""
         try:
-            validate_fixed_record(data, self.RECORD_TYPE, self.RECORD_LENGTH)
-            return self._parse_full(data)
+            interpreted_data = data
+            if (
+                len(data) == self.RECORD_LENGTH
+                and data[:2] == self.RECORD_TYPE.encode("ascii")
+                and data[2:3] == b"0"
+            ):
+                # A physical deletion is a keyed command. Keep the envelope
+                # and six-field race identity byte-exact, but do not decode or
+                # validate the provider's non-key body before applying erase.
+                delete_view = bytearray(data)
+                delete_view[27:-2] = b" " * (self.RECORD_LENGTH - 29)
+                interpreted_data = bytes(delete_view)
+            validate_fixed_record(
+                interpreted_data, self.RECORD_TYPE, self.RECORD_LENGTH
+            )
+            return self._parse_full(interpreted_data)
         except Exception as e:
             self.logger.error(f"H6レコードパース中にエラー: {e}")
             return None
@@ -209,12 +230,30 @@ class H6Parser:
         for i in range(4896):
             offset = 50 + (21 * i)
             kumi = self.decode_field(data[offset:offset + 6])
-            hyo = self.decode_field(data[offset + 6:offset + 17])
-            ninki = self.decode_field(data[offset + 17:offset + 21])
 
-            # Skip empty entries
+            # Unregistered fixed-width slots carry an all-space body. They
+            # have no vote value to validate and are not provider rows.
             if not kumi or kumi == "000000":
                 continue
+
+            raw_hyo = data[offset + 6:offset + 17]
+            if raw_hyo == b" " * self.VOTE_WIDTH:
+                if header["DataKubun"] != "9":
+                    raise ValueError(
+                        "H6 blank SanrentanHyo is only valid for DataKubun 9"
+                    )
+                hyo = ""
+            elif not all(0x30 <= value <= 0x39 for value in raw_hyo):
+                # Do not use ``str.strip()`` for the vote span. A tab next to
+                # digits would otherwise become a shorter digit string and
+                # could escape the exact raw fixed-width contract.
+                raise ValueError(
+                    "H6 SanrentanHyo must be exactly 11 ASCII digits or the "
+                    "status-9 initial value"
+                )
+            else:
+                hyo = raw_hyo.decode("ascii")
+            ninki = self.decode_field(data[offset + 17:offset + 21])
 
             row = dict(header)
             row["SanrentanKumi"] = kumi
