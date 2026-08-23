@@ -143,9 +143,8 @@ class RealtimeFetcher(BaseFetcher):
             logger.debug("Using today's date as key", key=key)
 
         try:
-            # JVInit already ran once when this fetcher was constructed
-            # (BaseFetcher.__init__); the session spans every JVRTOpen here.
-
+            # The session was established in BaseFetcher.__init__ and spans
+            # every JVRTOpen below.
             logger.info(
                 "Starting realtime data fetch",
                 data_spec=data_spec,
@@ -578,9 +577,6 @@ class RealtimeFetcher(BaseFetcher):
 
         logger.info(f"Found {len(race_rows)} races in database")
 
-        # JVInit already ran once when this fetcher was constructed
-        # (BaseFetcher.__init__); it is not re-issued per batch.
-
         # Statistics
         total_keys = len(race_rows)
         success_keys = 0
@@ -876,9 +872,6 @@ class RealtimeFetcher(BaseFetcher):
             tracks=len(jyo_codes),
             races=len(race_nums),
         )
-
-        # JVInit already ran once when this fetcher was constructed
-        # (BaseFetcher.__init__); it is not re-issued per batch.
 
         # Statistics
         total_keys = 0

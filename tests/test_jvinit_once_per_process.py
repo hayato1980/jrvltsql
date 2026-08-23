@@ -13,7 +13,7 @@ import pytest
 
 from src.fetcher.base import FetcherError
 from src.fetcher.historical import HistoricalFetcher
-from src.jvlink.bridge import JVLinkBridge
+from src.jvlink.bridge import JVLinkBridge, JVLinkBridgeError
 from src.jvlink.wrapper import JVLinkError, JVLinkWrapper
 
 
@@ -78,8 +78,8 @@ def _record(index):
     return {"Year": "2026", "MonthDay": "0820", "headRecordSpec": "RA", "seq": index}
 
 
-def _historical_fetcher(com):
-    """COM だけを差し替えた本物の ``JVLinkWrapper`` で fetcher を組む。"""
+def _wrapper(com):
+    """COM だけを差し替えた本物の ``JVLinkWrapper``（``__init__`` は通さない）。"""
     wrapper = JVLinkWrapper.__new__(JVLinkWrapper)
     wrapper.sid = "TEST"
     wrapper._jvlink = com
@@ -87,6 +87,12 @@ def _historical_fetcher(com):
     wrapper._needs_close = False
     wrapper._com_initialized = False
     wrapper._initialized = False
+    return wrapper
+
+
+def _historical_fetcher(com):
+    """その wrapper を掴んだ fetcher を組む。"""
+    wrapper = _wrapper(com)
 
     counter = {"n": 0}
 
@@ -190,13 +196,7 @@ def test_repeated_daily_diff_fetches_send_one_jvopen_per_request():
 
 def test_wrapper_jv_init_reuses_the_established_session():
     com = RecordingJVLinkCom()
-    wrapper = JVLinkWrapper.__new__(JVLinkWrapper)
-    wrapper.sid = "TEST"
-    wrapper._jvlink = com
-    wrapper._is_open = False
-    wrapper._needs_close = False
-    wrapper._com_initialized = False
-    wrapper._initialized = False
+    wrapper = _wrapper(com)
 
     assert wrapper.jv_init() == 0
     assert wrapper.jv_init() == 0
@@ -205,19 +205,80 @@ def test_wrapper_jv_init_reuses_the_established_session():
     assert com.count("JVInit") == 1
 
 
-def test_bridge_jv_init_is_issued_once_per_bridge_process():
+def _bridge(*, init_code=0):
+    """``__init__`` を通さない bridge。プロセスは生きている扱いで組む。"""
     bridge = JVLinkBridge.__new__(JVLinkBridge)
     bridge.sid = "TEST"
     bridge._is_open = False
     bridge._needs_close = False
     bridge._initialized = False
+    bridge._download_count = None
     bridge._process = MagicMock()
     bridge._process.poll.return_value = None
     bridge._start_process = MagicMock()
-    bridge._send_command = MagicMock(return_value={"status": "ok", "code": 0})
+    bridge._send_command = MagicMock(
+        return_value={"status": "ok", "code": init_code}
+    )
+    return bridge
+
+
+def _bridge_commands(bridge):
+    return [call.args[0]["cmd"] for call in bridge._send_command.call_args_list]
+
+
+def test_bridge_jv_init_is_issued_once_per_bridge_process():
+    bridge = _bridge()
 
     assert bridge.jv_init() == 0
     assert bridge.jv_init() == 0
 
-    assert bridge._send_command.call_count == 1
-    assert bridge._send_command.call_args_list[0].args[0]["cmd"] == "init"
+    assert _bridge_commands(bridge) == ["init"]
+
+
+def test_bridge_jvinit_failure_never_reaches_jvopen():
+    bridge = _bridge(init_code=-101)
+
+    with pytest.raises(JVLinkBridgeError):
+        bridge.jv_init()
+
+    assert _bridge_commands(bridge) == ["init"]
+
+
+def test_bridge_reopens_its_session_when_the_process_died_mid_run():
+    """タイムアウトで bridge が落ちても、次の JVOpen がセッションを張り直す。
+
+    hoist 前は fetch ごとの JVInit がプロセスを起こし直していた。JVOpen 側に
+    復旧点を残さないと、一度落ちたプロセスで残りの取得が全滅する。
+    """
+    bridge = _bridge()
+    assert bridge.jv_init() == 0
+
+    commands = []
+
+    def _send(cmd, timeout=None):
+        # 本物の _send_command と同じ生存判定。落ちたプロセスでは送れない。
+        if bridge._process.poll() is not None:
+            raise JVLinkBridgeError("Bridge process is not running")
+        commands.append(cmd["cmd"])
+        if cmd["cmd"] == "init":
+            return {"status": "ok", "code": 0}
+        return {
+            "status": "ok",
+            "code": 0,
+            "readcount": 3,
+            "downloadcount": 0,
+            "lastfiletimestamp": "20260820120000",
+        }
+
+    def _restart():
+        bridge._process.poll.return_value = None
+
+    bridge._send_command = _send
+    bridge._start_process = _restart
+
+    # レスポンスタイムアウト相当: _abort_process がプロセスを落とした状態
+    bridge._process.poll.return_value = 1
+
+    assert bridge.jv_open("RACE", "20260820000000", 1)[0] == 0
+
+    assert commands == ["init", "open"]

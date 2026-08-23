@@ -486,7 +486,6 @@ class JVLinkBridge:
                     pass
         self._is_open = False
         self._needs_close = False
-        self._initialized = False
         self._download_count = None
         self._stop_dialog_watcher()
         self._close_stderr_file()
@@ -627,6 +626,28 @@ class JVLinkBridge:
     # JV-Link API Methods
     # =========================================================================
 
+    def _process_alive(self) -> bool:
+        process = getattr(self, "_process", None)
+        return process is not None and process.poll() is None
+
+    def _ensure_session(self) -> None:
+        """Bring the JV-Link session back if the bridge process died mid-run.
+
+        JVInit is issued once per bridge process, so a process aborted by a
+        response timeout or a broken pipe takes the session with it. Without
+        this repair every later JVOpen in the run would fail on a dead pipe;
+        the pre-hoist code got the same recovery for free from its per-fetch
+        JVInit. ``cleanup()`` clears the flag, so an explicitly closed bridge
+        is never resurrected.
+        """
+        if not getattr(self, "_initialized", False) or self._process_alive():
+            return
+
+        logger.warning(
+            "Bridge process is gone; re-establishing the JV-Link session"
+        )
+        self.jv_init()
+
     def jv_init(self) -> int:
         """Initialize the JV-Link session once for this bridge process.
 
@@ -635,9 +656,7 @@ class JVLinkBridge:
         Anything that ends the bridge process (``cleanup()``, ``_abort_process()``)
         drops the session, and the next call initializes again.
         """
-        if getattr(self, "_initialized", False) and (
-            self._process is not None and self._process.poll() is None
-        ):
+        if getattr(self, "_initialized", False) and self._process_alive():
             logger.debug("JV-Link already initialized via bridge; reusing session")
             return 0
 
@@ -663,6 +682,8 @@ class JVLinkBridge:
         # JVRTOpen realtime IDs are a separate namespace; this guard applies
         # the official four-character JVOpen contract before transmission.
         validate_jvopen_combination(data_spec, option)
+
+        self._ensure_session()
 
         response = self._send_command(
             {"cmd": "open", "dataspec": data_spec, "fromtime": fromtime, "option": option},
@@ -703,6 +724,8 @@ class JVLinkBridge:
         return code, read_count, download_count, last_ts
 
     def jv_rt_open(self, data_spec: str, key: str = "") -> Tuple[int, int]:
+        self._ensure_session()
+
         response = self._send_command(
             {"cmd": "rtopen", "dataspec": data_spec, "key": key},
             timeout=30.0,
