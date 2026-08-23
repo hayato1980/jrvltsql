@@ -782,3 +782,34 @@ def test_recover_com_buffer_still_handles_a_cp1252_marshaled_buffer():
     recovered = _recover_com_buffer(marshaled, len(raw), "JVRead")
 
     assert recovered == raw
+
+
+def test_recover_com_buffer_stops_before_the_per_character_fallback(monkeypatch):
+    """latin-1 で長さが合えば、1 文字ずつ回す CP1252 表まで進まない。"""
+    import src.jvlink.wrapper as wrapper
+    from src.jvlink.wrapper import _recover_com_buffer
+
+    def fail(value, method_name):
+        raise AssertionError("_decode_via_cp1252_table should not be reached")
+
+    monkeypatch.setattr(wrapper, "_decode_via_cp1252_table", fail)
+    value = b"JV-Data \x81\x66 payload".decode("latin-1")
+
+    assert _recover_com_buffer(value, len(value), "JVRead") == value.encode("latin-1")
+
+
+def test_recover_com_buffer_prefers_an_exact_match_over_an_earlier_long_one():
+    """遅延化しても選択順は不変。完全一致が、先に作られた長すぎる候補に勝つ。"""
+    from src.jvlink.wrapper import _recover_com_buffer
+
+    # ’ は CP932 で 2 バイト（81 66）、CP1252 表では 1 バイト（0x92）。latin-1 は
+    # 変換できないので、CP932 の候補が先に出る。
+    assert _recover_com_buffer("’", 2, "JVRead") == b"\x81\x66"
+    assert _recover_com_buffer("’", 1, "JVRead") == b"\x92"
+
+
+def test_recover_com_buffer_falls_back_to_a_long_candidate():
+    """完全一致が無ければ、従来どおり長すぎる候補を採る。"""
+    from src.jvlink.wrapper import _recover_com_buffer
+
+    assert _recover_com_buffer("’", 0, "JVRead") == b""

@@ -111,7 +111,8 @@ def _recover_com_buffer(value, expected_size: int, method_name: str) -> bytes:
         #
         # expected_size は呼び出し側が JV-Link から受け取った正解なので、推測せず
         # これで選ぶ。長さの合った候補だけを採る。
-        candidates: list[bytes] = []
+        recovered: bytes | None = None
+        oversized: bytes | None = None
         failures: list[str] = []
         for build in (
             lambda: value.encode("latin-1"),
@@ -119,17 +120,22 @@ def _recover_com_buffer(value, expected_size: int, method_name: str) -> bytes:
             lambda: _decode_via_cp1252_table(value, method_name),
         ):
             try:
-                candidates.append(build())
+                candidate = build()
             except UnicodeEncodeError as exc:
                 bad = exc.object[exc.start]
                 failures.append(f"U+{ord(bad):04X}")
+                continue
+            # 長さがちょうど合うものを最優先する。「以上」だけで選ぶと、CP1252 で
+            # marshaling されたバッファに cp932 を当てた結果（1 文字 2 バイトに
+            # 膨らむ）を採ってしまう。
+            if len(candidate) == expected_size:
+                recovered = candidate
+                break
+            if oversized is None and len(candidate) > expected_size:
+                oversized = candidate
 
-        # 長さがちょうど合うものを最優先する。「以上」だけで選ぶと、CP1252 で
-        # marshaling されたバッファに cp932 を当てた結果（1 文字 2 バイトに
-        # 膨らむ）を採ってしまう。
-        recovered = next((c for c in candidates if len(c) == expected_size), None)
         if recovered is None:
-            recovered = next((c for c in candidates if len(c) > expected_size), None)
+            recovered = oversized
 
         if recovered is None:
             if failures:
