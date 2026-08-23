@@ -546,10 +546,8 @@ class HistoricalFetcher(BaseFetcher):
                 # スペックヘッダーを表示（日付範囲付き）
                 self.progress_display.print_spec_header(data_spec, from_date, to_date)
 
-            # JVInit is not re-issued here: the JV-Link session is established
-            # once when the fetcher is constructed (see BaseFetcher.__init__),
-            # so this method starts at JVOpen. A JVInit failure therefore
-            # aborts before any fetch can attempt JVOpen.
+            # The session was established in BaseFetcher.__init__, so this
+            # method starts at JVOpen and never re-issues JVInit.
             # リトライ上限は fetch 全体で 1 本。chunk 数ぶんは増やさない。
             self._jvd_self_repair_attempts = 0
 
