@@ -66,7 +66,8 @@ class BaseFetcher(ABC):
         # JVInit is application initialization in the official JV-Link spec,
         # not per-JVOpen setup. Establishing the session here means fetch()
         # starts at JVOpen, and a process running many JVOpen/JVClose pairs
-        # still holds a single JV-Link session.
+        # still holds a single JV-Link session. Both transports raise on a
+        # failed JVInit, so there is no result code left to inspect here.
         self.jvlink.jv_init()
 
         self.parser_factory = ParserFactory()

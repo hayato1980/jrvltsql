@@ -24,6 +24,7 @@ from src.database.schema import SchemaManager
 from src.database.sqlite_handler import SQLiteDatabase
 from src.fetcher.historical import FetcherError, HistoricalFetcher
 from src.importer.importer import DataImporter
+from src.jvlink.wrapper import JVLinkError
 from src.parser.factory import ParserFactory
 
 
@@ -341,10 +342,12 @@ class TestFetcherErrors(unittest.TestCase):
         mock_jvlink = MagicMock()
         mock_jvlink_class.return_value = mock_jvlink
 
-        # Mock JV_Init failure (raises exception)
-        mock_jvlink.jv_init.side_effect = Exception("JV_Init failed")
+        # -101 は JVInit の sid 書式エラー（公式コード表）
+        mock_jvlink.jv_init.side_effect = JVLinkError(
+            "JV-Link initialization failed", error_code=-101
+        )
 
-        with self.assertRaises(Exception):
+        with self.assertRaises(JVLinkError):
             HistoricalFetcher(sid="TEST")
 
         mock_jvlink.jv_open.assert_not_called()
