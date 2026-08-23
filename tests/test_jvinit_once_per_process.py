@@ -167,30 +167,40 @@ def test_fetch_does_not_reissue_jvinit_after_a_stream_error():
 
 
 def test_single_dataspec_daily_diff_keeps_its_option1_jvopen_contract():
-    """option=1 の単一 dataspec は従来どおり ``{from_date}000000`` の start-only。"""
-    com = RecordingJVLinkCom(records=("RA-1", "RA-2"))
+    """暦年で刻まない dataspec の option=1 は ``{from_date}000000`` の start-only。
+
+    ``RANGE_FROMTIME_DATA_SPECS``（RACE / SLOP / WOOD）は範囲形式で暦年ごとに
+    JVOpen を刻むので、その契約は暦年チャンク側のテストが持つ。ここで見たいのは
+    セッションの寿命なので、刻まれない dataspec を使って 1 fetch = 1 JVOpen に
+    固定する。
+    """
+    com = RecordingJVLinkCom(records=("UM-1", "UM-2"))
     fetcher = _historical_fetcher(com)
 
-    records = list(fetcher.fetch("RACE", "20260820", "20260821", option=1))
+    records = list(fetcher.fetch("DIFN", "20260820", "20260821", option=1))
 
     assert len(records) == 2
-    assert com.opens() == [("RACE", "20260820000000", 1)]
+    assert com.opens() == [("DIFN", "20260820000000", 1)]
     assert com.count("JVClose") == 1
     assert fetcher.get_statistics()["records_parsed"] == 2
 
 
 def test_repeated_daily_diff_fetches_send_one_jvopen_per_request():
-    """日次差分を回し続けても、セッションは 1 本で JVOpen だけが増える。"""
+    """日次差分を回し続けても、セッションは 1 本で JVOpen だけが増える。
+
+    刻まれる dataspec だと 1 fetch あたりの JVOpen 数が暦年数で決まるため、
+    「fetch ごとに 1 本」を見るにはここも刻まれない dataspec を使う。
+    """
     com = RecordingJVLinkCom()
     fetcher = _historical_fetcher(com)
 
-    list(fetcher.fetch("RACE", "20260820", "20260820", option=1))
-    list(fetcher.fetch("RACE", "20260821", "20260821", option=1))
+    list(fetcher.fetch("DIFN", "20260820", "20260820", option=1))
+    list(fetcher.fetch("DIFN", "20260821", "20260821", option=1))
 
     assert com.count("JVInit") == 1
     assert com.opens() == [
-        ("RACE", "20260820000000", 1),
-        ("RACE", "20260821000000", 1),
+        ("DIFN", "20260820000000", 1),
+        ("DIFN", "20260821000000", 1),
     ]
 
 

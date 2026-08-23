@@ -16,7 +16,7 @@ from click.testing import CliRunner
 from src.cli.main import (
     FETCH_NOTE_DATE_FIELDS,
     FETCH_NOTE_TO_CLIENT_FILTER,
-    FETCH_NOTE_TO_SINGLE_OPEN,
+    FETCH_NOTE_TO_RANGE_CHUNKED,
     cli,
 )
 from src.fetcher.base import FetcherError
@@ -33,13 +33,14 @@ STATS = {
     "batches_processed": 2,
 }
 
-# option=1 のガードレール注記そのものは #290 の対象外なので、文言は定数から組む。
-# ここで転記すると、注記を直しただけでこのテストが無関係な差分で落ちる。
+# ガードレール注記そのものは #290 の対象外なので、文言は定数から組む。ここで
+# 転記すると、注記を直しただけでこのテストが無関係な差分で落ちる。RACE は
+# 範囲形式を使える dataspec なので、暦年チャンクの注記が出る側。
 _OPTION1_NOTES = "\n".join(
     f"Note: {note}"
     for note in (
         FETCH_NOTE_TO_CLIENT_FILTER,
-        FETCH_NOTE_TO_SINGLE_OPEN,
+        FETCH_NOTE_TO_RANGE_CHUNKED,
         FETCH_NOTE_DATE_FIELDS,
     )
 )

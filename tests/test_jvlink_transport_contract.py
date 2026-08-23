@@ -166,33 +166,48 @@ def test_historical_fetcher_reports_setup_cancel_instead_of_no_data():
     jvlink.jv_close.assert_called_once()
 
 
-# --- Official JVOpen setup semantics (JV-Link仕様書 4.9.0.1 p.17-20) --------
+# --- Official JVOpen semantics (JV-Link仕様書 4.9.0.1 p.17-20) --------------
 # fromtime は「開始時刻のみ」または「開始-終了」(YYYYMMDDhhmmss-YYYYMMDDhhmmss、
-# 半角ハイフン結合) の2形式のみで、対象条件は「開始時刻より大きく、終了時刻
-# まで」。一方 p.20 は option 3/4 について、前月までのセットアップ用データは
-# fromtime より大きい全件を返し、終了時刻が制限するのは今月の通常データ部分
-# だけと明記する。したがって過去年窓を end で分割できるとは扱わず、setup は
-# start-only を1回だけ呼ぶ。要求された from_date を包含させるため、排他的開始点
-# は前日23:59:59に符号化する。option 1/2のcursor契約は変更しない。
+# 半角ハイフン結合) の2形式で、対象条件は「開始時刻より大きく、終了時刻まで」。
+# 終了時刻は setup (option 3/4) でもセットアップ用アーカイブを期間で絞る
+# (2026-08-23 実機計測: --from 1986 固定で終了時刻だけを振ると readcount が
+# 3,973 / 4,337 と変わる)。1 read の費用は JVOpen が並べた対象ファイル数で
+# 決まるので、範囲形式を使える dataspec は暦年で刻む。
+# 刻めるのは RANGE_FROMTIME_DATA_SPECS だけ。p.18 の終了時刻禁止リスト
+# (TOKU / DIFF・DIFN / HOSE・HOSN / HOYU / COMM) は開始のみで1回開く。
+# 要求された from_date を包含させるため、setup の排他的開始点は前日23:59:59。
+# option 1 の差分カーソルと option 2 の今週データ契約は変更しない。
 
 
 @pytest.mark.parametrize(
-    ("data_spec", "option", "expected_fromtime"),
+    ("data_spec", "option", "expected_fromtimes"),
     [
-        # option 3/4 は、end-capableなRACEを含めてstart-only。p.20上、終了点は
-        # 過去setup dataの上限ではないため、bounded downloadとは主張しない。
-        ("RACE", 4, "20250819235959"),
-        ("RACE", 3, "20250819235959"),
-        # p.18 の終了時刻禁止リストに載る DIFN も同じstart-only形式
-        ("DIFN", 4, "20250819235959"),
-        # 複数specもsetupはstart-only
-        ("RACEDIFN", 4, "20250819235959"),
-        # option=1 の差分カーソル契約はこのイテレーションでは変更しない
-        ("RACE", 1, "20250820000000"),
+        # 範囲形式を使える dataspec は暦年で刻む。2025-08-20〜2026-08-19 は 2 年に
+        # またがるので JVOpen は 2 回。境界は共有し、穴も重複も作らない。
+        (
+            "RACE",
+            4,
+            ["20250819235959-20251231235959", "20251231235959-20260819235959"],
+        ),
+        (
+            "RACE",
+            3,
+            ["20250819235959-20251231235959", "20251231235959-20260819235959"],
+        ),
+        # p.18 の終了時刻禁止リストに載る DIFN は開始のみで 1 回
+        ("DIFN", 4, ["20250819235959"]),
+        # 連結された dataspec も許可リストに一致しないので開始のみ
+        ("RACEDIFN", 4, ["20250819235959"]),
+        # option=1 の差分カーソルは真夜中のまま。刻んでも先頭はずらさない。
+        (
+            "RACE",
+            1,
+            ["20250820000000-20251231235959", "20251231235959-20260819235959"],
+        ),
     ],
 )
-def test_jvopen_setup_fromtime_is_start_only_for_the_historical_setup_tail(
-    data_spec, option, expected_fromtime
+def test_jvopen_fromtime_is_chunked_by_calendar_year_where_the_spec_allows_it(
+    data_spec, option, expected_fromtimes
 ):
     jvlink = MagicMock()
     jvlink.jv_open.return_value = (-1, 0, 0, "")
@@ -200,26 +215,28 @@ def test_jvopen_setup_fromtime_is_start_only_for_the_historical_setup_tail(
 
     assert list(fetcher.fetch(data_spec, "20250820", "20260819", option=option)) == []
 
-    jvlink.jv_open.assert_called_once_with(data_spec, expected_fromtime, option)
+    assert [c.args[1] for c in jvlink.jv_open.call_args_list] == expected_fromtimes
+    assert all(c.args[0] == data_spec and c.args[2] == option
+               for c in jvlink.jv_open.call_args_list)
 
 
-def test_setup_to_date_does_not_claim_to_bound_the_historical_provider_tail():
-    """to_dateを変えてもsetupのJVOpen引数へ終了点を付けないこと。
+def test_setup_end_point_follows_the_requested_to_date():
+    """to_date を変えると JVOpen へ渡る終了点も変わること。
 
-    p.20では前月までのsetup dataはfromtime以降の全件が対象で、終了点が効くのは
-    今月の通常dataだけ。年窓ごとに終了点を変えてtailを分割できるという誤契約を
-    作らない。
+    終了時刻は setup アーカイブを期間で絞るので、要求の終端がそのまま
+    最後の chunk の終了点になる。
     """
     jvlink = MagicMock()
     jvlink.jv_open.return_value = (-1, 0, 0, "")
     fetcher = _historical_fetcher(jvlink)
 
     list(fetcher.fetch("RACE", "20240820", "20241231", option=4))
-    list(fetcher.fetch("RACE", "20240820", "20260819", option=4))
+    list(fetcher.fetch("RACE", "20240820", "20250615", option=4))
 
     assert [c.args[1] for c in jvlink.jv_open.call_args_list] == [
-        "20240819235959",
-        "20240819235959",
+        "20240819235959-20241231235959",
+        "20240819235959-20241231235959",
+        "20241231235959-20250615235959",
     ]
 
 
