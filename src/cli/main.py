@@ -80,6 +80,41 @@ def _reject_invalid_jvopen_combination(data_spec: str, option: int) -> None:
         sys.exit(1)
 
 
+def _reject_data_specs(data_specs, jv_option: int) -> None:
+    """Reject every requested spec that JVOpen cannot serve, before any side effect.
+
+    fetch は dataspec を複数受け取るので、1 つでも通らないものがあれば DB を
+    触る前に落とす（途中まで取り込んだ状態を作らない）。廃止済み種別の理由を
+    option 組み合わせより先に返す順序は単一指定のときから変えない。
+    """
+    from src.jvlink.constants import is_valid_jvopen_combination, JVOPEN_VALID_COMBINATIONS
+
+    for data_spec in data_specs:
+        _reject_retired_data_spec(data_spec)
+
+    for data_spec in data_specs:
+        if is_valid_jvopen_combination(data_spec, jv_option):
+            continue
+        console.print()
+        console.print(f"[red]Error:[/red] データ種別 '{data_spec}' は option={jv_option} では取得できません")
+        valid_specs = JVOPEN_VALID_COMBINATIONS.get(jv_option, [])
+        console.print(f"       option={jv_option} で取得可能: {', '.join(valid_specs)}")
+        sys.exit(1)
+
+
+def _print_fetch_statistics(result: dict) -> None:
+    """Emit the per-dataspec completion block the backfill driver reads."""
+    console.print()
+    console.print("[bold green][OK] Fetch complete![/bold green]")
+    console.print()
+    console.print("[bold]Statistics:[/bold]")
+    console.print(f"  Fetched:  {result['records_fetched']}")
+    console.print(f"  Parsed:   {result['records_parsed']}")
+    console.print(f"  Imported: {result['records_imported']}")
+    console.print(f"  Failed:   {result['records_failed']}")
+    console.print(f"  Batches:  {result.get('batches_processed', 0)}")
+
+
 def _print_fetch_guardrail_notes(jv_option: int) -> None:
     """Emit option-dependent date-range caveats after input validation."""
     if jv_option in (3, 4):
@@ -479,24 +514,14 @@ def fetch(ctx, date_from, date_to, data_specs, jv_option, db, batch_size, progre
     console.print(f"[bold cyan]Fetching historical data from JRA-VAN DataLab...[/bold cyan]\n")
     console.print(f"  Data source: JRA (中央競馬)")
     console.print(f"  Date range: {date_from} -- {date_to}")
-    console.print(f"  Data spec:  {', '.join(data_specs)}")
+    # 単数形は「いま処理している dataspec」だけを指す。実走全体の一覧は複数形に
+    # して、driver が見出し行を spec 名として読まないようにする。
+    spec_label = "Data spec: " if len(data_specs) == 1 else "Data specs:"
+    console.print(f"  {spec_label} {', '.join(data_specs)}")
     console.print(f"  Option:     {jv_option} ({option_names.get(jv_option, '不明')})")
     console.print(f"  Database:   {db_type}")
 
-    # Validate every requested spec before the database is touched: one bad
-    # spec must not leave the run half-imported.
-    # 非対応の旧仕様種別は「option では取得できません」より先に理由を返す。
-    for data_spec in data_specs:
-        _reject_retired_data_spec(data_spec)
-
-    from src.jvlink.constants import is_valid_jvopen_combination, JVOPEN_VALID_COMBINATIONS
-    for data_spec in data_specs:
-        if not is_valid_jvopen_combination(data_spec, jv_option):
-            console.print()
-            console.print(f"[red]Error:[/red] データ種別 '{data_spec}' は option={jv_option} では取得できません")
-            valid_specs = JVOPEN_VALID_COMBINATIONS.get(jv_option, [])
-            console.print(f"       option={jv_option} で取得可能: {', '.join(valid_specs)}")
-            sys.exit(1)
+    _reject_data_specs(data_specs, jv_option)
 
     # The CLI prepares every table before BatchProcessor runs. Reject the
     # range here as well so malformed input cannot initialize a database or
@@ -549,9 +574,10 @@ def fetch(ctx, date_from, date_to, data_specs, jv_option, db, batch_size, progre
             # session once (JVInit). Rebuilding it per spec would bring the
             # option=3/4 source dialog back once per dataspec.
             for data_spec in data_specs:
-                # 単一指定の出力は従来どおりにする。前置きの "Data spec" 行が
-                # そのまま dataspec の見出しなので、複数のときだけ繰り返す。
-                if len(data_specs) > 1:
+                # 単一指定では前置きの "Data spec" 行がそのまま見出しなので足さない。
+                # progress 表示が有効なときは JVLinkProgressDisplay.print_spec_header
+                # がより詳しい見出しを dataspec ごとに出すので、そちらに任せる。
+                if len(data_specs) > 1 and not progress:
                     console.print()
                     console.print(f"  Data spec:  {data_spec}")
 
@@ -564,16 +590,7 @@ def fetch(ctx, date_from, date_to, data_specs, jv_option, db, batch_size, progre
                     option=jv_option
                 )
 
-                # Show results
-                console.print()
-                console.print("[bold green][OK] Fetch complete![/bold green]")
-                console.print()
-                console.print("[bold]Statistics:[/bold]")
-                console.print(f"  Fetched:  {result['records_fetched']}")
-                console.print(f"  Parsed:   {result['records_parsed']}")
-                console.print(f"  Imported: {result['records_imported']}")
-                console.print(f"  Failed:   {result['records_failed']}")
-                console.print(f"  Batches:  {result.get('batches_processed', 0)}")
+                _print_fetch_statistics(result)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted by user[/yellow]")
