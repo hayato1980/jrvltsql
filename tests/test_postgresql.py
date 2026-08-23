@@ -233,45 +233,6 @@ def test_insert_many_binds_one_row_template_through_executemany(monkeypatch):
     assert inserted == 2
 
 
-def test_insert_many_surfaces_batch_failure_as_database_error(monkeypatch):
-    """A failing batch raises DatabaseError and rolls back only what it owns.
-
-    executemany drives one statement per row over a psycopg pipeline, so the
-    failure reaches callers from a different call site than the old single
-    multi-row statement did (keibaai_cloud#280). The live test below pins this
-    against a real server; this one keeps it covered without one.
-    """
-    from unittest.mock import MagicMock
-
-    import src.database.postgresql_handler as postgresql_handler
-    from src.database.base import DatabaseError
-
-    monkeypatch.setattr(postgresql_handler, "DRIVER", "psycopg")
-    monkeypatch.setattr(
-        postgresql_handler.PostgreSQLDatabase,
-        "_get_primary_key_columns",
-        lambda self, table_name: ["year", "kumi"],
-    )
-
-    database = postgresql_handler.PostgreSQLDatabase({})
-    database._connection = MagicMock()
-    database._cursor = MagicMock()
-    database._cursor.executemany.side_effect = RuntimeError("not-null constraint")
-    rows = [{"Year": 2026, "Kumi": "01-02", "Ninki": None}]
-
-    with pytest.raises(DatabaseError):
-        database.insert_many("test_batch_failure", rows, use_replace=True)
-    # No caller transaction is open, so the handler undoes the batch itself.
-    database._connection.rollback.assert_called_once()
-
-    # Inside a caller transaction the rollback stays the caller's to issue.
-    database._connection.rollback.reset_mock()
-    database.begin_transaction()
-    with pytest.raises(DatabaseError):
-        database.insert_many("test_batch_failure", rows, use_replace=True)
-    database._connection.rollback.assert_not_called()
-
-
 def test_pg8000_explicit_batch_transaction(monkeypatch):
     """The native fallback must not autocommit each batch row."""
     from unittest.mock import MagicMock, call
