@@ -348,8 +348,8 @@ def _transaction_calls(database):
     return [name for name, _args, _kwargs in database.mock_calls]
 
 
-# 以下の option=4 テスト群は「1回のオープン内のコミット間隔」契約を固定する。
-# 日付範囲の長短にかかわらずprovider setup tailは1回だけopenする。
+# 以下の option=4 テスト群は「コミット間隔」契約を固定する。fetcher が JVOpen を
+# 何回呼ぶか（暦年チャンク）とは独立で、コミットはレコード数だけで決まる。
 def test_option_4_commits_once_per_interval(monkeypatch):
     monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 2)
     processor = _chunking_processor([_record(i) for i in range(5)])
@@ -510,10 +510,10 @@ def test_option_4_rejection_rolls_back_only_its_own_chunk(tmp_path, monkeypatch)
     assert row_count == 2
 
 
-def test_option_4_long_range_uses_one_provider_open_and_keeps_group_commits(
+def test_option_4_long_range_keeps_group_commits(
     tmp_path, monkeypatch
 ):
-    """長期間setupもprovider tailは1回だけopenし、group単位で耐久化する。"""
+    """長期間setupでも、コミットはレコード数で決まり group 単位で耐久化する。"""
     monkeypatch.setattr("src.importer.batch.SETUP_COMMIT_INTERVAL", 1)
 
     def _valid_ra(race_num):

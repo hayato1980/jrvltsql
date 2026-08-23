@@ -20,10 +20,8 @@ logger = get_logger(__name__)
 # one import can run for hours. Held in a single transaction, an interrupted
 # run leaves nothing behind and the retry starts over from the beginning -- a
 # long enough range never gets imported at all. Commit it in bounded record
-# groups instead. The official option-3/4 contract keeps the historical setup
-# data tail open after fromtime even when an end timestamp is supplied, so a
-# long request must remain one provider open; calendar chunking would repeat
-# the later tail for every chunk.
+# groups instead. This is independent of how many JVOpen calls the fetcher
+# makes: commits are decided by record count, not by chunk boundaries.
 SPLIT_SETUP_OPTION = 4
 SETUP_COMMIT_INTERVAL = 10000
 
@@ -146,10 +144,11 @@ class BatchProcessor:
             ValueError: If data_spec or option violates the JVOpen contract
 
         Note:
-            Setup requests (option 3/4) use one start-only JVOpen because the
-            official p.20 contract does not apply an end point to the
-            historical setup tail. In every mode records are filtered
-            client-side to only import those with dates <= to_date.
+            A dataspec that accepts a range fromtime is fetched as one
+            JVOpen per calendar year (see HistoricalFetcher); how many opens
+            that takes does not change the commit contract below. In every
+            mode records are also filtered client-side to only import those
+            with dates <= to_date.
 
             option=4 commits every SETUP_COMMIT_INTERVAL records rather than
             once for the whole data spec, so an interrupted run keeps what it
