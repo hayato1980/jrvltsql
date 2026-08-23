@@ -7,12 +7,18 @@
 """
 
 from pathlib import Path
+from typing import NamedTuple
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
-from src.cli.main import cli
+from src.cli.main import (
+    FETCH_NOTE_DATE_FIELDS,
+    FETCH_NOTE_TO_CLIENT_FILTER,
+    FETCH_NOTE_TO_SINGLE_OPEN,
+    cli,
+)
 from src.fetcher.base import FetcherError
 
 EXAMPLE_CONFIG = (
@@ -27,9 +33,20 @@ STATS = {
     "batches_processed": 2,
 }
 
+# option=1 のガードレール注記そのものは #290 の対象外なので、文言は定数から組む。
+# ここで転記すると、注記を直しただけでこのテストが無関係な差分で落ちる。
+_OPTION1_NOTES = "\n".join(
+    f"Note: {note}"
+    for note in (
+        FETCH_NOTE_TO_CLIENT_FILTER,
+        FETCH_NOTE_TO_SINGLE_OPEN,
+        FETCH_NOTE_DATE_FIELDS,
+    )
+)
+
 # 単一 --spec の出力は #290 の前後で一字一句変わってはいけない。rich の折り返しを
 # 固定するため COLUMNS を固定した上で丸ごと突き合わせる。
-SINGLE_SPEC_GOLDEN = """\
+SINGLE_SPEC_GOLDEN = f"""\
 Fetching historical data from JRA-VAN DataLab...
 
   Data source: JRA (中央競馬)
@@ -37,9 +54,7 @@ Fetching historical data from JRA-VAN DataLab...
   Data spec:  RACE
   Option:     1 (通常データ)
   Database:   sqlite
-Note: --to は取得後のクライアント側日付フィルタであり、JVOpen の終端ではありません。
-Note: option=1/2 では --to は JVOpen の終端にならず、狭めてもサーバからのダウンロード量は減りません。
-Note: --to は Year+MonthDay または ChokyoDate（HC/WC の調教日）で判定します。対応する日付を持たないレコードは JV-Link 取得時に除外されず、その取得範囲は完全キャッシュとして記録されません。
+{_OPTION1_NOTES}
 
 Processing data...
 
@@ -59,8 +74,17 @@ def _runner():
     return CliRunner(env={"COLUMNS": "200", "TERM": "dumb"})
 
 
-def _invoke(specs, *, option=1, side_effect=None, batch_processor=None):
-    """``fetch`` を実行し、``(result, batch_processor_mock, processor_mock)`` を返す。"""
+class Invocation(NamedTuple):
+    """``fetch`` の 1 回の実行と、その途中で使われたモック。"""
+
+    result: object          # click の Result（exit_code / output）
+    batch_processor: MagicMock   # BatchProcessor クラスのモック（生成回数を見る）
+    processor: MagicMock         # その戻り値（process_date_range の呼ばれ方を見る）
+    create_database: MagicMock   # DB 生成に到達したかを見る
+
+
+def _invoke(specs, *, option=1, side_effect=None, progress=False) -> Invocation:
+    """``fetch`` を実行し、結果と関与したモックを返す。"""
     processor = MagicMock()
     if side_effect is not None:
         processor.process_date_range.side_effect = side_effect
@@ -73,7 +97,8 @@ def _invoke(specs, *, option=1, side_effect=None, batch_processor=None):
     args = ["--config", "config.yaml", "fetch", "--from", "20260820", "--to", "20260821"]
     for spec in specs:
         args += ["--spec", spec]
-    args += ["--option", str(option), "--db", "sqlite", "--no-cache", "--no-progress"]
+    args += ["--option", str(option), "--db", "sqlite", "--no-cache"]
+    args.append("--progress" if progress else "--no-progress")
 
     runner = _runner()
     with runner.isolated_filesystem():
@@ -86,7 +111,7 @@ def _invoke(specs, *, option=1, side_effect=None, batch_processor=None):
             patch("src.database.schema.create_all_tables"),
         ):
             result = runner.invoke(cli, args)
-    return result, factory, processor, create_database
+    return Invocation(result, factory, processor, create_database)
 
 
 def _processed_specs(processor):
@@ -94,11 +119,11 @@ def _processed_specs(processor):
 
 
 def test_single_spec_output_is_unchanged():
-    result, _, processor, _ = _invoke(["RACE"])
+    run = _invoke(["RACE"])
 
-    assert result.exit_code == 0, result.output
-    assert result.output == SINGLE_SPEC_GOLDEN
-    assert _processed_specs(processor) == ["RACE"]
+    assert run.result.exit_code == 0, run.result.output
+    assert run.result.output == SINGLE_SPEC_GOLDEN
+    assert _processed_specs(run.processor) == ["RACE"]
 
 
 def test_one_jvlink_session_serves_every_spec():
@@ -108,37 +133,37 @@ def test_one_jvlink_session_serves_every_spec():
     JVInit が走る。spec ごとに作り直すと option=4 の取得元ダイアログが spec 数ぶん
     出てしまい、このチケットの前提そのものが崩れる。
     """
-    result, factory, processor, _ = _invoke(["DIFN", "WOOD", "SLOP"])
+    run = _invoke(["DIFN", "WOOD", "SLOP"])
 
-    assert result.exit_code == 0, result.output
-    assert factory.call_count == 1
-    assert processor.process_date_range.call_count == 3
+    assert run.result.exit_code == 0, run.result.output
+    assert run.batch_processor.call_count == 1
+    assert run.processor.process_date_range.call_count == 3
 
 
 def test_specs_are_processed_in_the_order_given():
     """並べ替えは keibaai_cloud の持ち物（ADR-0025）。指定順をそのまま守る。"""
-    result, _, processor, _ = _invoke(["WOOD", "BLDN", "DIFN", "RACE"])
+    run = _invoke(["WOOD", "BLDN", "DIFN", "RACE"])
 
-    assert result.exit_code == 0, result.output
-    assert _processed_specs(processor) == ["WOOD", "BLDN", "DIFN", "RACE"]
+    assert run.result.exit_code == 0, run.result.output
+    assert _processed_specs(run.processor) == ["WOOD", "BLDN", "DIFN", "RACE"]
 
 
 def test_each_spec_repeats_the_header_and_statistics_block():
     """出力の口は増やさない。既存ブロックを dataspec ごとに繰り返すだけ。"""
-    result, _, _, _ = _invoke(["DIFN", "WOOD", "SLOP"])
+    run = _invoke(["DIFN", "WOOD", "SLOP"])
 
-    assert result.exit_code == 0, result.output
-    assert result.output.count("[OK] Fetch complete!") == 3
-    assert result.output.count("Statistics:") == 3
+    assert run.result.exit_code == 0, run.result.output
+    assert run.result.output.count("[OK] Fetch complete!") == 3
+    assert run.result.output.count("Statistics:") == 3
     for spec in ("DIFN", "WOOD", "SLOP"):
-        assert f"  Data spec:  {spec}" in result.output
+        assert f"  Data spec:  {spec}" in run.result.output
 
 
 def test_the_date_range_and_option_are_the_same_for_every_spec():
-    result, _, processor, _ = _invoke(["DIFN", "RACE"], option=4)
+    run = _invoke(["DIFN", "RACE"], option=4)
 
-    assert result.exit_code == 0, result.output
-    for call in processor.process_date_range.call_args_list:
+    assert run.result.exit_code == 0, run.result.output
+    for call in run.processor.process_date_range.call_args_list:
         assert call.kwargs["from_date"] == "20260820"
         assert call.kwargs["to_date"] == "20260821"
         assert call.kwargs["option"] == 4
@@ -146,19 +171,19 @@ def test_the_date_range_and_option_are_the_same_for_every_spec():
 
 def test_a_failing_spec_stops_the_run_before_the_next_one():
     """ADR-0023「止めて人に見せる」。以降を実行せず、終了コードで分かる。"""
-    result, _, processor, _ = _invoke(
+    run = _invoke(
         ["DIFN", "WOOD", "SLOP"],
         side_effect=[STATS, FetcherError("Historical fetch failed: boom"), STATS],
     )
 
-    assert result.exit_code != 0
-    assert _processed_specs(processor) == ["DIFN", "WOOD"]
-    assert "boom" in result.output
+    assert run.result.exit_code != 0
+    assert _processed_specs(run.processor) == ["DIFN", "WOOD"]
+    assert "boom" in run.result.output
 
 
 def test_setup_dialog_cancel_stops_the_whole_run():
     """取得元の選択が拒否された以上、後続も初回の選択を引き継げない。"""
-    result, _, processor, _ = _invoke(
+    run = _invoke(
         ["DIFN", "WOOD"],
         option=4,
         side_effect=[
@@ -169,34 +194,83 @@ def test_setup_dialog_cancel_stops_the_whole_run():
         ],
     )
 
-    assert result.exit_code != 0
-    assert _processed_specs(processor) == ["DIFN"]
-    assert "cancel" in result.output
+    assert run.result.exit_code != 0
+    assert _processed_specs(run.processor) == ["DIFN"]
+    assert "cancel" in run.result.output
 
 
 def test_a_retired_spec_anywhere_is_rejected_before_the_database():
     # DIFF は廃止済み（DIFN が後継）。2 番目に置いても DB より先に落ちる。
-    result, factory, _, create_database = _invoke(["RACE", "DIFF"])
+    run = _invoke(["RACE", "DIFF"])
 
-    assert result.exit_code == 1, result.output
-    create_database.assert_not_called()
-    factory.assert_not_called()
+    assert run.result.exit_code == 1, run.result.output
+    run.create_database.assert_not_called()
+    run.batch_processor.assert_not_called()
 
 
 def test_an_invalid_option_combination_anywhere_is_rejected_before_the_database():
     # DIFN は option=2（今週データ）では取得できない。
-    result, factory, _, create_database = _invoke(["RACE", "DIFN"], option=2)
+    run = _invoke(["RACE", "DIFN"], option=2)
 
-    assert result.exit_code == 1, result.output
-    assert "DIFN" in result.output
-    create_database.assert_not_called()
-    factory.assert_not_called()
+    assert run.result.exit_code == 1, run.result.output
+    assert "DIFN" in run.result.output
+    run.create_database.assert_not_called()
+    run.batch_processor.assert_not_called()
 
 
 @pytest.mark.parametrize("specs", [["RACE", "RACE"], ["DIFN", "RACE", "DIFN"]])
 def test_a_repeated_spec_is_processed_once_per_occurrence(specs):
     """重複の除去も呼び出し側の判断。jltsql は指定された回数だけ回す。"""
-    result, _, processor, _ = _invoke(specs)
+    run = _invoke(specs)
 
-    assert result.exit_code == 0, result.output
-    assert _processed_specs(processor) == specs
+    assert run.result.exit_code == 0, run.result.output
+    assert _processed_specs(run.processor) == specs
+
+
+def test_the_run_summary_uses_a_plural_label_so_it_is_not_read_as_a_spec_name():
+    """前置きの一覧行が dataspec 見出しと同じラベルだと、driver が spec 名として読む。
+
+    単数形 ``Data spec:`` は「いま処理している dataspec」だけを指すようにし、
+    実走全体の一覧は複数形にして分ける。
+    """
+    run = _invoke(["DIFN", "WOOD", "SLOP"])
+
+    assert run.result.exit_code == 0, run.result.output
+    assert "  Data specs: DIFN, WOOD, SLOP" in run.result.output
+    # 単数形は dataspec ごとの見出しとしてだけ、spec 数ぶん出る。
+    assert run.result.output.count("  Data spec:  ") == 3
+
+
+def test_a_single_spec_keeps_the_singular_label():
+    run = _invoke(["RACE"])
+
+    assert "  Data spec:  RACE" in run.result.output
+    assert "Data specs:" not in run.result.output
+
+
+def test_the_retired_reason_wins_over_the_option_combination_error():
+    """廃止済み種別の理由を option 組み合わせより先に返す順序は複数指定でも保つ。
+
+    DIFF は廃止済み、DIFN は option=2 では取得できない。両方に引っかかる要求で
+    先に出るのは廃止済みの理由でなければならない（単一指定のときと同じ）。
+    """
+    run = _invoke(["DIFN", "DIFF"], option=2)
+
+    assert run.result.exit_code == 1, run.result.output
+    assert "DIFF" in run.result.output
+    assert "option=2 では取得できません" not in run.result.output
+    run.create_database.assert_not_called()
+
+
+def test_progress_display_owns_the_per_spec_header_when_it_is_enabled():
+    """progress 有効時は JVLinkProgressDisplay が dataspec 見出しを出す。
+
+    CLI 側でも出すと 1 dataspec につき見出しが 2 つ並ぶので、そちらへ任せる。
+    """
+    run = _invoke(["DIFN", "WOOD"], progress=True)
+
+    assert run.result.exit_code == 0, run.result.output
+    assert "  Data spec:  DIFN" not in run.result.output
+    assert "  Data specs: DIFN, WOOD" in run.result.output
+    # Statistics ブロックは progress の有無によらず dataspec ごとに出る。
+    assert run.result.output.count("[OK] Fetch complete!") == 2
