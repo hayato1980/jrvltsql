@@ -4,13 +4,15 @@ This module fetches historical JV-Data from JV-Link.
 """
 
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from src.fetcher.base import BaseFetcher, FetcherError
 from src.jvlink.constants import (
     JVOPEN_OPTION_SETUP,
     JVOPEN_OPTION_SETUP_SPLIT,
+    uses_range_fromtime,
     validate_jvopen_combination,
 )
 from src.utils.logger import get_logger
@@ -56,17 +58,12 @@ def validate_date_range(from_date: str, to_date: str) -> None:
 
 
 def _jvopen_fromtime(from_date: str, option: int) -> str:
-    """Build the official JVOpen fromtime for this request.
+    """Build the start point of one JVOpen request.
 
     公式仕様（4.9.0.1 p.17-20）の対象条件は開始時刻より大きいデータ。
     要求された from_date を包含させるため、セットアップ (option 3/4) では
-    排他的開始点を前日23:59:59に符号化する。
-
-    p.20 は option 3/4 について、前月までのセットアップ用データは fromtime
-    より大きい全件を返し、終了時刻が制限するのは今月の通常データ部分だけと
-    明記する。したがって過去setup dataを ``to_date`` でboundedにできるとは
-    扱わず、setupはstart-onlyを1回だけ呼ぶ。option 1の差分cursor・option 2の
-    今週データ契約は変更しない。
+    排他的開始点を前日23:59:59に符号化する。option 1 の差分カーソル
+    （``{from_date}000000``）と option 2 の今週データ契約は変更しない。
     """
     if option not in (JVOPEN_OPTION_SETUP, JVOPEN_OPTION_SETUP_SPLIT):
         return f"{from_date}000000"
@@ -75,17 +72,68 @@ def _jvopen_fromtime(from_date: str, option: int) -> str:
     ).strftime("%Y%m%d%H%M%S")
 
 
+def _jvopen_fromtimes(
+    data_spec: str,
+    from_date: str,
+    to_date: str,
+    option: int,
+) -> list[str]:
+    """Split one request into the fromtime of each JVOpen call.
+
+    なぜ刻むかは RANGE_FROMTIME_DATA_SPECS のコメントを見ること。刻まない
+    dataspec と option 2 は、従来どおり開始のみの 1 回になる。
+
+    境界は隣り合う chunk で同じ値を共有する。JVOpen の対象は「開始時刻より
+    大きく、終了時刻まで」なので、その値のファイルは前の chunk に入り次の
+    chunk からは外れる。穴も重複も出ない。
+
+    Returns:
+        JVOpen に渡す fromtime のリスト。要素は開始のみ（14 桁）か
+        ``開始-終了``（14 桁 + "-" + 14 桁）。
+    """
+    start = _jvopen_fromtime(from_date, option)
+    if not uses_range_fromtime(data_spec, option):
+        return [start]
+
+    last_day = datetime.strptime(to_date, "%Y%m%d")
+    fromtimes = []
+    for year in range(int(from_date[:4]), last_day.year + 1):
+        year_end = datetime(year, 12, 31)
+        end = min(year_end, last_day)
+        fromtimes.append(f"{start}-{end.strftime('%Y%m%d')}235959")
+        # 次の chunk はこの chunk の終了時刻より大きいところから始まる。
+        start = f"{year}1231235959"
+    return fromtimes
+
+
+@dataclass
+class _NlCacheWriteState:
+    """NL キャッシュへの write-through 中に chunk をまたいで持ち回す状態.
+
+    manager が None ならキャッシュは使わない。range_complete は「この要求の
+    範囲を取り切ったと言えるか」で、倒れていると fetch は完了マークを付けない。
+    """
+
+    # CacheManager 相当のオブジェクト（None ならキャッシュ無し）。型を固定しないのは
+    # 呼び出し側が差し替え可能な形で渡すため。
+    manager: Any
+    checkpoints: dict[str, Optional[int]] = field(default_factory=dict)
+    range_complete: bool = True
+
+
 class HistoricalFetcher(BaseFetcher):
     """Fetcher for historical JV-Data.
 
     Fetches accumulated (蓄積) data from JV-Link for a specified date range
-    and data specification. For setup requests (option 3/4) the requested
-    inclusive from_date is encoded as the exclusive fromtime start point
-    (previous day 23:59:59, per the official strictly-greater rule). Setup
-    stays start-only because the official option-3/4 contract does not apply
-    an end timestamp to the historical setup tail. Options 1/2 keep the
-    legacy ``{from_date}000000`` start-only fromtime. In every mode records
-    are filtered client-side based on the end date.
+    and data specification. A dataspec that accepts a range fromtime
+    (RANGE_FROMTIME_DATA_SPECS) is split into one JVOpen per calendar year,
+    because the cost of a single JVRead grows with the number of files one
+    JVOpen lists. Every other dataspec, and option 2, opens once from the
+    start point only. For setup requests (option 3/4) the requested inclusive
+    from_date is encoded as the exclusive start point (previous day 23:59:59,
+    per the official strictly-greater rule); options 1/2 keep the
+    ``{from_date}000000`` cursor. In every mode records are also filtered
+    client-side based on the end date.
 
     Note:
         Service key must be configured in JRA-VAN DataLab application
@@ -108,6 +156,9 @@ class HistoricalFetcher(BaseFetcher):
         self.cache_manager = None
         self._jvd_self_repair_attempts = 0
         self._jvd_replay_records_remaining = 0
+        # 統計は fetch 全体で 1 本だが、リプレイ長は「いまの open で出したぶん」。
+        # 暦年チャンクでは 1 回の fetch が JVOpen を何度も呼ぶので基準点を持つ。
+        self._open_records_baseline = 0
         self._jv_open_context: Optional[tuple[str, str, int]] = None
         self._jv_open_last_file_timestamp: Optional[str] = None
         self._fetch_task_id: Optional[int] = None
@@ -161,7 +212,11 @@ class HistoricalFetcher(BaseFetcher):
         # The same JVOpen context restarts at the beginning of the stream.
         # Remember the successfully emitted prefix so _fetch_and_parse can
         # drain it without parsing, yielding, or appending it to raw cache.
-        self._jvd_replay_records_remaining = self._records_fetched
+        # 数えるのは「いまの open で出したぶん」。_records_fetched は fetch 全体の
+        # 累計なので、この open が始まった時点の基準点を引く。
+        self._jvd_replay_records_remaining = (
+            self._records_fetched - self._open_records_baseline
+        )
         expected_read_count = self._total_files
         expected_last_file_timestamp = self._jv_open_last_file_timestamp
         try:
@@ -220,6 +275,172 @@ class HistoricalFetcher(BaseFetcher):
             last_file_timestamp=last_file_timestamp,
         )
 
+    def _fetch_one_open(
+        self,
+        *,
+        data_spec: str,
+        fromtime: str,
+        option: int,
+        to_date: str,
+        chunk_label: str,
+        cache: "_NlCacheWriteState",
+    ) -> Iterator[dict]:
+        """Run one JVOpen -> read -> JVClose cycle and yield its records.
+
+        暦年チャンクの 1 個ぶん。統計・キャッシュ確定・進捗表示の寿命は呼び出し側
+        (fetch) が持ち、ここは 1 回の open の中だけを見る。
+
+        空の窓 (result -1) は刻んでいれば普通に起こるので、その chunk を終えて
+        次へ進む。ただし「窓の中身が無い」ことを確かめられていない以上、この
+        範囲を完全としてキャッシュに刻ませない (cache.range_complete を倒す)。
+        """
+        # 前の chunk の読み出し状態は持ち越さない。リプレイ長は「この open で
+        # 出したぶん」なので、累計から基準点を引いて数える。self-repair の
+        # リトライ上限は fetch 全体で 1 本のままにする (chunk 数ぶん増やさない)。
+        self._jvd_replay_records_remaining = 0
+        self._open_records_baseline = self._records_fetched
+        self._files_processed = 0
+        self._jv_open_context = (data_spec, fromtime, option)
+        self._jv_open_last_file_timestamp = None
+        download_task_id = None
+        fetch_task_id = None
+
+        logger.info(
+            "Opening data stream",
+            data_spec=data_spec,
+            fromtime=fromtime,
+            option=option,
+            chunk=chunk_label,
+            note=(
+                "option=1: 通常データ（差分）; "
+                "option=2: 今週データ; "
+                "option=3/4: セットアップ"
+                "（範囲形式が使える dataspec は暦年で刻む。to_date は client filter も兼ねる）"
+            ),
+        )
+
+        # JVOpen 自体を try の中で呼ぶ。wrapper は -202 のように「開いたが
+        # 例外で返る」経路で JVClose を要求するので、close の義務はこの
+        # finally 1 箇所に集約する。
+        try:
+            result, read_count, download_count, last_file_timestamp = (
+                self.jvlink.jv_open(data_spec, fromtime, option)
+            )
+            self._jv_open_last_file_timestamp = last_file_timestamp
+
+            logger.info(
+                "Data stream opened",
+                result_code=result,
+                read_count=read_count,
+                download_count=download_count,
+                last_file_timestamp=last_file_timestamp,
+                chunk=chunk_label,
+            )
+
+            if result == -2:
+                raise FetcherError("JVOpen setup dialog was cancelled")
+            # 「データなし」判定より先にエラーコードを弾く。-113（読み出し終了
+            # 時刻のパラメータ不正）のような失敗は read_count も download_count も
+            # 0 で返るので、順序を逆にすると空の窓と見分けがつかなくなる。
+            if result not in (0, -1):
+                raise FetcherError(f"JVOpen returned unexpected result code: {result}")
+            if result == -1 or (read_count == 0 and download_count == 0):
+                # 窓に該当データが無いだけ。刻んでいる以上ふつうに起こるので
+                # fetch は続ける。ただしこの範囲を「完全に取り切った」とは
+                # 言えないので、NL キャッシュの完了マークは付けさせない。
+                # (付けると has_nl_range が 0 件をこの範囲の答えとして返し続ける)
+                cache.range_complete = False
+                logger.info(
+                    "No data available for this window",
+                    data_spec=data_spec,
+                    fromtime=fromtime,
+                    chunk=chunk_label,
+                )
+                if self.progress_display:
+                    self.progress_display.print_info(
+                        f"{data_spec}: サーバーにデータなし ({fromtime})"
+                    )
+                return
+
+            # Wait for download to complete if needed
+            if download_count > 0:
+                logger.info(
+                    "Download in progress, waiting for completion",
+                    download_count=download_count,
+                )
+                if self.progress_display:
+                    download_task_id = self.progress_display.add_download_task(
+                        f"{data_spec} ダウンロード ({chunk_label})",
+                        total=download_count,
+                    )
+                self._wait_for_download(download_task_id, download_count=download_count)
+
+            # Set total files after JVOpen reports the stream size.
+            self._total_files = read_count
+
+            # Create fetch progress task
+            if self.progress_display:
+                fetch_task_id = self.progress_display.add_task(
+                    f"{data_spec} レコード取得 ({chunk_label})",
+                    total=read_count,
+                )
+                self._fetch_task_id = fetch_task_id
+
+            # Fetch and parse records (with optional cache write-through).
+            # The cache stores raw jv_read buffers, so write once per buffer, not
+            # once per parsed record: full-struct parsers (H1/H6) expand one
+            # buffer into thousands of rows that all carry the same `_raw`. Rows
+            # from one buffer share a header, hence the same record date, so the
+            # first surviving row stands in for all of them. Identity is a safe
+            # "same buffer" test because each jv_read() returns a new bytes
+            # object and last_cached_raw keeps it alive.
+            last_cached_raw = None
+            for data in self._fetch_and_parse(
+                fetch_task_id,
+                to_date=to_date,
+                recover_file_error=self._recover_historical_read_error,
+                consume_replayed_record=self._consume_replayed_record,
+            ):
+                raw = data.get("_raw") if cache.manager else None
+                if raw is not None and raw is not last_cached_raw:
+                    last_cached_raw = raw
+                    rec_date = _extract_record_date(data)
+                    if rec_date:
+                        if rec_date not in cache.checkpoints:
+                            cache.checkpoints[rec_date] = cache.manager.checkpoint_nl(
+                                data_spec,
+                                rec_date,
+                            )
+                        cache.manager.write_nl_record(data_spec, rec_date, raw)
+                    else:
+                        # The record is yielded/imported, but cannot be replayed
+                        # from this date-keyed cache. Keep the range incomplete;
+                        # the finally block rolls back any partial appends.
+                        cache.range_complete = False
+                yield data
+
+            if self._jvd_replay_records_remaining > 0:
+                raise FetcherError(
+                    "Historical stream ended before recovery replay caught up; "
+                    f"{self._jvd_replay_records_remaining} record(s) remain"
+                )
+            if self._recoverable_read_errors > 0:
+                raise FetcherError(
+                    "Historical stream completed with "
+                    f"{self._recoverable_read_errors} unrepaired JVRead error(s); "
+                    "refusing to commit incomplete output"
+                )
+        finally:
+            self._jv_open_context = None
+            self._jv_open_last_file_timestamp = None
+            self._fetch_task_id = None
+            # 次の chunk が JVOpen できるよう、この open は必ず閉じる。
+            try:
+                self.jvlink.jv_close()
+                logger.info("Data stream closed", chunk=chunk_label)
+            except Exception as e:
+                logger.warning(f"Failed to close stream: {e}")
+
     def fetch(
         self,
         data_spec: str,
@@ -252,10 +473,10 @@ class HistoricalFetcher(BaseFetcher):
             (Year/MonthDay) are always included.
 
             For option 3/4 the requested inclusive from_date is encoded as
-            the exclusive start point ``(from_date - 1 day)235959``. The
-            official p.20 setup contract returns every historical setup item
-            after that point; ``to_date`` is therefore a client-side record
-            filter, not a provider bound for the historical setup tail.
+            the exclusive start point ``(from_date - 1 day)235959``. For a
+            dataspec that accepts a range fromtime the request is split into
+            one JVOpen per calendar year and ``to_date`` also bounds the last
+            chunk; for every other dataspec it is a client-side filter only.
 
         Examples:
             >>> fetcher = HistoricalFetcher()  # Uses default sid="UNKNOWN"
@@ -284,22 +505,18 @@ class HistoricalFetcher(BaseFetcher):
             self.progress_display = JVLinkProgressDisplay()
             self.progress_display.start()
 
-        download_task_id = None
-        fetch_task_id = None
         # option=2 uses fromtime only for continuity within current race-cycle
         # data; it cannot prove an arbitrary requested historical range
         # complete. Bypass both existing NL cache markers and write-through
         # caching for that mode.
         active_cache_manager = self.cache_manager if option != 2 else None
-        cache_checkpoints: dict[str, Optional[int]] = {}
         cache_write_committed = active_cache_manager is None
-        cache_range_complete = True
+        cache = _NlCacheWriteState(manager=active_cache_manager)
 
-        # 公式の fromtime 形式をここで決める（仕様書 4.9.0.1 p.17-20）。
-        # セットアップは from_date を包含する排他的開始点（前日23:59:59）を
-        # start-onlyで送る。to_dateは過去setup tailのprovider boundにはならず、
-        # 下流のclient-side filterとしてのみ使う。
-        fromtime = _jvopen_fromtime(from_date, option)
+        # 1 回の JVOpen に並ぶ対象ファイル数が JVRead 1 回の費用を決めるので、
+        # 範囲形式を使える dataspec は暦年で刻む（_jvopen_fromtimes）。
+        # 刻めない dataspec と option 2 は開始のみ 1 回になる。
+        fromtimes = _jvopen_fromtimes(data_spec, from_date, to_date, option)
 
         try:
             # Info for setup mode (option 3 or 4) - ログのみ、画面表示はしない
@@ -307,7 +524,7 @@ class HistoricalFetcher(BaseFetcher):
                 logger.info(
                     "セットアップモード",
                     option=option,
-                    provider_tail="start_only",
+                    chunks=len(fromtimes),
                 )
 
             # Initialize JV-Link
@@ -319,130 +536,21 @@ class HistoricalFetcher(BaseFetcher):
             # Note: Service key must be pre-configured in Windows registry
             # jv_init() does not accept service_key parameter
             self.jvlink.jv_init()
+            # リトライ上限は fetch 全体で 1 本。chunk 数ぶんは増やさない。
             self._jvd_self_repair_attempts = 0
-            self._jvd_replay_records_remaining = 0
-            self._jv_open_context = (data_spec, fromtime, option)
-            self._jv_open_last_file_timestamp = None
 
-            # Open data stream
-            logger.info(
-                "Opening data stream",
-                data_spec=data_spec,
-                from_date=from_date,
-                to_date=to_date,
-                fromtime=fromtime,
-                option=option,
-                note=(
-                    "option=1: 通常データ（差分）; "
-                    "option=2: 今週データ; "
-                    "option=3/4: セットアップ"
-                    "（過去setup tailはstart-only、to_dateはclient filter）"
-                ),
-            )
-
-            result, read_count, download_count, last_file_timestamp = self.jvlink.jv_open(
-                data_spec,
-                fromtime,
-                option,
-            )
-            self._jv_open_last_file_timestamp = last_file_timestamp
-
-            logger.info(
-                "Data stream opened",
-                result_code=result,
-                read_count=read_count,
-                download_count=download_count,
-                last_file_timestamp=last_file_timestamp,
-            )
-
-            # Check if data is empty
-            if result == -2:
-                raise FetcherError("JVOpen setup dialog was cancelled")
-            if result == -1 or (read_count == 0 and download_count == 0):
-                logger.info(
-                    "No data available from specified timestamp",
+            for chunk_index, fromtime in enumerate(fromtimes, start=1):
+                yield from self._fetch_one_open(
                     data_spec=data_spec,
                     fromtime=fromtime,
-                )
-                if self.progress_display:
-                    self.progress_display.print_info(
-                        f"{data_spec}: サーバーにデータなし"
-                    )
-                return  # No data to fetch
-            if result != 0:
-                raise FetcherError(f"JVOpen returned unexpected result code: {result}")
-
-            # Wait for download to complete if needed
-            if download_count > 0:
-                logger.info(
-                    "Download in progress, waiting for completion",
-                    download_count=download_count,
-                )
-                if self.progress_display:
-                    download_task_id = self.progress_display.add_download_task(
-                        f"{data_spec} ダウンロード",
-                        total=download_count,
-                    )
-                self._wait_for_download(download_task_id, download_count=download_count)
-
-            # Set total files after JVOpen reports the stream size.
-            self._total_files = read_count
-
-            # Create fetch progress task
-            if self.progress_display:
-                fetch_task_id = self.progress_display.add_task(
-                    f"{data_spec} レコード取得",
-                    total=read_count,
-                )
-                self._fetch_task_id = fetch_task_id
-
-            # Fetch and parse records (with optional cache write-through).
-            # The cache stores raw jv_read buffers, so write once per buffer, not
-            # once per parsed record: full-struct parsers (H1/H6) expand one
-            # buffer into thousands of rows that all carry the same `_raw`. Rows
-            # from one buffer share a header, hence the same record date, so the
-            # first surviving row stands in for all of them. Identity is a safe
-            # "same buffer" test because each jv_read() returns a new bytes
-            # object and last_cached_raw keeps it alive.
-            last_cached_raw = None
-            for data in self._fetch_and_parse(
-                fetch_task_id,
-                to_date=to_date,
-                recover_file_error=self._recover_historical_read_error,
-                consume_replayed_record=self._consume_replayed_record,
-            ):
-                raw = data.get("_raw") if active_cache_manager else None
-                if raw is not None and raw is not last_cached_raw:
-                    last_cached_raw = raw
-                    rec_date = _extract_record_date(data)
-                    if rec_date:
-                        if rec_date not in cache_checkpoints:
-                            cache_checkpoints[rec_date] = active_cache_manager.checkpoint_nl(
-                                data_spec,
-                                rec_date,
-                            )
-                        active_cache_manager.write_nl_record(data_spec, rec_date, raw)
-                    else:
-                        # The record is yielded/imported, but cannot be replayed
-                        # from this date-keyed cache. Keep the range incomplete;
-                        # the finally block rolls back any partial appends.
-                        cache_range_complete = False
-                yield data
-
-            if self._jvd_replay_records_remaining > 0:
-                raise FetcherError(
-                    "Historical stream ended before recovery replay caught up; "
-                    f"{self._jvd_replay_records_remaining} record(s) remain"
-                )
-            if self._recoverable_read_errors > 0:
-                raise FetcherError(
-                    "Historical stream completed with "
-                    f"{self._recoverable_read_errors} unrepaired JVRead error(s); "
-                    "refusing to commit incomplete output"
+                    option=option,
+                    to_date=to_date,
+                    chunk_label=f"{chunk_index}/{len(fromtimes)}",
+                    cache=cache,
                 )
 
             # Mark cached dates as complete
-            if active_cache_manager and cache_range_complete:
+            if active_cache_manager and cache.range_complete:
                 d = datetime.strptime(from_date, "%Y%m%d").date()
                 end = datetime.strptime(to_date, "%Y%m%d").date()
                 completed_dates = []
@@ -484,7 +592,7 @@ class HistoricalFetcher(BaseFetcher):
 
         finally:
             if not cache_write_committed and active_cache_manager:
-                for rec_date, checkpoint in cache_checkpoints.items():
+                for rec_date, checkpoint in cache.checkpoints.items():
                     try:
                         active_cache_manager.restore_nl(
                             data_spec,
@@ -501,13 +609,8 @@ class HistoricalFetcher(BaseFetcher):
             self._jv_open_context = None
             self._jv_open_last_file_timestamp = None
             self._fetch_task_id = None
-            # Close stream (JVClose) — releases the current open session so
-            # the next jv_init()/jv_open() call in a subsequent chunk works.
-            try:
-                self.jvlink.jv_close()
-                logger.info("Data stream closed")
-            except Exception as e:
-                logger.warning(f"Failed to close stream: {e}")
+            # JVClose の義務は _fetch_one_open の finally が持つ（JVOpen と
+            # 同じ try に入っている）。ここで二重に閉じない。
 
             # Do NOT call cleanup() here: cleanup() destroys the COM object
             # (self._jvlink = None + CoUninitialize), so subsequent chunks

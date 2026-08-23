@@ -29,6 +29,7 @@ def _fetcher(cache, jv_read_results) -> HistoricalFetcher:
     f._files_processed = f._total_files = 0
     f._start_time = 0.0
     f._jvd_self_repair_attempts = f._jvd_replay_records_remaining = 0
+    f._open_records_baseline = 0
     f._recoverable_read_errors = 0
     f._jv_open_context = f._jv_open_last_file_timestamp = f._fetch_task_id = None
 

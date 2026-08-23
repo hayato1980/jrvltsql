@@ -31,6 +31,7 @@ def _fetcher():
     fetcher._total_files = 3
     fetcher._jvd_self_repair_attempts = 0
     fetcher._jvd_replay_records_remaining = 0
+    fetcher._open_records_baseline = 0
     fetcher._jv_open_context = ("RACE", "20260101000000", 1)
     fetcher._jv_open_last_file_timestamp = "ts"
     fetcher._fetch_task_id = None
