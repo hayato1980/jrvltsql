@@ -264,12 +264,73 @@ def test_native_jvgets_uses_byte_array_size_and_filename_arguments():
     com = ThreeArgumentGetsCom((4, memoryview(b"ABCD"), "RACE.jvd"))
     wrapper = _wrapper(com, is_open=True)
 
-    assert wrapper.jv_gets() == (4, b"ABCD")
+    assert wrapper.jv_gets() == (4, b"ABCD", "RACE.jvd")
     assert len(com.calls) == 1
     buff, size, filename = com.calls[0]
     assert isinstance(buff, bytearray)
     assert size > 4
     assert isinstance(filename, bytearray)
+
+
+def test_native_jvgets_accepts_the_four_item_variant_that_echoes_size():
+    # 型ライブラリによっては入力の size を返り値に混ぜてくる。JVRead と同じで
+    # filename は size の後ろに来る。
+    com = ThreeArgumentGetsCom((4, memoryview(b"ABCD"), 4, "RACE.jvd"))
+
+    assert _wrapper(com, is_open=True).jv_gets() == (4, b"ABCD", "RACE.jvd")
+
+
+def test_native_jvgets_decodes_a_byte_array_filename_placeholder():
+    com = ThreeArgumentGetsCom((4, memoryview(b"ABCD"), bytearray(b"RACE.jvd\x00\x00")))
+
+    assert _wrapper(com, is_open=True).jv_gets() == (4, b"ABCD", "RACE.jvd")
+
+
+@pytest.mark.parametrize("error_code", [-402, -403])
+def test_native_jvgets_returns_the_corrupt_filename(error_code):
+    # 壊れたダウンロード済みファイルは、名前が分からなければ直せない。
+    com = ThreeArgumentGetsCom((error_code, memoryview(b""), "corrupt/RACE.jvd"))
+
+    assert _wrapper(com, is_open=True).jv_gets() == (
+        error_code,
+        None,
+        "corrupt/RACE.jvd",
+    )
+
+
+def test_native_jvgets_hands_cp932_bytes_through_without_the_round_trip(monkeypatch):
+    """JVGets の経路には推測で戻す分岐が無いこと.
+
+    ’（U+2019）は CP932 では 2 バイト。JVRead は JV-Link 内部で UNICODE へ
+    変換されたものを返すので、呼び出し側が推測でバイト列へ戻すことになり、
+    1987 年の RA レコードではこの文字が 1 バイトに潰れて取り込みが止まった。
+    JVGets は SJIS のまま返すので、戻す推測そのものが要らない。
+    """
+    def _must_not_guess(*args, **kwargs):
+        raise AssertionError("JVGets の経路が CP1252 の変換表を使っている")
+
+    monkeypatch.setattr(
+        "src.jvlink.wrapper._decode_via_cp1252_table", _must_not_guess
+    )
+    record = "’８７ゴールデンスパーＴ".encode("cp932")
+    com = ThreeArgumentGetsCom((len(record), memoryview(record), "RACE.jvd"))
+
+    assert _wrapper(com, is_open=True).jv_gets() == (len(record), record, "RACE.jvd")
+
+
+def test_native_jvgets_releases_the_com_buffer_view():
+    """公式は「JVGets ではメモリの解放を行わない」と課している.
+
+    レコードは複製済みなので、pywin32 が渡してきた view は読み出しの度に
+    手放してよい。
+    """
+    record = b"RA" + b"0" * 30
+    view = memoryview(bytearray(record))
+    com = ThreeArgumentGetsCom((len(record), view, "RACE.jvd"))
+
+    assert _wrapper(com, is_open=True).jv_gets() == (len(record), record, "RACE.jvd")
+    with pytest.raises(ValueError):
+        bytes(view)
 
 
 def test_native_jvread_uses_stable_pywin32_dummy_buffers():
@@ -290,24 +351,53 @@ def test_native_jvread_and_jvgets_propagate_downloading_status():
     assert _wrapper(read_com, is_open=True).jv_read() == (-3, None, "RACE.jvd")
 
     gets_com = ThreeArgumentGetsCom((-3, memoryview(b""), "RACE.jvd"))
-    assert _wrapper(gets_com, is_open=True).jv_gets() == (-3, None)
+    assert _wrapper(gets_com, is_open=True).jv_gets() == (-3, None, "RACE.jvd")
+
+
+def test_fetcher_reads_records_with_jvgets_instead_of_jvread():
+    jvlink = MagicMock()
+    jvlink.jv_gets.return_value = (0, None, None)
+    fetcher = _historical_fetcher(jvlink)
+
+    assert list(fetcher._fetch_and_parse()) == []
+
+    jvlink.jv_gets.assert_called_once()
+    jvlink.jv_read.assert_not_called()
+
+
+def test_fetcher_hands_the_jvgets_filename_to_corrupt_file_recovery():
+    jvlink = MagicMock()
+    jvlink.jv_gets.side_effect = [
+        (-402, None, "corrupt/RACE.jvd"),
+        (0, None, None),
+    ]
+    fetcher = _historical_fetcher(jvlink)
+    recovered = []
+
+    assert list(
+        fetcher._fetch_and_parse(
+            recover_file_error=lambda code, name: recovered.append((code, name)),
+        )
+    ) == []
+
+    assert recovered == [(-402, "corrupt/RACE.jvd")]
 
 
 def test_fetcher_waits_and_resumes_after_downloading_status():
     jvlink = MagicMock()
-    jvlink.jv_read.side_effect = [(-3, None, "RACE.jvd"), (0, None, None)]
+    jvlink.jv_gets.side_effect = [(-3, None, "RACE.jvd"), (0, None, None)]
     fetcher = _historical_fetcher(jvlink)
 
     with patch("src.fetcher.base.time.sleep") as sleep:
         assert list(fetcher._fetch_and_parse()) == []
 
     sleep.assert_called_once()
-    assert jvlink.jv_read.call_count == 2
+    assert jvlink.jv_gets.call_count == 2
 
 
 def test_fetcher_downloading_retry_has_a_hard_timeout():
     jvlink = MagicMock()
-    jvlink.jv_read.return_value = (-3, None, "RACE.jvd")
+    jvlink.jv_gets.return_value = (-3, None, "RACE.jvd")
     fetcher = _historical_fetcher(jvlink)
 
     with (
@@ -318,14 +408,14 @@ def test_fetcher_downloading_retry_has_a_hard_timeout():
     ):
         list(fetcher._fetch_and_parse())
 
-    assert jvlink.jv_read.call_count == 3
+    assert jvlink.jv_gets.call_count == 3
     assert sleep.call_count == 2
 
 
 @pytest.mark.parametrize("error_code", [-201, -202, -203, -502, -503])
 def test_fetcher_does_not_retry_deterministic_or_download_failures(error_code):
     jvlink = MagicMock()
-    jvlink.jv_read.side_effect = [
+    jvlink.jv_gets.side_effect = [
         (error_code, None, "RACE.jvd"),
         (0, None, None),
     ]
@@ -334,14 +424,14 @@ def test_fetcher_does_not_retry_deterministic_or_download_failures(error_code):
     with pytest.raises(FetcherError, match=str(error_code)):
         list(fetcher._fetch_and_parse())
 
-    jvlink.jv_read.assert_called_once()
+    jvlink.jv_gets.assert_called_once()
     jvlink.jv_file_delete.assert_not_called()
 
 
 @pytest.mark.parametrize("error_code", [-402, -403])
 def test_fetcher_corrupt_file_without_recovery_callback_fails_once(error_code):
     jvlink = MagicMock()
-    jvlink.jv_read.side_effect = [
+    jvlink.jv_gets.side_effect = [
         (error_code, None, "RACE.jvd"),
         (0, None, None),
     ]
@@ -350,7 +440,7 @@ def test_fetcher_corrupt_file_without_recovery_callback_fails_once(error_code):
     with pytest.raises(FetcherError, match=f"{error_code}|recovery"):
         list(fetcher._fetch_and_parse())
 
-    jvlink.jv_read.assert_called_once()
+    jvlink.jv_gets.assert_called_once()
     jvlink.jv_file_delete.assert_not_called()
 
 

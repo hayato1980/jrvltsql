@@ -439,13 +439,24 @@ class TestJVLinkBridgeAPI:
             bridge.jv_file_delete("corrupt/RACE.jvd")
 
     def test_jv_gets_delegates_to_read(self, bridge):
-        """jv_gets should delegate to jv_read."""
+        """jv_gets should delegate to jv_read, filename included."""
         bridge._is_open = True
         raw = b"test"
         b64 = base64.b64encode(raw).decode()
         _patch_responses(bridge, {"status": "ok", "code": 4, "data": b64, "filename": "f", "size": 4})
-        code, buff = bridge.jv_gets()
-        assert buff == raw
+        code, buff, filename = bridge.jv_gets()
+        assert (code, buff, filename) == (4, raw, "f")
+
+    @pytest.mark.parametrize("error_code", [-402, -403])
+    def test_jv_gets_carries_the_corrupt_filename(self, bridge, error_code):
+        """A corrupt downloaded file is only repairable with its filename."""
+        bridge._is_open = True
+        _patch_responses(
+            bridge,
+            {"status": "ok", "code": error_code, "filename": "corrupt/RACE.jvd"},
+        )
+
+        assert bridge.jv_gets() == (error_code, None, "corrupt/RACE.jvd")
 
     def test_jv_close(self, bridge):
         bridge._is_open = True

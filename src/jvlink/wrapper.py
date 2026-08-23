@@ -78,6 +78,44 @@ def _decode_via_cp1252_table(value: str, method_name: str) -> bytes:
     return bytes(result)
 
 
+def _release_com_buffer(value) -> None:
+    """Drop the view pywin32 handed back for a JVGets buffer.
+
+    The official specification puts the release on the caller: "JVGets では
+    メモリの解放を行わないので、アプリケーション側で読み出しの度に解放する
+    必要があります". The record has already been copied out by the time this
+    runs, so letting go of the view here keeps nothing of the COM buffer
+    alive between reads. Whether that changes the residency the fetcher's
+    periodic ``gc.collect()`` was added for is still unmeasured
+    (keibaai_cloud#253).
+    """
+    if isinstance(value, memoryview):
+        try:
+            value.release()
+        except (BufferError, ValueError):
+            # Another exported view is still open, or it was already
+            # released. Either way the periodic collection covers it.
+            pass
+
+
+def _coerce_filename(value) -> Optional[str]:
+    """Return the JV-Link file name as text whatever pywin32 handed back.
+
+    JVGets is called with a ``bytearray`` placeholder for its filename
+    out-parameter, and dynamic dispatch can echo it back as a byte buffer
+    instead of a string. JV-Link file names are ASCII paths, so decoding is
+    unambiguous; anything else is reported as absent rather than guessed at.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value).split(b"\x00", 1)[0]
+        return raw.decode("cp932", errors="replace")
+    return None
+
+
 def _recover_com_buffer(value, expected_size: int, method_name: str) -> bytes:
     """Recover the exact JV-Data bytes from a pywin32 out buffer.
 
@@ -669,19 +707,26 @@ class JVLinkWrapper:
                 raise
             raise JVLinkError(f"JVRead failed: {e}")
 
-    def jv_gets(self) -> Tuple[int, Optional[bytes]]:
-        """Read one record from JV-Link data stream using JVGets (faster than JVRead).
+    def jv_gets(self) -> Tuple[int, Optional[bytes], Optional[str]]:
+        """Read one record from JV-Link data stream using JVGets.
 
-        JVGets returns Shift-JIS encoded byte array directly, which is faster than
-        JVRead that returns Unicode string. This method is recommended for high-performance
-        data fetching.
+        JVGets hands back the Shift-JIS bytes of JV-Data as a byte array.
+        JVRead instead converts them to UNICODE inside JV-Link, so its caller
+        has to guess its way back to the original bytes (the round trip in
+        ``_recover_com_buffer``). Reading with JVGets removes that round trip:
+        the parsers slice byte positions, so bytes are what they want.
+
+        The official specification states that JVGets and JVRead may be called
+        alternately on the same stream without losing records, so a caller can
+        move between them one call site at a time.
 
         Must be called after jv_open() or jv_rt_open().
 
         Returns:
-            Tuple of (return_code, buffer)
+            Tuple of (return_code, buffer, filename)
             - return_code: >0=success with data length, 0=complete, -1=file switch, <-1=error
             - buffer: Shift-JIS encoded data buffer (bytes) if success, None otherwise
+            - filename: Filename if applicable, None otherwise
 
         Raises:
             JVLinkError: If read operation fails
@@ -691,7 +736,7 @@ class JVLinkWrapper:
             >>> wrapper.jv_init()
             >>> wrapper.jv_open("RACE", "20240101000000", 1)
             >>> while True:
-            ...     ret_code, buff = wrapper.jv_gets()
+            ...     ret_code, buff, filename = wrapper.jv_gets()
             ...     if ret_code == 0:  # Complete
             ...         break
             ...     elif ret_code == -1:  # File switch
@@ -716,10 +761,14 @@ class JVLinkWrapper:
 
             # Working dynamic-dispatch paths return (return_code, memoryview,
             # filename). Accept a four-item variant as well for compatibility
-            # with type libraries that echo the input size.
-            if isinstance(jv_result, tuple) and len(jv_result) in (3, 4):
+            # with type libraries that echo the input size, which sits between
+            # the buffer and the filename exactly as it does for JVRead.
+            if isinstance(jv_result, tuple) and len(jv_result) == 3:
+                result, buff_str, filename_str = jv_result
+            elif isinstance(jv_result, tuple) and len(jv_result) == 4:
                 result = jv_result[0]
                 buff_str = jv_result[1]
+                filename_str = jv_result[3]
             else:
                 # Unexpected return format
                 result_length = (
@@ -736,19 +785,36 @@ class JVLinkWrapper:
             # -1: File switch (continue reading)
             # < -1: Error
             if result > 0:
-                return result, _recover_com_buffer(buff_str, result, "JVGets")
+                # JVGets returns the Shift-JIS bytes themselves, so recovery
+                # takes the byte-array branch and never has to guess an
+                # encoding back.
+                data_bytes = _recover_com_buffer(buff_str, result, "JVGets")
+                _release_com_buffer(buff_str)
+                return result, data_bytes, _coerce_filename(filename_str)
 
             elif result == JV_READ_SUCCESS:
                 # Read complete (0)
-                return result, None
+                return result, None, None
 
             elif result == JV_READ_NO_MORE_DATA:
                 # File switch (-1)
-                return result, None
+                return result, None, None
 
             elif result == -3:
-                logger.debug("JVGets waiting for file download")
-                return result, None
+                filename = _coerce_filename(filename_str)
+                logger.debug("JVGets waiting for file download", filename=filename)
+                return result, None, filename
+
+            elif result in (-402, -403):
+                # Preserve the filename returned by JVGets so the fetcher can
+                # apply its recovery policy without inspecting cache paths.
+                filename = _coerce_filename(filename_str)
+                logger.warning(
+                    "JVGets returned recoverable file error",
+                    error_code=result,
+                    filename=filename,
+                )
+                return result, None, filename
 
             else:
                 # Error (< -1)

@@ -130,19 +130,19 @@ class HistoricalFetcher(BaseFetcher):
         if error_code != -402:
             self._delete_corrupt_file_best_effort(error_code, filename)
             raise FetcherError(
-                f"JVRead returned {error_code} for {filename or 'an unknown file'}; "
+                f"JVGets returned {error_code} for {filename or 'an unknown file'}; "
                 "automatic replay is limited to zero-byte files (-402)"
             )
         if not filename:
             raise FetcherError(
-                f"JVRead returned {error_code} without a filename; cannot self-repair safely"
+                f"JVGets returned {error_code} without a filename; cannot self-repair safely"
             )
         if self._jv_open_context is None:
-            raise FetcherError("JVRead self-repair has no JVOpen context")
+            raise FetcherError("JVGets self-repair has no JVOpen context")
         if self._jvd_self_repair_attempts >= self.JVD_SELF_REPAIR_MAX_RETRIES:
             self._delete_corrupt_file_best_effort(error_code, filename)
             raise FetcherError(
-                f"JVRead returned {error_code} for {filename} after "
+                f"JVGets returned {error_code} for {filename} after "
                 f"{self._jvd_self_repair_attempts} self-repair retries"
             )
 
@@ -150,12 +150,12 @@ class HistoricalFetcher(BaseFetcher):
             delete_result = self.jvlink.jv_file_delete(filename)
         except Exception as exc:
             raise FetcherError(
-                f"JVFiledelete failed for {filename} after JVRead {error_code}"
+                f"JVFiledelete failed for {filename} after JVGets {error_code}"
             ) from exc
         if delete_result not in (None, 0):
             raise FetcherError(
                 f"JVFiledelete returned {delete_result} for {filename} "
-                f"after JVRead {error_code}"
+                f"after JVGets {error_code}"
             )
 
         # The same JVOpen context restarts at the beginning of the stream.
@@ -175,18 +175,18 @@ class HistoricalFetcher(BaseFetcher):
             if result == -1 or (read_count == 0 and download_count == 0):
                 raise FetcherError(
                     "JVOpen returned no data while recovering "
-                    f"{filename} after JVRead {error_code}"
+                    f"{filename} after JVGets {error_code}"
                 )
             if download_count == 0 or read_count != expected_read_count:
                 raise FetcherError(
-                    f"JVOpen did not restore {filename} after JVRead {error_code}: "
+                    f"JVOpen did not restore {filename} after JVGets {error_code}: "
                     f"read_count={read_count}, expected_exactly={expected_read_count}, "
                     f"download_count={download_count}"
                 )
             if last_file_timestamp != expected_last_file_timestamp:
                 raise FetcherError(
                     f"JVOpen stream changed while recovering {filename} after "
-                    f"JVRead {error_code}: last_file_timestamp="
+                    f"JVGets {error_code}: last_file_timestamp="
                     f"{last_file_timestamp!r}, expected="
                     f"{expected_last_file_timestamp!r}"
                 )
@@ -195,7 +195,7 @@ class HistoricalFetcher(BaseFetcher):
         except Exception as exc:
             raise FetcherError(
                 f"Failed to reopen JVOpen after deleting {filename} "
-                f"for JVRead {error_code}"
+                f"for JVGets {error_code}"
             ) from exc
 
         self._jvd_self_repair_attempts += 1
@@ -209,7 +209,7 @@ class HistoricalFetcher(BaseFetcher):
                 status=f"再取得 0/{read_count}",
             )
         logger.warning(
-            "Recovered historical JVRead file error by targeted delete and reopen",
+            "Recovered historical JVGets file error by targeted delete and reopen",
             error_code=error_code,
             filename=filename,
             attempt=self._jvd_self_repair_attempts,
@@ -397,13 +397,14 @@ class HistoricalFetcher(BaseFetcher):
                 self._fetch_task_id = fetch_task_id
 
             # Fetch and parse records (with optional cache write-through).
-            # The cache stores raw jv_read buffers, so write once per buffer, not
+            # The cache stores raw jv_gets buffers, so write once per buffer, not
             # once per parsed record: full-struct parsers (H1/H6) expand one
             # buffer into thousands of rows that all carry the same `_raw`. Rows
             # from one buffer share a header, hence the same record date, so the
             # first surviving row stands in for all of them. Identity is a safe
-            # "same buffer" test because each jv_read() returns a new bytes
-            # object and last_cached_raw keeps it alive.
+            # "same buffer" test because each jv_gets() returns a new bytes
+            # object (the COM byte array is copied out) and last_cached_raw
+            # keeps it alive.
             last_cached_raw = None
             for data in self._fetch_and_parse(
                 fetch_task_id,
@@ -437,7 +438,7 @@ class HistoricalFetcher(BaseFetcher):
             if self._recoverable_read_errors > 0:
                 raise FetcherError(
                     "Historical stream completed with "
-                    f"{self._recoverable_read_errors} unrepaired JVRead error(s); "
+                    f"{self._recoverable_read_errors} unrepaired JVGets error(s); "
                     "refusing to commit incomplete output"
                 )
 

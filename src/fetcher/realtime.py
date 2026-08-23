@@ -81,7 +81,7 @@ class RealtimeFetcher(BaseFetcher):
         """Keep realtime snapshots fail-fast on corrupt JV-Link files."""
         self._delete_corrupt_file_best_effort(error_code, filename)
         raise FetcherError(
-            f"Realtime JVRead returned {error_code} for "
+            f"Realtime JVGets returned {error_code} for "
             f"{filename or 'an unknown file'}"
         )
 
@@ -654,7 +654,7 @@ class RealtimeFetcher(BaseFetcher):
                         continue
 
                     # Buffer one complete race key before yielding.  A later
-                    # JVRead error must not leave a partial key persisted by
+                    # JVGets error must not leave a partial key persisted by
                     # callers while this batch continues with the next key.
                     key_records = list(self._fetch_and_parse())
                     records_for_key = len(key_records)
@@ -940,7 +940,7 @@ class RealtimeFetcher(BaseFetcher):
                                     pass
                                 continue
 
-                            # Do not expose a partial key when a later JVRead
+                            # Do not expose a partial key when a later JVGets
                             # fails and this loop continues with another key.
                             key_records = list(self._fetch_and_parse())
                             records_for_key = len(key_records)

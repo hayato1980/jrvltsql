@@ -124,7 +124,7 @@ class BaseFetcher(ABC):
         while True:
             try:
                 # Read next record
-                ret_code, buff, filename = self.jvlink.jv_read()
+                ret_code, buff, filename = self.jvlink.jv_gets()
 
                 if ret_code == -3:
                     now = time.monotonic()
@@ -133,11 +133,11 @@ class BaseFetcher(ABC):
                     elapsed = now - download_wait_started
                     if elapsed >= JV_READ_DOWNLOAD_TIMEOUT_SECONDS:
                         raise FetcherError(
-                            "JVRead file-downloading wait timeout after "
+                            "JVGets file-downloading wait timeout after "
                             f"{elapsed:.1f} seconds"
                         )
                     logger.debug(
-                        "JVRead waiting for file download",
+                        "JVGets waiting for file download",
                         filename=filename,
                         elapsed_seconds=elapsed,
                     )
@@ -276,10 +276,10 @@ class BaseFetcher(ABC):
                     # Only the two official corrupt-downloaded-file statuses
                     # enter targeted file recovery. Call-order errors
                     # (-201/-202/-203), download failure (-502), and missing
-                    # file (-503) cannot be repaired by repeating JVRead or by
+                    # file (-503) cannot be repaired by repeating JVGets or by
                     # deleting the returned path.
                     logger.warning(
-                        "JVRead returned a corrupt downloaded file",
+                        "JVGets returned a corrupt downloaded file",
                         ret_code=ret_code,
                         filename=filename,
                     )
@@ -289,7 +289,7 @@ class BaseFetcher(ABC):
                     else:
                         self._recoverable_read_errors += 1
                         raise FetcherError(
-                            "JVRead corrupt-file recovery is unavailable for "
+                            "JVGets corrupt-file recovery is unavailable for "
                             f"error code {ret_code} ({filename or 'unknown file'})"
                         )
                     continue
@@ -297,10 +297,10 @@ class BaseFetcher(ABC):
                 else:
                     # Fatal error (< -1, other codes)
                     logger.error(
-                        "JVRead error",
+                        "JVGets error",
                         ret_code=ret_code,
                     )
-                    raise FetcherError(f"JVRead returned error code: {ret_code}")
+                    raise FetcherError(f"JVGets returned error code: {ret_code}")
 
             except FetcherError:
                 raise

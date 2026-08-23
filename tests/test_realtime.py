@@ -67,10 +67,10 @@ class TestRealtimeFetcher(unittest.TestCase):
         mock_jvlink.jv_init.return_value = JV_RT_SUCCESS
         mock_jvlink.jv_rt_open.return_value = (JV_RT_SUCCESS, 10)
 
-        # Mock JVRead responses
+        # Mock JVGets responses
         # ret_code > 0 means success with data (value is data length)
         # ret_code == 0 means no more data
-        mock_jvlink.jv_read.side_effect = [
+        mock_jvlink.jv_gets.side_effect = [
             (100, b"RA20240101...", "test.txt"),  # 100 bytes of data
             (100, b"RA20240102...", "test.txt"),  # 100 bytes of data
             (0, b"", ""),  # End of data (JV_READ_SUCCESS)
@@ -111,7 +111,7 @@ class TestRealtimeFetcher(unittest.TestCase):
 
         mock_jvlink.jv_init.return_value = JV_RT_SUCCESS
         mock_jvlink.jv_rt_open.return_value = (JV_RT_SUCCESS, 0)
-        mock_jvlink.jv_read.return_value = (0, b"", "")
+        mock_jvlink.jv_gets.return_value = (0, b"", "")
 
         fetcher = RealtimeFetcher(sid=self.sid)
 
@@ -220,7 +220,7 @@ def test_realtime_fetcher_fails_on_jvopen_not_called():
     fetcher.progress_display = None
     fetcher.parser_factory = MagicMock()
     fetcher.jvlink = MagicMock()
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (-203, None, "corrupt.jvd"),
         (0, None, None),
     ]
@@ -228,7 +228,7 @@ def test_realtime_fetcher_fails_on_jvopen_not_called():
     with pytest.raises(FetcherError, match="-203"):
         list(fetcher._fetch_and_parse())
 
-    fetcher.jvlink.jv_read.assert_called_once()
+    fetcher.jvlink.jv_gets.assert_called_once()
     assert fetcher.get_statistics()["recoverable_read_errors"] == 0
     fetcher.jvlink.jv_file_delete.assert_not_called()
 
@@ -247,11 +247,11 @@ def test_realtime_fetch_fails_fast_on_corrupt_file(error_code):
     fetcher.jvlink = MagicMock()
     fetcher.jvlink.jv_init.return_value = 0
     fetcher.jvlink.jv_rt_open.return_value = (0, 1)
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (error_code, None, "corrupt.jvd"),
     ]
 
-    with pytest.raises(FetcherError, match="Realtime JVRead returned"):
+    with pytest.raises(FetcherError, match="Realtime JVGets returned"):
         list(fetcher.fetch("0B31", key="202601010101"))
 
     fetcher.jvlink.jv_file_delete.assert_called_once_with("corrupt.jvd")

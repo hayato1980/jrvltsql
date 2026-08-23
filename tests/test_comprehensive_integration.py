@@ -78,7 +78,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
             # Mock JVOpen success
             mock_jvlink.jv_init.return_value = JV_RT_SUCCESS
             mock_jvlink.jv_open.return_value = (JV_RT_SUCCESS, 0, 0, "")
-            mock_jvlink.jv_read.return_value = (0, b"", "")  # No data
+            mock_jvlink.jv_gets.return_value = (0, b"", "")  # No data
 
             # Create batch processor
             processor = BatchProcessor(
@@ -149,7 +149,7 @@ class TestRealtimeIntegration(unittest.TestCase):
         mock_jvlink.jv_init.return_value = JV_RT_SUCCESS
         mock_jvlink.jv_rt_open.return_value = (JV_RT_SUCCESS, 10)
         payload = b"RA20240101..."
-        mock_jvlink.jv_read.side_effect = [
+        mock_jvlink.jv_gets.side_effect = [
             (len(payload), payload, "test.txt"),
             (0, b"", ""),  # End of data
         ]

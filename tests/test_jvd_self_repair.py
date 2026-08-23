@@ -40,7 +40,7 @@ def _fetcher():
 
 def test_zero_byte_read_error_deletes_exact_file_then_closes_and_reopens():
     fetcher = _fetcher()
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (-402, None, "corrupt/RACE.jvd"),
         (0, None, None),
     ]
@@ -71,7 +71,7 @@ def test_zero_byte_read_error_deletes_exact_file_then_closes_and_reopens():
 
 def test_invalid_content_error_deletes_for_next_run_then_fails_closed():
     fetcher = _fetcher()
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (-403, None, "corrupt/RACE.jvd"),
     ]
 
@@ -190,7 +190,7 @@ def test_read_recovery_rejects_changed_last_file_timestamp():
 
 def test_reopen_does_not_emit_already_processed_records_twice():
     fetcher = _fetcher()
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (1, b"A", "first.jvd"),
         (-402, None, "corrupt.jvd"),
         (1, b"A", "first.jvd"),
@@ -216,7 +216,7 @@ def test_reopen_does_not_emit_already_processed_records_twice():
 
 def test_second_zero_byte_error_during_replay_restarts_same_prefix():
     fetcher = _fetcher()
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (1, b"A", "first.jvd"),
         (-402, None, "corrupt-1.jvd"),
         (1, b"A", "first.jvd"),
@@ -253,7 +253,7 @@ def test_recovery_write_through_cache_contains_no_replayed_duplicate(tmp_path):
         (0, 2, 0, "ts"),
         (0, 2, 1, "ts"),
     ]
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (1, b"A", "first.jvd"),
         (-402, None, "corrupt.jvd"),
         (1, b"A", "first.jvd"),
@@ -289,7 +289,7 @@ def test_failed_fetch_rolls_back_raw_cache_append(tmp_path):
     fetcher.cache_manager.write_nl_record("RACE", "20260101", b"existing")
     fetcher.jvlink.jv_init.return_value = 0
     fetcher.jvlink.jv_open.return_value = (0, 2, 0, "ts")
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (1, b"A", "first.jvd"),
         (-403, None, "corrupt.jvd"),
     ]
@@ -317,7 +317,7 @@ def test_abandoned_fetch_rolls_back_raw_cache_append(tmp_path):
     fetcher.cache_manager.write_nl_record("RACE", "20260101", b"existing")
     fetcher.jvlink.jv_init.return_value = 0
     fetcher.jvlink.jv_open.return_value = (0, 2, 0, "ts")
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (1, b"A", "first.jvd"),
         (1, b"B", "second.jvd"),
     ]
@@ -345,7 +345,7 @@ def test_abandoned_fetch_with_cache_clears_attached_manager(tmp_path):
     cache_manager = CacheManager(tmp_path / "cache")
     fetcher.jvlink.jv_init.return_value = 0
     fetcher.jvlink.jv_open.return_value = (0, 2, 0, "ts")
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (1, b"A", "first.jvd"),
         (1, b"B", "second.jvd"),
     ]
@@ -377,7 +377,7 @@ def test_undated_record_rolls_back_partial_cache_and_leaves_range_incomplete(tmp
     fetcher.cache_manager = CacheManager(tmp_path / "cache")
     fetcher.jvlink.jv_init.return_value = 0
     fetcher.jvlink.jv_open.return_value = (0, 2, 0, "ts")
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (1, b"dated", "dated.jvd"),
         (1, b"master", "master.jvd"),
         (0, None, None),
@@ -402,7 +402,7 @@ def test_chokyo_date_is_used_for_cache_coverage(tmp_path):
     fetcher.cache_manager = CacheManager(tmp_path / "cache")
     fetcher.jvlink.jv_init.return_value = 0
     fetcher.jvlink.jv_open.return_value = (0, 1, 0, "ts")
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (1, b"training", "training.jvd"),
         (0, None, None),
     ]
@@ -423,7 +423,7 @@ def test_chokyo_date_is_used_for_cache_coverage(tmp_path):
 def test_replay_skip_still_runs_periodic_com_buffer_gc():
     fetcher = _fetcher()
     fetcher._jvd_replay_records_remaining = 1
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (1, b"A", "first.jvd"),
         (0, None, None),
     ]
@@ -452,7 +452,7 @@ def test_replay_skip_still_runs_periodic_com_buffer_gc():
 def test_file_not_found_during_replay_fails_closed():
     fetcher = _fetcher()
     fetcher._jvd_replay_records_remaining = 1
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (-503, None, "missing.jvd"),
     ]
 
@@ -503,7 +503,7 @@ def test_unrepaired_read_error_does_not_mark_raw_cache_complete():
 
     fetcher._fetch_and_parse = incomplete_stream
 
-    with pytest.raises(FetcherError, match="unrepaired JVRead error"):
+    with pytest.raises(FetcherError, match="unrepaired JVGets error"):
         list(fetcher.fetch("RACE", "20260101", "20260103"))
 
     fetcher.cache_manager.mark_nl_range_complete.assert_not_called()
@@ -565,7 +565,7 @@ def test_read_recovery_rejects_nonzero_delete_result():
 @pytest.mark.parametrize("error_code", [-203, -502, -503])
 def test_non_corruption_error_fails_without_delete_or_stream_restart(error_code):
     fetcher = _fetcher()
-    fetcher.jvlink.jv_read.side_effect = [
+    fetcher.jvlink.jv_gets.side_effect = [
         (error_code, None, "other.jvd"),
         (0, None, None),
     ]
@@ -577,7 +577,7 @@ def test_non_corruption_error_fails_without_delete_or_stream_restart(error_code)
             )
         )
 
-    fetcher.jvlink.jv_read.assert_called_once()
+    fetcher.jvlink.jv_gets.assert_called_once()
     fetcher.jvlink.jv_file_delete.assert_not_called()
     fetcher.jvlink.jv_close.assert_not_called()
     fetcher.jvlink.jv_open.assert_not_called()

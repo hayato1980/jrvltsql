@@ -761,14 +761,15 @@ class JVLinkBridge:
             logger.error("JVRead error via bridge", code=code)
             return code, None, response.get("filename")
 
-    def jv_gets(self) -> Tuple[int, Optional[bytes]]:
+    def jv_gets(self) -> Tuple[int, Optional[bytes], Optional[str]]:
         """Expose the bridge's byte payload through the JVGets-shaped API.
 
         JV-Link has a native JVGets method, but the JSON bridge has only one
         read command and already returns CP932 bytes, so it delegates here.
+        The filename is passed through because a caller reading with JVGets
+        still needs it to recover from a corrupt downloaded file (-402/-403).
         """
-        code, buff, filename = self.jv_read()
-        return code, buff
+        return self.jv_read()
 
     def jv_close(self) -> int:
         response = self._send_command({"cmd": "close"}, timeout=10.0)

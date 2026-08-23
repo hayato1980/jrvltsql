@@ -1,4 +1,4 @@
-"""write-through キャッシュは jv_read バッファ 1 個につき 1 回だけ書くこと.
+"""write-through キャッシュは JVGets バッファ 1 個につき 1 回だけ書くこと.
 
 フルストラクト系パーサは 1 バッファを多数の行へ展開し（H1: 28,955B → 1,485 行、
 H6: 102,890B → 4,896 行）、その全行が同じ `_raw` を持つ。行ごとに書くと同じ
@@ -17,7 +17,7 @@ H6_BYTES, H6_ROWS = 102_890, 4_896
 JV_READ_COMPLETE = 0
 
 
-def _fetcher(cache, jv_read_results) -> HistoricalFetcher:
+def _fetcher(cache, jv_gets_results) -> HistoricalFetcher:
     """JV-Link を持たない HistoricalFetcher を組み立てる."""
     f = HistoricalFetcher.__new__(HistoricalFetcher)
     f.parser_factory = MagicMock()
@@ -35,8 +35,8 @@ def _fetcher(cache, jv_read_results) -> HistoricalFetcher:
     f.jvlink = MagicMock()
     f.jvlink.jv_init.return_value = None
     # (result, read_count, download_count, last_file_timestamp)
-    f.jvlink.jv_open.return_value = (0, len(jv_read_results), 0, "20220110000000")
-    f.jvlink.jv_read.side_effect = jv_read_results
+    f.jvlink.jv_open.return_value = (0, len(jv_gets_results), 0, "20220110000000")
+    f.jvlink.jv_gets.side_effect = jv_gets_results
     return f
 
 
@@ -74,7 +74,7 @@ def test_h6_full_struct_buffer_is_cached_once():
     _assert_cached_once(H6_ROWS, H6_BYTES)
 
 
-def test_each_jv_read_buffer_is_cached_separately():
+def test_each_jv_gets_buffer_is_cached_separately():
     """別バッファは別々に書かれること（重複排除しすぎていないこと）."""
     a, b = b"A" * 1000, b"B" * 1000
     cache = MagicMock()
