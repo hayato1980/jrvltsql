@@ -143,11 +143,8 @@ class RealtimeFetcher(BaseFetcher):
             logger.debug("Using today's date as key", key=key)
 
         try:
-            # Initialize JV-Link
-            logger.info("Initializing JV-Link")
-            ret = self.jvlink.jv_init()
-            if ret != JV_RT_SUCCESS:
-                raise FetcherError(f"JV-Link initialization failed: {ret}")
+            # JVInit already ran once when this fetcher was constructed
+            # (BaseFetcher.__init__); the session spans every JVRTOpen here.
 
             logger.info(
                 "Starting realtime data fetch",
@@ -581,10 +578,8 @@ class RealtimeFetcher(BaseFetcher):
 
         logger.info(f"Found {len(race_rows)} races in database")
 
-        # Initialize JV-Link
-        ret = self.jvlink.jv_init()
-        if ret != JV_RT_SUCCESS:
-            raise FetcherError(f"JV-Link initialization failed: {ret}")
+        # JVInit already ran once when this fetcher was constructed
+        # (BaseFetcher.__init__); it is not re-issued per batch.
 
         # Statistics
         total_keys = len(race_rows)
@@ -882,10 +877,8 @@ class RealtimeFetcher(BaseFetcher):
             races=len(race_nums),
         )
 
-        # Initialize JV-Link once for the entire batch
-        ret = self.jvlink.jv_init()
-        if ret != JV_RT_SUCCESS:
-            raise FetcherError(f"JV-Link initialization failed: {ret}")
+        # JVInit already ran once when this fetcher was constructed
+        # (BaseFetcher.__init__); it is not re-issued per batch.
 
         # Statistics
         total_keys = 0
