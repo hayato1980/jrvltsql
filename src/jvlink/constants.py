@@ -1,5 +1,8 @@
 """JV-Link constants and definitions."""
 
+from datetime import datetime
+from typing import Optional
+
 # JV-Link Return Codes
 # 出典: JV-Link インターフェース仕様書「3. コード表」
 JV_RT_SUCCESS = 0  # 正常終了
@@ -483,6 +486,195 @@ def validate_jvopen_combination(data_spec: str, option: int) -> None:
         f"valid current IDs: {valid_specs or 'none'}"
     )
 
+
+# --- 読み出し開始/終了ポイント (fromtime) ------------------------------------
+# 仕様書 4.9.0.1 p.17-18 の fromtime は次の2形式だけを認める。
+#   ・開始ポイントのみ            "YYYYMMDDhhmmss"
+#   ・開始ポイント-終了ポイント    "YYYYMMDDhhmmss-YYYYMMDDhhmmss"
+# 対象は「開始時刻より大きく、終了時刻まで」に提供されたデータ。この時刻は
+# データの提供時刻（ファイルタイムスタンプ）であって、レース開催日ではない。
+#
+# p.18 は、全データを取得する以下の種別に終了ポイントを付けられないと明記する。
+# 付けた場合 JV-Link はエラーではなく「戻り値: -1（該当データなし）」を返す。
+# つまり失敗が静かな空成功に化けるため、送信前にここで拒否する。
+JVOPEN_END_POINT_FORBIDDEN_DATA_SPECS = frozenset(
+    {
+        "TOKU",  # 特別登録馬情報
+        "DIFF",  # 蓄積系ソフト用 蓄積情報（旧仕様）
+        "DIFN",  # 蓄積系ソフト用 蓄積情報
+        "HOSE",  # 競走馬市場取引価格情報（旧仕様）
+        "HOSN",  # 競走馬市場取引価格情報
+        "HOYU",  # 馬名の意味由来情報
+        "COMM",  # 各種解説情報
+    }
+)
+
+# 終了ポイントは option 1/2 でのみ「取得範囲そのもの」を絞る。p.20 の option
+# 3/4 は、前月までのセットアップ用データを fromtime より大きい全件返し、
+# 終了時刻が制限するのは今月の通常データ部分だけなので、過去 tail を終了点で
+# 分割することはできない。
+JVOPEN_END_POINT_OPTIONS = (1, 2)
+
+_JVOPEN_TIME_FORMAT = "%Y%m%d%H%M%S"
+
+
+def jvopen_end_point_forbidden_components(data_spec: str) -> tuple[str, ...]:
+    """Return the components of data_spec that forbid an end point.
+
+    Args:
+        data_spec: Data specification code (e.g., "RACE", "RACEDIFN")
+
+    Returns:
+        The four-character IDs listed in 仕様書 p.18 as end-point forbidden
+    """
+    if not isinstance(data_spec, str):
+        return ()
+    return tuple(
+        component
+        for component in _split_jvopen_data_specs(data_spec.upper())
+        if component in JVOPEN_END_POINT_FORBIDDEN_DATA_SPECS
+    )
+
+
+def supports_jvopen_end_point(data_spec: str) -> bool:
+    """Check whether data_spec may carry a読み出し終了ポイント時刻.
+
+    A concatenated dataspec supports an end point only if every one of its
+    four-character components does; one forbidden component turns the whole
+    request into 「-1(該当データなし)」.
+
+    Args:
+        data_spec: Data specification code (e.g., "RACE", "RACEDIFN")
+
+    Returns:
+        True if 仕様書 p.18 allows an end point for every component
+    """
+    components = _split_jvopen_data_specs(data_spec.upper()) if isinstance(data_spec, str) else ()
+    if not components:
+        return False
+    return not jvopen_end_point_forbidden_components(data_spec)
+
+
+def normalize_jvopen_read_point(value: str, label: str) -> str:
+    """Expand a caller-supplied read point to the official 14-digit form.
+
+    ``YYYYMMDD`` is accepted as a convenience and completed to that day's
+    23:59:59, which keeps the whole day inside the range the official
+    「開始時刻より大きく終了時刻まで」 rule selects.
+
+    Args:
+        value: ``YYYYMMDD`` or ``YYYYMMDDhhmmss``
+        label: Parameter name used in error messages
+
+    Returns:
+        The value as ``YYYYMMDDhhmmss``
+
+    Raises:
+        ValueError: If value is not a real calendar date/timestamp
+    """
+    if not isinstance(value, str) or not value.isdigit() or len(value) not in (8, 14):
+        raise ValueError(
+            f"{label} must be a YYYYMMDD or YYYYMMDDhhmmss string, got {value!r}"
+        )
+    if len(value) == 8:
+        value = f"{value}235959"
+    try:
+        datetime.strptime(value, _JVOPEN_TIME_FORMAT)
+    except ValueError:
+        raise ValueError(
+            f"{label} must be a real calendar timestamp in YYYYMMDDhhmmss "
+            f"format, got {value!r}"
+        ) from None
+    return value
+
+
+def format_jvopen_fromtime(start: str, end: Optional[str] = None) -> str:
+    """Build the official fromtime string for a start (and optional end) point.
+
+    Args:
+        start: 読み出し開始ポイント時刻 (``YYYYMMDD`` or ``YYYYMMDDhhmmss``)
+        end: 読み出し終了ポイント時刻, or None for the start-only form
+
+    Returns:
+        ``YYYYMMDDhhmmss`` or ``YYYYMMDDhhmmss-YYYYMMDDhhmmss``
+
+    Raises:
+        ValueError: If either point is malformed or the range is empty
+    """
+    start = normalize_jvopen_read_point(start, "読み出し開始ポイント")
+    if end is None:
+        return start
+    end = normalize_jvopen_read_point(end, "読み出し終了ポイント")
+    if start >= end:
+        raise ValueError(
+            "読み出し終了ポイントは開始ポイントより後でなければなりません: "
+            f"{start} >= {end}"
+        )
+    return f"{start}-{end}"
+
+
+def split_jvopen_fromtime(fromtime: str) -> tuple[str, Optional[str]]:
+    """Split an official fromtime into its start and optional end point.
+
+    Args:
+        fromtime: ``YYYYMMDDhhmmss`` or ``YYYYMMDDhhmmss-YYYYMMDDhhmmss``
+
+    Returns:
+        Tuple of (start point, end point or None)
+
+    Raises:
+        ValueError: If fromtime is not one of the two official forms
+    """
+    if not isinstance(fromtime, str):
+        raise ValueError(f"JVOpen fromtime must be a string, got {fromtime!r}")
+    parts = fromtime.split("-")
+    if len(parts) > 2:
+        raise ValueError(
+            "JVOpen fromtime must be 'YYYYMMDDhhmmss' or "
+            f"'YYYYMMDDhhmmss-YYYYMMDDhhmmss', got {fromtime!r}"
+        )
+    labels = ("読み出し開始ポイント", "読み出し終了ポイント")
+    points = []
+    for index, part in enumerate(parts):
+        label = labels[index]
+        if len(part) != 14 or not part.isdigit():
+            raise ValueError(
+                f"JVOpen fromtime の{label}は14桁の YYYYMMDDhhmmss である必要が"
+                f"あります: {fromtime!r}"
+            )
+        points.append(normalize_jvopen_read_point(part, label))
+    start = points[0]
+    end = points[1] if len(points) == 2 else None
+    if end is not None and start >= end:
+        raise ValueError(
+            "読み出し終了ポイントは開始ポイントより後でなければなりません: "
+            f"{start} >= {end}"
+        )
+    return start, end
+
+
+def validate_jvopen_fromtime(fromtime: str, data_spec: str) -> None:
+    """Reject a fromtime JV-Link would answer with -112/-113 or a silent -1.
+
+    Args:
+        fromtime: The fromtime string about to be sent to JVOpen
+        data_spec: The dataspec sent with it
+
+    Raises:
+        ValueError: If the form is not official, the range is empty, or the
+            dataspec forbids the 読み出し終了ポイント時刻 it carries
+    """
+    _, end = split_jvopen_fromtime(fromtime)
+    if end is None:
+        return
+    forbidden = jvopen_end_point_forbidden_components(data_spec)
+    if forbidden:
+        raise ValueError(
+            "読み出し終了ポイント時刻を指定できないデータ種別 ID が含まれます"
+            f"（{'、'.join(forbidden)}）。仕様書 p.18 のとおり全データを取得する"
+            "種別のため、終了時刻を付けると JVOpen は -1（該当データなし）を返し"
+            "ます。開始ポイントのみの fromtime で取得してください"
+        )
 
 # Record Type Codes (レコード種別)
 RECORD_TYPE_RA = "RA"  # レース詳細

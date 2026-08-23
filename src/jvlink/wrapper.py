@@ -16,6 +16,7 @@ from src.jvlink.constants import (
     JV_RT_SUCCESS,
     get_error_message,
     validate_jvopen_combination,
+    validate_jvopen_fromtime,
 )
 from src.utils.logger import get_logger
 
@@ -270,6 +271,10 @@ class JVLinkWrapper:
         # Validate every official four-character component before COM. Keep
         # this outside try so ValueError is not wrapped as a transport error.
         validate_jvopen_combination(data_spec, option)
+        # An unofficial fromtime form earns -112/-113, and an end point on a
+        # forbidden dataspec earns a silent -1 that reads as "no data". Reject
+        # both here rather than letting either reach JV-Link (p.17-18).
+        validate_jvopen_fromtime(fromtime, data_spec)
 
         try:
             # JVOpen signature: (dataspec, fromtime, option, ref readCount, ref downloadCount, out lastFileTimestamp)

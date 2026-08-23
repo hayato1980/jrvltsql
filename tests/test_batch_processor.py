@@ -269,8 +269,10 @@ def test_option_3_long_range_uses_one_open_and_remains_atomic(tmp_path):
 
         row_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_RA")["count"]
 
+    # 末尾の None は「読み出し終了ポイントなし」。setup tail は終了点で
+    # 境界付けられない（仕様書 p.20）ため、ここは常に unbounded な単一 open。
     processor.fetcher.fetch.assert_called_once_with(
-        "RACE", "20200101", "20260819", 3
+        "RACE", "20200101", "20260819", 3, None
     )
     assert row_count == 0
 
@@ -551,7 +553,7 @@ def test_option_4_long_range_uses_one_provider_open_and_keeps_group_commits(
         row_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_RA")["count"]
 
     processor.fetcher.fetch.assert_called_once_with(
-        "RACE", "20240820", "20260819", 4
+        "RACE", "20240820", "20260819", 4, None
     )
     assert stats["records_imported"] == 2
     assert row_count == 2
@@ -577,7 +579,7 @@ def test_option_4_long_range_uses_one_full_scope_cache_request():
     )
 
     processor.fetcher.fetch_with_cache.assert_called_once_with(
-        cache, "RACE", "20240820", "20260819", 4
+        cache, "RACE", "20240820", "20260819", 4, None
     )
 
 

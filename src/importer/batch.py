@@ -5,11 +5,15 @@ This module provides utilities for batch processing of JV-Data.
 
 from datetime import datetime, timedelta
 from itertools import islice
-from typing import Iterator, List
+from typing import Iterator, List, Optional
 
 from src.database.base import BaseDatabase
 from src.database.schema import create_all_tables
-from src.fetcher.historical import HistoricalFetcher, validate_date_range
+from src.fetcher.historical import (
+    HistoricalFetcher,
+    validate_date_range,
+    validate_jvopen_end_point,
+)
 from src.importer.importer import DataImporter, ImporterError
 from src.jvlink.constants import validate_jvopen_combination
 from src.utils.logger import get_logger
@@ -124,6 +128,7 @@ class BatchProcessor:
         option: int = 1,
         auto_commit: bool = True,
         ensure_tables: bool = True,
+        fromtime_end: Optional[str] = None,
     ) -> dict:
         """Process data for a date range.
 
@@ -138,6 +143,9 @@ class BatchProcessor:
                     4=分割セットアップ（初回のみダイアログ）
             auto_commit: Whether to auto-commit
             ensure_tables: Whether to ensure tables exist
+            fromtime_end: 読み出し終了ポイント時刻 (YYYYMMDD or
+                    YYYYMMDDhhmmss)。JVOpen が列挙・配信するファイル自体を
+                    絞る option 1/2 専用の provider bound
 
         Returns:
             Dictionary with processing statistics
@@ -164,6 +172,10 @@ class BatchProcessor:
         # Stop before schema creation or transaction state for invalid input.
         validate_jvopen_combination(data_spec, option)
         validate_date_range(from_date, to_date)
+        if fromtime_end is not None:
+            fromtime_end = validate_jvopen_end_point(
+                data_spec, option, fromtime_end
+            )
 
         logger.info(
             "Starting batch processing",
@@ -171,6 +183,7 @@ class BatchProcessor:
             from_date=from_date,
             to_date=to_date,
             option=option,
+            fromtime_end=fromtime_end,
         )
 
         # Ensure tables exist
@@ -182,10 +195,17 @@ class BatchProcessor:
         try:
             if self.cache_manager:
                 records = self.fetcher.fetch_with_cache(
-                    self.cache_manager, data_spec, from_date, to_date, option
+                    self.cache_manager,
+                    data_spec,
+                    from_date,
+                    to_date,
+                    option,
+                    fromtime_end,
                 )
             else:
-                records = self.fetcher.fetch(data_spec, from_date, to_date, option)
+                records = self.fetcher.fetch(
+                    data_spec, from_date, to_date, option, fromtime_end
+                )
             # Where the transaction breaks is decided here and nowhere else.
             # Committing inside DataImporter would make a later parser/import
             # rejection impossible to roll back.

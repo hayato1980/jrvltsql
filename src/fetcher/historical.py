@@ -9,8 +9,12 @@ from typing import Iterator, Optional
 
 from src.fetcher.base import BaseFetcher, FetcherError
 from src.jvlink.constants import (
+    JVOPEN_END_POINT_OPTIONS,
     JVOPEN_OPTION_SETUP,
     JVOPEN_OPTION_SETUP_SPLIT,
+    format_jvopen_fromtime,
+    jvopen_end_point_forbidden_components,
+    normalize_jvopen_read_point,
     validate_jvopen_combination,
 )
 from src.utils.logger import get_logger
@@ -55,7 +59,47 @@ def validate_date_range(from_date: str, to_date: str) -> None:
         )
 
 
-def _jvopen_fromtime(from_date: str, option: int) -> str:
+def validate_jvopen_end_point(data_spec: str, option: int, fromtime_end: str) -> str:
+    """Reject an end point the official contract cannot honour, then normalize.
+
+    仕様書 p.18 は TOKU/DIFF/DIFN/HOSE/HOSN/HOYU/COMM に終了ポイントを付ける
+    ことを禁じ、付けると JVOpen は -1（該当データなし）を返す。p.20 の option
+    3/4 では、終了時刻が制限するのは今月の通常データ部分だけで、前月までの
+    セットアップ用 tail は fromtime より大きい全件のまま。よって end point は
+    option 1/2 でしか「取得範囲を絞る」意味を持たない。
+
+    Args:
+        data_spec: Data specification code
+        option: JVOpen option
+        fromtime_end: 読み出し終了ポイント (YYYYMMDD or YYYYMMDDhhmmss)
+
+    Returns:
+        The end point normalized to YYYYMMDDhhmmss
+
+    Raises:
+        ValueError: If the spec, option, or timestamp forbids this end point
+    """
+    if option not in JVOPEN_END_POINT_OPTIONS:
+        raise ValueError(
+            f"読み出し終了ポイントは option={option} では取得範囲を絞れません。"
+            "仕様書 p.20 のとおり option 3/4 の終了時刻が制限するのは今月の"
+            "通常データ部分だけで、前月までのセットアップ用データは fromtime "
+            "より大きい全件が対象です。option 1/2 で指定してください"
+        )
+    forbidden = jvopen_end_point_forbidden_components(data_spec)
+    if forbidden:
+        raise ValueError(
+            f"データ種別 '{data_spec}' には読み出し終了ポイント時刻を指定できない "
+            f"ID（{'、'.join(forbidden)}）が含まれます。仕様書 p.18 のとおり"
+            "指定すると JVOpen は -1（該当データなし）を返し、取得が静かに"
+            "空になります"
+        )
+    return normalize_jvopen_read_point(fromtime_end, "読み出し終了ポイント")
+
+
+def _jvopen_fromtime(
+    from_date: str, option: int, fromtime_end: Optional[str] = None
+) -> str:
     """Build the official JVOpen fromtime for this request.
 
     公式仕様（4.9.0.1 p.17-20）の対象条件は開始時刻より大きいデータ。
@@ -66,13 +110,23 @@ def _jvopen_fromtime(from_date: str, option: int) -> str:
     より大きい全件を返し、終了時刻が制限するのは今月の通常データ部分だけと
     明記する。したがって過去setup dataを ``to_date`` でboundedにできるとは
     扱わず、setupはstart-onlyを1回だけ呼ぶ。option 1の差分cursor・option 2の
-    今週データ契約は変更しない。
+    今週データ契約も、``fromtime_end`` を明示されない限り従来どおり
+    start-only のまま。
+
+    ``fromtime_end`` は提供時刻（ファイルタイムスタンプ）であって開催日では
+    ないため、``to_date`` から自動では作らない。呼び出し側が明示した場合だけ
+    「開始-終了」形式にする。
     """
-    if option not in (JVOPEN_OPTION_SETUP, JVOPEN_OPTION_SETUP_SPLIT):
-        return f"{from_date}000000"
-    return (
-        datetime.strptime(from_date, "%Y%m%d") - timedelta(seconds=1)
-    ).strftime("%Y%m%d%H%M%S")
+    if option in (JVOPEN_OPTION_SETUP, JVOPEN_OPTION_SETUP_SPLIT):
+        if fromtime_end is not None:
+            raise ValueError(
+                "option 3/4 の historical setup tail は終了ポイントで"
+                "境界付けられません（仕様書 p.20）"
+            )
+        return (
+            datetime.strptime(from_date, "%Y%m%d") - timedelta(seconds=1)
+        ).strftime("%Y%m%d%H%M%S")
+    return format_jvopen_fromtime(f"{from_date}000000", fromtime_end)
 
 
 class HistoricalFetcher(BaseFetcher):
@@ -226,6 +280,7 @@ class HistoricalFetcher(BaseFetcher):
         from_date: str,
         to_date: str,
         option: int = 1,
+        fromtime_end: Optional[str] = None,
     ) -> Iterator[dict]:
         """Fetch historical data.
 
@@ -238,6 +293,13 @@ class HistoricalFetcher(BaseFetcher):
                     2=今週データ（直近のレースのみ、非蓄積系用）
                     3=セットアップ（全データ取得、ダイアログ表示あり）
                     4=分割セットアップ（全データ取得、初回のみダイアログ）
+            fromtime_end: 読み出し終了ポイント時刻 (YYYYMMDD or
+                    YYYYMMDDhhmmss)。JVOpen の fromtime を公式の
+                    「開始-終了」形式にして、サーバが列挙・配信する
+                    ファイル自体を絞る（仕様書 p.17-18）。これは
+                    データの提供時刻であって開催日ではないため
+                    ``to_date`` からは自動生成しない。option 1/2 のみ、
+                    かつ終了ポイント禁止 ID を含まない dataspec のみ
 
         Yields:
             Dictionary of parsed record data with dates <= to_date
@@ -250,6 +312,13 @@ class HistoricalFetcher(BaseFetcher):
             Records are filtered client-side to include only those with
             dates up to and including to_date. Records without date fields
             (Year/MonthDay) are always included.
+
+            ``fromtime_end`` bounds the provider side instead: JV-Link
+            enumerates and downloads only files provided up to that point,
+            which is the official workaround for the 既知の障害 note on
+            p.17 (JVRead slows down as the file count grows). Because a
+            race's data can be provided after that point, a bounded fetch
+            never records a complete NL cache range.
 
             For option 3/4 the requested inclusive from_date is encoded as
             the exclusive start point ``(from_date - 1 day)235959``. The
@@ -273,6 +342,10 @@ class HistoricalFetcher(BaseFetcher):
         # Reject malformed/inverted dates before JV-Link or cache mutation;
         # fromtime below is built from these validated values.
         validate_date_range(from_date, to_date)
+        if fromtime_end is not None:
+            fromtime_end = validate_jvopen_end_point(
+                data_spec, option, fromtime_end
+            )
 
         # Fetcher instances are reused across data specs and setup chunks.
         # Reset before JVOpen so no-data/error early exits cannot expose
@@ -290,7 +363,13 @@ class HistoricalFetcher(BaseFetcher):
         # data; it cannot prove an arbitrary requested historical range
         # complete. Bypass both existing NL cache markers and write-through
         # caching for that mode.
-        active_cache_manager = self.cache_manager if option != 2 else None
+        # A bounded read point stops at a provider timestamp, so data for
+        # dates inside the requested range can still be provided afterwards.
+        # Such a fetch may not cover the range and must not create or extend
+        # a completion marker.
+        active_cache_manager = (
+            self.cache_manager if option != 2 and fromtime_end is None else None
+        )
         cache_checkpoints: dict[str, Optional[int]] = {}
         cache_write_committed = active_cache_manager is None
         cache_range_complete = True
@@ -299,7 +378,7 @@ class HistoricalFetcher(BaseFetcher):
         # セットアップは from_date を包含する排他的開始点（前日23:59:59）を
         # start-onlyで送る。to_dateは過去setup tailのprovider boundにはならず、
         # 下流のclient-side filterとしてのみ使う。
-        fromtime = _jvopen_fromtime(from_date, option)
+        fromtime = _jvopen_fromtime(from_date, option, fromtime_end)
 
         try:
             # Info for setup mode (option 3 or 4) - ログのみ、画面表示はしない
@@ -331,6 +410,7 @@ class HistoricalFetcher(BaseFetcher):
                 from_date=from_date,
                 to_date=to_date,
                 fromtime=fromtime,
+                fromtime_end=fromtime_end,
                 option=option,
                 note=(
                     "option=1: 通常データ（差分）; "
@@ -564,7 +644,15 @@ class HistoricalFetcher(BaseFetcher):
 
         yield from self.fetch(data_spec, from_date, to_date, option)
 
-    def fetch_with_cache(self, cache_manager, data_spec: str, from_date: str, to_date: str, option: int = 1) -> Iterator[dict]:
+    def fetch_with_cache(
+        self,
+        cache_manager,
+        data_spec: str,
+        from_date: str,
+        to_date: str,
+        option: int = 1,
+        fromtime_end: Optional[str] = None,
+    ) -> Iterator[dict]:
         """Fetch records: use cache if complete, else fetch from JV-Link and populate cache.
 
         Args:
@@ -573,6 +661,10 @@ class HistoricalFetcher(BaseFetcher):
             from_date: Start date in YYYYMMDD format
             to_date: End date in YYYYMMDD format
             option: JVOpen option (default: 1)
+            fromtime_end: 読み出し終了ポイント時刻。指定された取得は要求範囲を
+                    満たすとは限らないため、キャッシュへは書き込まない
+                    （既存の完全キャッシュからの読み出しは範囲を満たす
+                    ので従来どおり使う）
 
         Yields:
             Dictionary of parsed record data
@@ -585,11 +677,17 @@ class HistoricalFetcher(BaseFetcher):
         # True を返し「静かな空成功」になるため、ここで拒否する。
         validate_jvopen_combination(data_spec, option)
         validate_date_range(from_date, to_date)
+        if fromtime_end is not None:
+            fromtime_end = validate_jvopen_end_point(
+                data_spec, option, fromtime_end
+            )
 
         if option == 2:
             # Do not trust old false-complete markers created by earlier
             # versions, and do not attach a manager that could create new ones.
-            yield from self.fetch(data_spec, from_date, to_date, option)
+            yield from self.fetch(
+                data_spec, from_date, to_date, option, fromtime_end
+            )
         elif cache_manager.has_nl_range(data_spec, from_date, to_date):
             # Full cache hit: yield from cache
             self.reset_statistics()
@@ -619,6 +717,13 @@ class HistoricalFetcher(BaseFetcher):
                         data_spec=data_spec,
                         error=str(error),
                     )
+        elif fromtime_end is not None:
+            # Cache miss on a provider-bounded read: fetch without attaching a
+            # cache manager, because the result cannot be claimed complete for
+            # the requested date range.
+            yield from self.fetch(
+                data_spec, from_date, to_date, option, fromtime_end
+            )
         else:
             # Cache miss: fetch from JV-Link, write to cache
             self.cache_manager = cache_manager

@@ -31,6 +31,7 @@ from src.jvlink.constants import (
     JV_READ_NO_MORE_DATA,
     JV_READ_SUCCESS,
     validate_jvopen_combination,
+    validate_jvopen_fromtime,
 )
 from src.utils.logger import get_logger
 
@@ -645,6 +646,7 @@ class JVLinkBridge:
         # JVRTOpen realtime IDs are a separate namespace; this guard applies
         # the official four-character JVOpen contract before transmission.
         validate_jvopen_combination(data_spec, option)
+        validate_jvopen_fromtime(fromtime, data_spec)
 
         response = self._send_command(
             {"cmd": "open", "dataspec": data_spec, "fromtime": fromtime, "option": option},

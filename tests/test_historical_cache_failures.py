@@ -81,4 +81,5 @@ def test_option2_bypasses_even_an_existing_complete_cache_marker():
         "20200101",
         "20261231",
         2,
+        None,
     )

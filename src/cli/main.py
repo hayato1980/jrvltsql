@@ -3,6 +3,7 @@
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 import click
 from rich.console import Console
@@ -46,6 +47,18 @@ FETCH_NOTE_TO_SETUP_TAIL = (
     "対象で、終了時刻は過去setup部分を境界付けません。排他的開始点には "
     "--from 前日の 23:59:59 を使い、長期間でも single JVOpen を維持します。"
 )
+FETCH_NOTE_FROMTIME_END = (
+    "--fromtime-end は JVOpen の読み出し終了ポイント時刻（提供時刻＝ファイル"
+    "タイムスタンプ）で、サーバが列挙・ダウンロードするファイル自体を絞ります。"
+    "仕様書 p.17「既知の障害について」が挙げる回避策で、対象ファイル数が多いときの "
+    "JVRead 低速化を抑えられます。開催日ではないため、指定した時刻より後に提供"
+    "される同一開催日のデータ（成績など）は取得されません。この取得は要求範囲を"
+    "満たすとは限らないため NL キャッシュは作成しません。"
+)
+FETCH_NOTE_FROMTIME_END_AVAILABLE = (
+    "取得が遅い場合は --fromtime-end で読み出し終了ポイント時刻を指定するか、"
+    "--spec を1種別ずつ指定してください（仕様書 p.17「既知の障害について」）。"
+)
 FETCH_NOTE_DATE_FIELDS = (
     "--to は Year+MonthDay または ChokyoDate（HC/WC の調教日）で判定します。"
     "対応する日付を持たないレコードは JV-Link 取得時に除外されず、"
@@ -80,7 +93,9 @@ def _reject_invalid_jvopen_combination(data_spec: str, option: int) -> None:
         sys.exit(1)
 
 
-def _print_fetch_guardrail_notes(jv_option: int) -> None:
+def _print_fetch_guardrail_notes(
+    jv_option: int, fromtime_end: Optional[str] = None
+) -> None:
     """Emit option-dependent date-range caveats after input validation."""
     if jv_option in (3, 4):
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_SETUP_MODE}")
@@ -90,8 +105,13 @@ def _print_fetch_guardrail_notes(jv_option: int) -> None:
     err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_CLIENT_FILTER}")
     if jv_option in (3, 4):
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_SETUP_TAIL}")
-    else:
+    elif fromtime_end is None:
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_TO_SINGLE_OPEN}")
+        err_console.print(
+            f"[yellow]Note:[/yellow] {FETCH_NOTE_FROMTIME_END_AVAILABLE}"
+        )
+    if fromtime_end is not None:
+        err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_FROMTIME_END}")
     err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_DATE_FIELDS}")
 
 
@@ -414,6 +434,21 @@ def update(ctx, force):
         "setup uses a single start-only JVOpen rather than repeated year chunks."
     ),
 )
+@click.option(
+    "--fromtime-end",
+    "fromtime_end",
+    default=None,
+    help=(
+        "JVOpen read end point (YYYYMMDD or YYYYMMDDhhmmss). Bounds the "
+        "official fromtime as 'start-end' so JV-Link enumerates and "
+        "downloads only files provided up to that point -- the 仕様書 p.17 "
+        "既知の障害 workaround for slow JVRead on large file counts. This is "
+        "a provider timestamp, not a race date, so data provided later for a "
+        "race inside --from/--to is not fetched and no NL cache range is "
+        "recorded. option=1/2 only; not allowed for TOKU/DIFN/HOSN/HOYU/COMM "
+        "(仕様書 p.18), which answer -1 when an end point is supplied."
+    ),
+)
 @click.option("--spec", "data_spec", required=True, help="Data specification (RACE, DIFN, etc.)")
 @click.option(
     "--option",
@@ -427,7 +462,7 @@ def update(ctx, force):
 @click.option("--progress/--no-progress", default=True, help="Show progress display (default: enabled)")
 @click.option("--use-cache/--no-cache", default=True, show_default=True, help="Use local cache if available")
 @click.pass_context
-def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progress, use_cache):
+def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progress, use_cache, fromtime_end):
     """Fetch historical data from JRA-VAN DataLab.
 
     JVOpen option meanings:
@@ -443,7 +478,7 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
     """
     from src.database import create_database_from_config, DatabaseError
     from src.database.schema import create_all_tables
-    from src.fetcher.historical import validate_date_range
+    from src.fetcher.historical import validate_date_range, validate_jvopen_end_point
     from src.importer.batch import BatchProcessor
 
     config = ctx.obj.get("config")
@@ -482,12 +517,22 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
     # apply an additive schema migration before it is diagnosed.
     try:
         validate_date_range(date_from, date_to)
+        # 終了ポイントも同じ理由でDB初期化より先に確定させる。禁止種別や
+        # option 3/4 では JV-Link が -1 を返すか範囲を絞れないため、静かな
+        # 空成功にせず理由を出して止める。
+        if fromtime_end is not None:
+            fromtime_end = validate_jvopen_end_point(
+                data_spec, jv_option, fromtime_end
+            )
     except ValueError as exc:
         console.print()
         console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
 
-    _print_fetch_guardrail_notes(jv_option)
+    if fromtime_end is not None:
+        console.print(f"  Read end:   {fromtime_end} (JVOpen 読み出し終了ポイント)")
+
+    _print_fetch_guardrail_notes(jv_option, fromtime_end)
     console.print()
 
     try:
@@ -527,7 +572,8 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
                 data_spec=data_spec,
                 from_date=date_from,
                 to_date=date_to,
-                option=jv_option
+                option=jv_option,
+                fromtime_end=fromtime_end,
             )
 
             # Show results
