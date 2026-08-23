@@ -785,7 +785,8 @@ class PostgreSQLDatabase(BaseDatabase):
             use_replace: If True, use ON CONFLICT DO UPDATE (default: True)
 
         Returns:
-            Number of rows inserted/updated
+            Number of rows sent to PostgreSQL, after in-batch deduplication.
+            Not the driver rowcount: callers bind this value.
 
         Raises:
             DatabaseError: If insert fails
@@ -833,20 +834,18 @@ class PostgreSQLDatabase(BaseDatabase):
         else:
             conflict_sql = ""
 
-        inserted = 0
-        max_params = 30000
-        chunk_size = max(1, max_params // max(1, len(columns)))
-        for start in range(0, len(data_list), chunk_size):
-            chunk = data_list[start:start + chunk_size]
-            values_sql = ", ".join([row_placeholders] * len(chunk))
-            sql = (
-                f"INSERT INTO {table_name} ({', '.join(quoted_columns)}) "
-                f"VALUES {values_sql}{conflict_sql}"
-            )
-            flat_values = []
-            for row in chunk:
-                flat_values.extend(row.get(col) for col in columns)
-            self.execute(sql, tuple(flat_values))
-            inserted += len(chunk)
+        # One single-row template for the whole batch. A multi-row
+        # "VALUES (...), (...)" statement exceeded psycopg's cacheable query
+        # limits (4096 bytes / 50 parameters), so every chunk was re-parsed
+        # client side; that re-parsing was 15% of a full import
+        # (keibaai_cloud#280). executemany parses once and pipelines the rows.
+        sql = (
+            f"INSERT INTO {table_name} ({', '.join(quoted_columns)}) "
+            f"VALUES {row_placeholders}{conflict_sql}"
+        )
+        parameter_rows = [tuple(row.get(col) for col in columns) for row in data_list]
+        self.executemany(sql, parameter_rows)
 
-        return inserted
+        # Report the rows handed to PostgreSQL, not executemany's rowcount:
+        # callers bind this value (importer.py, importer_optimized.py).
+        return len(data_list)

@@ -7,9 +7,14 @@ Answers one question from hayato1980/keibaai_cloud#280:
     insert_many を「1 行テンプレート + executemany」に置き換えると本当に速くなるか。
     (遅くなったら採らない、が受け入れ条件 3)
 
+注意: この計測は insert_many が複数行 VALUES だった時点のもの。以後 insert_many
+自体が経路 B（1 行テンプレート + executemany）へ置き換わったため、いま実行すると
+経路 A は「現行実装」ではなく経路 B と同じものを測る。旧実装との比較値は
+keibaai_cloud#280 のコメントおよびこのファイルを追加したコミットに残してある。
+
 比較する 4 経路:
 
-  A values_chunked   現行実装。src/database/postgresql_handler.py:779 の insert_many を
+  A values_chunked   計測当時の現行実装。src/database/postgresql_handler.py の insert_many を
                      そのまま呼ぶ（本物の production コードを計測する）
   B executemany      候補実装。1 行テンプレート + self.executemany、dedupe あり
   C executemany_nodd 候補実装から _dedupe_rows_by_primary_key を外したもの

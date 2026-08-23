@@ -205,6 +205,123 @@ def test_dedupe_rows_by_primary_key_keeps_last_row():
     assert deduped[1]["Kumi"] == "01-03"
 
 
+def test_insert_many_binds_one_row_template_through_executemany(monkeypatch):
+    """One batch must parse one statement, not one per chunk of rows.
+
+    psycopg refuses to cache a query longer than 4096 bytes or carrying more
+    than 50 parameters, so the old multi-row ``VALUES (...), (...)`` statement
+    re-parsed the whole SQL string on every chunk (keibaai_cloud#280).
+    A single-row template stays inside both limits and is parsed once.
+    """
+    from unittest.mock import MagicMock
+
+    import src.database.postgresql_handler as postgresql_handler
+
+    monkeypatch.setattr(postgresql_handler, "DRIVER", "psycopg")
+    monkeypatch.setattr(
+        postgresql_handler.PostgreSQLDatabase,
+        "_get_primary_key_columns",
+        lambda self, table_name: ["year", "kumi"],
+    )
+
+    database = postgresql_handler.PostgreSQLDatabase({})
+    database._connection = MagicMock()
+    cursor = MagicMock()
+    # rowcount must not leak into the return value; see the return assertion below.
+    cursor.rowcount = 999
+    database._cursor = cursor
+
+    rows = [
+        {"Year": 2026, "Kumi": "01-02", "Odds": 10.0},
+        {"Year": 2026, "Kumi": "01-03", "Odds": 20.0},
+        {"Year": 2026, "Kumi": "01-02", "Odds": 10.5},
+    ]
+
+    inserted = database.insert_many("test_batch_upsert", rows, use_replace=True)
+
+    cursor.execute.assert_not_called()
+    assert cursor.executemany.call_count == 1
+    sql, parameter_rows = cursor.executemany.call_args.args
+    assert sql == (
+        "INSERT INTO test_batch_upsert (year, kumi, odds) VALUES (%s, %s, %s) "
+        "ON CONFLICT (year, kumi) DO UPDATE SET odds = EXCLUDED.odds"
+    )
+    # One placeholder per column, once — not once per row.
+    assert sql.count("%s") == 3
+    # _dedupe_rows_by_primary_key still collapses the in-batch duplicate.
+    assert list(parameter_rows) == [(2026, "01-02", 10.5), (2026, "01-03", 20.0)]
+    # len(data_list), not cursor.rowcount: callers bind this value.
+    assert inserted == 2
+
+
+def test_insert_many_without_replace_uses_plain_single_row_insert(monkeypatch):
+    """use_replace=False keeps a bare INSERT and skips the dedupe step."""
+    from unittest.mock import MagicMock
+
+    import src.database.postgresql_handler as postgresql_handler
+
+    monkeypatch.setattr(postgresql_handler, "DRIVER", "psycopg")
+
+    def _unexpected_primary_key_lookup(self, table_name):
+        raise AssertionError("use_replace=False must not query the primary key")
+
+    monkeypatch.setattr(
+        postgresql_handler.PostgreSQLDatabase,
+        "_get_primary_key_columns",
+        _unexpected_primary_key_lookup,
+    )
+
+    database = postgresql_handler.PostgreSQLDatabase({})
+    database._connection = MagicMock()
+    cursor = MagicMock()
+    cursor.rowcount = 999
+    database._cursor = cursor
+
+    rows = [
+        {"Year": 2026, "Kumi": "01-02"},
+        {"Year": 2026, "Kumi": "01-02"},
+    ]
+
+    inserted = database.insert_many("test_batch_plain", rows, use_replace=False)
+
+    sql, parameter_rows = cursor.executemany.call_args.args
+    assert sql == "INSERT INTO test_batch_plain (year, kumi) VALUES (%s, %s)"
+    assert list(parameter_rows) == [(2026, "01-02"), (2026, "01-02")]
+    assert inserted == 2
+
+
+def test_insert_many_binds_missing_columns_of_heterogeneous_rows(monkeypatch):
+    """Expanded records are ragged; every row must still bind the column union."""
+    from unittest.mock import MagicMock
+
+    import src.database.postgresql_handler as postgresql_handler
+
+    monkeypatch.setattr(postgresql_handler, "DRIVER", "psycopg")
+    monkeypatch.setattr(
+        postgresql_handler.PostgreSQLDatabase,
+        "_get_primary_key_columns",
+        lambda self, table_name: ["year", "kumi"],
+    )
+
+    database = postgresql_handler.PostgreSQLDatabase({})
+    database._connection = MagicMock()
+    database._cursor = MagicMock()
+
+    rows = [
+        {"Year": 2026, "Kumi": "01", "Odds": 10.0},
+        {"Year": 2026, "Kumi": "02", "Ninki": 3},
+    ]
+
+    database.insert_many("test_batch_ragged", rows, use_replace=True)
+
+    sql, parameter_rows = database._cursor.executemany.call_args.args
+    assert sql.startswith("INSERT INTO test_batch_ragged (year, kumi, odds, ninki) VALUES (%s, %s, %s, %s)")
+    assert list(parameter_rows) == [
+        (2026, "01", 10.0, None),
+        (2026, "02", None, 3),
+    ]
+
+
 def test_pg8000_explicit_batch_transaction(monkeypatch):
     """The native fallback must not autocommit each batch row."""
     from unittest.mock import MagicMock, call
@@ -698,5 +815,176 @@ def test_table_exists_and_column_lookups_respect_search_path():
         db.execute(f"DROP SCHEMA IF EXISTS {schema_a} CASCADE")
         db.execute(f"DROP SCHEMA IF EXISTS {schema_b} CASCADE")
         db.execute("SET search_path TO public")
+        db.commit()
+        db.disconnect()
+
+
+@postgresql_integration
+def test_insert_many_upsert_round_trip_against_live_postgresql():
+    """``ON CONFLICT DO UPDATE`` semantics survive the executemany rewrite.
+
+    keibaai_cloud#280 replaced the multi-row ``VALUES`` statement with a
+    single-row template driven by ``executemany``. The observable contract —
+    last row wins inside a batch, a re-run updates instead of duplicating,
+    and the return value counts the deduped rows — must not move.
+    """
+    from src.database.postgresql_handler import PostgreSQLDatabase
+
+    table = "test_insert_many_upsert"
+    db = PostgreSQLDatabase(postgresql_test_config())
+    db.connect()
+
+    try:
+        db.execute(f"DROP TABLE IF EXISTS {table}")
+        db.execute(
+            f"""
+            CREATE TABLE {table} (
+                year INTEGER NOT NULL,
+                kumi TEXT NOT NULL,
+                odds REAL,
+                ninki INTEGER NOT NULL,
+                PRIMARY KEY (year, kumi)
+            )
+            """
+        )
+        db.commit()
+
+        first_batch = [
+            {"Year": 2026, "Kumi": "01-02", "Odds": 10.0, "Ninki": 1},
+            {"Year": 2026, "Kumi": "01-03", "Odds": 20.0, "Ninki": 2},
+            # Same conflict key as the first row: the last one wins.
+            {"Year": 2026, "Kumi": "01-02", "Odds": 10.5, "Ninki": 3},
+        ]
+        assert db.insert_many(table, first_batch, use_replace=True) == 2
+        db.commit()
+
+        rows = db.fetch_all(f"SELECT kumi, odds, ninki FROM {table} ORDER BY kumi")
+        assert [(r["kumi"], r["odds"], r["ninki"]) for r in rows] == [
+            ("01-02", 10.5, 3),
+            ("01-03", 20.0, 2),
+        ]
+
+        # Re-inserting the same conflict keys updates in place.
+        second_batch = [
+            {"Year": 2026, "Kumi": "01-02", "Odds": 11.0, "Ninki": 4},
+            {"Year": 2026, "Kumi": "01-04", "Odds": 30.0, "Ninki": 5},
+        ]
+        assert db.insert_many(table, second_batch, use_replace=True) == 2
+        db.commit()
+
+        rows = db.fetch_all(f"SELECT kumi, odds, ninki FROM {table} ORDER BY kumi")
+        assert [(r["kumi"], r["odds"], r["ninki"]) for r in rows] == [
+            ("01-02", 11.0, 4),
+            ("01-03", 20.0, 2),
+            ("01-04", 30.0, 5),
+        ]
+    finally:
+        db.execute(f"DROP TABLE IF EXISTS {table}")
+        db.commit()
+        db.disconnect()
+
+
+@postgresql_integration
+def test_insert_many_rejects_whole_batch_containing_an_invalid_row():
+    """A bad row anywhere in the batch fails the batch, leaving nothing behind.
+
+    ``executemany`` runs one statement per row over a psycopg pipeline, so the
+    error surfaces from a different call site than the old single multi-row
+    statement did. What callers rely on must not change: ``DatabaseError``
+    reaches them, no row of the failed batch is persisted, and the connection
+    is still usable afterwards.
+    """
+    from src.database.base import DatabaseError
+    from src.database.postgresql_handler import PostgreSQLDatabase
+
+    table = "test_insert_many_invalid_row"
+    db = PostgreSQLDatabase(postgresql_test_config())
+    db.connect()
+
+    try:
+        db.execute(f"DROP TABLE IF EXISTS {table}")
+        db.execute(
+            f"""
+            CREATE TABLE {table} (
+                year INTEGER NOT NULL,
+                kumi TEXT NOT NULL,
+                ninki INTEGER NOT NULL,
+                PRIMARY KEY (year, kumi)
+            )
+            """
+        )
+        db.execute(f"INSERT INTO {table} (year, kumi, ninki) VALUES (2026, '00-00', 9)")
+        db.commit()
+
+        poisoned_batch = [
+            {"Year": 2026, "Kumi": "01-02", "Ninki": 1},
+            # NOT NULL violation in the middle of the batch.
+            {"Year": 2026, "Kumi": "01-03", "Ninki": None},
+            {"Year": 2026, "Kumi": "01-04", "Ninki": 2},
+        ]
+        with pytest.raises(DatabaseError):
+            db.insert_many(table, poisoned_batch, use_replace=True)
+
+        # The rollback scope is the batch: the row before the bad one is gone too,
+        # while work committed before the batch survives.
+        rows = db.fetch_all(f"SELECT kumi FROM {table} ORDER BY kumi")
+        assert [r["kumi"] for r in rows] == ["00-00"]
+
+        # The handler rolled the failed transaction back, so the session is clean.
+        assert db.insert_many(table, [{"Year": 2026, "Kumi": "02-01", "Ninki": 7}]) == 1
+        db.commit()
+        rows = db.fetch_all(f"SELECT kumi FROM {table} ORDER BY kumi")
+        assert [r["kumi"] for r in rows] == ["00-00", "02-01"]
+    finally:
+        db.rollback()
+        db.execute(f"DROP TABLE IF EXISTS {table}")
+        db.commit()
+        db.disconnect()
+
+
+@postgresql_integration
+def test_insert_many_leaves_caller_managed_transaction_for_the_caller():
+    """Inside an explicit transaction the batch failure stays the caller's to undo.
+
+    The handler only self-rolls-back when no caller transaction is open, and
+    the caller's rollback still discards every batch it wrapped.
+    """
+    from src.database.base import DatabaseError
+    from src.database.postgresql_handler import PostgreSQLDatabase
+
+    table = "test_insert_many_caller_transaction"
+    db = PostgreSQLDatabase(postgresql_test_config())
+    db.connect()
+
+    try:
+        db.execute(f"DROP TABLE IF EXISTS {table}")
+        db.execute(
+            f"""
+            CREATE TABLE {table} (
+                year INTEGER NOT NULL,
+                kumi TEXT NOT NULL,
+                ninki INTEGER NOT NULL,
+                PRIMARY KEY (year, kumi)
+            )
+            """
+        )
+        db.commit()
+
+        db.begin_transaction()
+        assert db.insert_many(table, [{"Year": 2026, "Kumi": "01-01", "Ninki": 1}]) == 1
+        with pytest.raises(DatabaseError):
+            db.insert_many(
+                table,
+                [{"Year": 2026, "Kumi": "01-02", "Ninki": None}],
+                use_replace=True,
+            )
+        assert db.has_pending_transaction() is True
+
+        db.rollback()
+        assert db.has_pending_transaction() is False
+        rows = db.fetch_all(f"SELECT kumi FROM {table}")
+        assert rows == []
+    finally:
+        db.execute(f"DROP TABLE IF EXISTS {table}")
         db.commit()
         db.disconnect()
