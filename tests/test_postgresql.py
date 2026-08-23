@@ -217,12 +217,11 @@ def test_insert_many_binds_one_row_template_through_executemany(monkeypatch):
     cursor.execute.assert_not_called()
     assert cursor.executemany.call_count == 1
     sql, parameter_rows = cursor.executemany.call_args.args
+    # One placeholder group for the whole batch, not one per row.
     assert sql == (
         "INSERT INTO test_batch_upsert (year, kumi, odds) VALUES (%s, %s, %s) "
         "ON CONFLICT (year, kumi) DO UPDATE SET odds = EXCLUDED.odds"
     )
-    # One placeholder per column, once — not once per row.
-    assert sql.count("%s") == 3
     # _dedupe_rows_by_primary_key still collapses the in-batch duplicate.
     assert list(parameter_rows) == [(2026, "01-02", 10.5), (2026, "01-03", 20.0)]
     # len(data_list), not cursor.rowcount: callers bind this value.
@@ -263,6 +262,50 @@ def test_insert_many_without_replace_uses_plain_single_row_insert(monkeypatch):
     assert sql == "INSERT INTO test_batch_plain (year, kumi) VALUES (%s, %s)"
     assert list(parameter_rows) == [(2026, "01-02"), (2026, "01-02")]
     assert inserted == 2
+
+
+def test_insert_many_surfaces_batch_failure_as_database_error(monkeypatch):
+    """A failing batch raises DatabaseError and rolls itself back.
+
+    The live tests below pin this against a real server, but they only run with
+    JLTSQL_RUN_POSTGRESQL_INTEGRATION=1. Keep the error surface covered by
+    default: executemany drives one statement per row over a psycopg pipeline,
+    so the failure now reaches callers from a different call site than the old
+    single multi-row statement (keibaai_cloud#280).
+    """
+    from unittest.mock import MagicMock
+
+    import src.database.postgresql_handler as postgresql_handler
+    from src.database.base import DatabaseError
+
+    monkeypatch.setattr(postgresql_handler, "DRIVER", "psycopg")
+    monkeypatch.setattr(
+        postgresql_handler.PostgreSQLDatabase,
+        "_get_primary_key_columns",
+        lambda self, table_name: ["year", "kumi"],
+    )
+
+    database = postgresql_handler.PostgreSQLDatabase({})
+    database._connection = MagicMock()
+    database._cursor = MagicMock()
+    database._cursor.executemany.side_effect = RuntimeError("null value violates not-null constraint")
+
+    rows = [
+        {"Year": 2026, "Kumi": "01-02", "Ninki": 1},
+        {"Year": 2026, "Kumi": "01-03", "Ninki": None},
+    ]
+
+    with pytest.raises(DatabaseError):
+        database.insert_many("test_batch_failure", rows, use_replace=True)
+    # No caller transaction is open, so the handler undoes the batch itself.
+    database._connection.rollback.assert_called_once()
+
+    # Inside a caller transaction the rollback stays the caller's to issue.
+    database._connection.rollback.reset_mock()
+    database.begin_transaction()
+    with pytest.raises(DatabaseError):
+        database.insert_many("test_batch_failure", rows, use_replace=True)
+    database._connection.rollback.assert_not_called()
 
 
 def test_insert_many_binds_missing_columns_of_heterogeneous_rows(monkeypatch):

@@ -788,7 +788,8 @@ class PostgreSQLDatabase(BaseDatabase):
 
         Returns:
             Number of rows sent to PostgreSQL, after in-batch deduplication.
-            Not the driver rowcount: callers bind this value.
+            Not the driver rowcount: callers bind this value
+            (importer.py, importer_optimized.py).
 
         Raises:
             DatabaseError: If insert fails
@@ -807,8 +808,7 @@ class PostgreSQLDatabase(BaseDatabase):
                 if column not in seen_columns:
                     columns.append(column)
                     seen_columns.add(column)
-        placeholders = ", ".join(["?" for _ in columns])
-        row_placeholders = f"({placeholders})"
+        row_placeholders = "({})".format(", ".join(["?" for _ in columns]))
         # Quote column names (lowercase for PostgreSQL)
         quoted_columns = [self._quote_identifier(col) for col in columns]
 
@@ -848,6 +848,4 @@ class PostgreSQLDatabase(BaseDatabase):
         parameter_rows = [tuple(row.get(col) for col in columns) for row in data_list]
         self.executemany(sql, parameter_rows)
 
-        # Report the rows handed to PostgreSQL, not executemany's rowcount:
-        # callers bind this value (importer.py, importer_optimized.py).
         return len(data_list)

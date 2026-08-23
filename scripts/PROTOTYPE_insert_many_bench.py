@@ -145,7 +145,7 @@ def make_rows(n: int, dup_rate: float, seed: int = 42) -> List[Dict[str, Any]]:
 
 # --------------------------------------------------------------------------
 # B / C: 候補実装 — 1 行テンプレート + executemany
-#    postgresql_handler.py:779 insert_many と同じ前処理、SQL の組み方だけ差し替え
+#    postgresql_handler.py insert_many と同じ前処理、SQL の組み方だけ差し替え
 # --------------------------------------------------------------------------
 def insert_many_executemany(db, table_name, data_list, use_replace=True, dedupe=True) -> int:
     data_list = [db._normalize_insert_data(table_name, row) for row in data_list]
