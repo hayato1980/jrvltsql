@@ -449,7 +449,12 @@ class TestJVLinkBridgeAPI:
 
     @pytest.mark.parametrize("error_code", [-402, -403])
     def test_jv_gets_carries_the_corrupt_filename(self, bridge, error_code):
-        """A corrupt downloaded file is only repairable with its filename."""
+        """壊れたダウンロード済みファイルは filename が無ければ直せない.
+
+        fetcher は bridge 経由でも native COM 経由でも同じループを回すので、
+        bridge.jv_gets() が filename を落とすと bridge の経路でだけ
+        self-repair が効かなくなる。
+        """
         bridge._is_open = True
         _patch_responses(
             bridge,

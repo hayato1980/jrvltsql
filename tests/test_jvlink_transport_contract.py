@@ -322,7 +322,10 @@ def test_native_jvgets_releases_the_com_buffer_view():
     """公式は「JVGets ではメモリの解放を行わない」と課している.
 
     レコードは複製済みなので、pywin32 が渡してきた view は読み出しの度に
-    手放してよい。
+    手放してよい。解放を落とすと COM バッファが次の読み出しまで生き残り、
+    fetcher が 10 秒ごとの gc.collect() で抑えている滞留（E_UNEXPECTED の
+    下地）がそのぶん増える。released な view に触ると ValueError になる
+    ことで、解放されたことを確かめている。
     """
     record = b"RA" + b"0" * 30
     view = memoryview(bytearray(record))
@@ -355,6 +358,11 @@ def test_native_jvread_and_jvgets_propagate_downloading_status():
 
 
 def test_fetcher_reads_records_with_jvgets_instead_of_jvread():
+    """読み出しが JVGets 経由であること（往復変換を通らないこと）.
+
+    JVRead へ戻ると _recover_com_buffer の推測による復元が再び経路に入り、
+    戻せない文字で取り込みが止まる余地が復活する（keibaai_cloud#253）。
+    """
     jvlink = MagicMock()
     jvlink.jv_gets.return_value = (0, None, None)
     fetcher = _historical_fetcher(jvlink)
@@ -366,6 +374,14 @@ def test_fetcher_reads_records_with_jvgets_instead_of_jvread():
 
 
 def test_fetcher_hands_the_jvgets_filename_to_corrupt_file_recovery():
+    """JVGets で読んでも corrupt-file 復旧に filename が届くこと.
+
+    -402 / -403 は「ダウンロード済みファイルが壊れている」で、historical の
+    self-repair は受け取った filename を JVFiledelete へ渡して同じ JVOpen で
+    読み直す。切り替え前の jv_gets() は (rc, buff) の 2 要素で filename を
+    捨てていたため、そのまま差し替えるとこの復旧経路が黙って死ぬ。返り値が
+    2 要素へ戻れば、ここが落ちる。
+    """
     jvlink = MagicMock()
     jvlink.jv_gets.side_effect = [
         (-402, None, "corrupt/RACE.jvd"),
