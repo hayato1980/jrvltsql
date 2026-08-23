@@ -310,15 +310,14 @@ class HistoricalFetcher(BaseFetcher):
                     provider_tail="start_only",
                 )
 
-            # Initialize JV-Link
-            logger.info("Initializing JV-Link")
             if self.progress_display:
                 # スペックヘッダーを表示（日付範囲付き）
                 self.progress_display.print_spec_header(data_spec, from_date, to_date)
 
-            # Note: Service key must be pre-configured in Windows registry
-            # jv_init() does not accept service_key parameter
-            self.jvlink.jv_init()
+            # JVInit is not re-issued here: the JV-Link session is established
+            # once when the fetcher is constructed (see BaseFetcher.__init__),
+            # so this method starts at JVOpen. A JVInit failure therefore
+            # aborts before any fetch can attempt JVOpen.
             self._jvd_self_repair_attempts = 0
             self._jvd_replay_records_remaining = 0
             self._jv_open_context = (data_spec, fromtime, option)
@@ -501,8 +500,9 @@ class HistoricalFetcher(BaseFetcher):
             self._jv_open_context = None
             self._jv_open_last_file_timestamp = None
             self._fetch_task_id = None
-            # Close stream (JVClose) — releases the current open session so
-            # the next jv_init()/jv_open() call in a subsequent chunk works.
+            # Close stream (JVClose) — releases the current open stream so
+            # the next jv_open() call in a subsequent chunk works. JVInit is
+            # deliberately not repaired here: the session outlives JVClose.
             try:
                 self.jvlink.jv_close()
                 logger.info("Data stream closed")

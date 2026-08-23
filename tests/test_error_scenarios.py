@@ -337,17 +337,17 @@ class TestFetcherErrors(unittest.TestCase):
 
     @patch('src.fetcher.base.JVLinkWrapper')
     def test_jvlink_init_failure(self, mock_jvlink_class):
-        """Test handling of JV-Link initialization failure."""
+        """A failing JVInit aborts the fetcher before any JVOpen is possible."""
         mock_jvlink = MagicMock()
         mock_jvlink_class.return_value = mock_jvlink
 
         # Mock JV_Init failure (raises exception)
         mock_jvlink.jv_init.side_effect = Exception("JV_Init failed")
 
-        fetcher = HistoricalFetcher(sid="TEST")
-
         with self.assertRaises(Exception):
-            list(fetcher.fetch("RACE", "20240101", "20240101"))
+            HistoricalFetcher(sid="TEST")
+
+        mock_jvlink.jv_open.assert_not_called()
 
     @patch('src.fetcher.base.JVLinkWrapper')
     def test_jvopen_failure(self, mock_jvlink_class):

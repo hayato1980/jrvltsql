@@ -244,6 +244,9 @@ class JVLinkBridge:
         self._process: Optional[subprocess.Popen] = None
         self._is_open = False
         self._needs_close = False
+        # JVInit establishes the JV-Link session for the whole bridge process,
+        # not for a single JVOpen.
+        self._initialized = False
         self._download_count: Optional[int] = None
         self._use_external_runner = sys.platform != "win32"
         self._runner = _external_runner()
@@ -483,6 +486,7 @@ class JVLinkBridge:
                     pass
         self._is_open = False
         self._needs_close = False
+        self._initialized = False
         self._download_count = None
         self._stop_dialog_watcher()
         self._close_stderr_file()
@@ -624,6 +628,19 @@ class JVLinkBridge:
     # =========================================================================
 
     def jv_init(self) -> int:
+        """Initialize the JV-Link session once for this bridge process.
+
+        JVInit is application initialization in the official spec, so repeated
+        calls reuse the established session instead of re-issuing the command.
+        Anything that ends the bridge process (``cleanup()``, ``_abort_process()``)
+        drops the session, and the next call initializes again.
+        """
+        if getattr(self, "_initialized", False) and (
+            self._process is not None and self._process.poll() is None
+        ):
+            logger.debug("JV-Link already initialized via bridge; reusing session")
+            return 0
+
         self._start_process()
         response = self._send_command({"cmd": "init", "type": "jra", "key": self.sid})
 
@@ -633,6 +650,7 @@ class JVLinkBridge:
                 response.get("error", "JVInit failed"), error_code=code
             )
 
+        self._initialized = True
         logger.info("JV-Link initialized via bridge", code=code)
         return code
 
@@ -896,6 +914,7 @@ class JVLinkBridge:
         self._process = None
         self._is_open = False
         self._needs_close = False
+        self._initialized = False
         self._download_count = None
         self._close_stderr_file()
         self._stop_dialog_watcher()
