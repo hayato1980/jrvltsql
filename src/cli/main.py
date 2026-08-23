@@ -421,7 +421,16 @@ def update(ctx, force):
         "not accept an end point for them."
     ),
 )
-@click.option("--spec", "data_spec", required=True, help="Data specification (RACE, DIFN, etc.)")
+@click.option(
+    "--spec",
+    "data_specs",
+    required=True,
+    multiple=True,
+    help=(
+        "Data specification (RACE, DIFN, etc.). 複数指定可: 指定した順に、"
+        "1 プロセス（＝1 JV-Link セッション）の中で dataspec ごとに JVOpen する"
+    ),
+)
 @click.option(
     "--option",
     "jv_option",
@@ -434,7 +443,7 @@ def update(ctx, force):
 @click.option("--progress/--no-progress", default=True, help="Show progress display (default: enabled)")
 @click.option("--use-cache/--no-cache", default=True, show_default=True, help="Use local cache if available")
 @click.pass_context
-def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progress, use_cache):
+def fetch(ctx, date_from, date_to, data_specs, jv_option, db, batch_size, progress, use_cache):
     """Fetch historical data from JRA-VAN DataLab.
 
     JVOpen option meanings:
@@ -443,10 +452,19 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
       - option=3 (セットアップ): 全データ取得（ダイアログ表示あり）
       - option=4 (分割セットアップ): 全データ取得（初回のみダイアログ）
 
+    --spec は複数回指定でき、指定した順に処理する。並べ替えはしない。
+    dataspec を連結して 1 回の JVOpen にはまとめない: 公式仕様は複数指定を
+    「対象ファイル数が多いと JVRead が遅くなる」既知障害として挙げ、回避策に
+    個別指定を挙げている。JVOpen は dataspec ごと、JV-Link セッションだけが
+    実走を通して 1 本になる（option=3/4 の取得元ダイアログも 1 回で済む）。
+    途中の dataspec が失敗したら以降は実行せず、終了コードで分かる。
+
     \b
     Examples:
       jltsql fetch --from 20240101 --to 20241231 --spec RACE
       jltsql fetch --from 20240101 --to 20241231 --spec DIFN --option 3
+      jltsql fetch --from 19860101 --to 20261231 --option 4 \\
+                   --spec DIFN --spec WOOD --spec SLOP --spec BLDN --spec RACE
     """
     from src.database import create_database_from_config, DatabaseError
     from src.database.schema import create_all_tables
@@ -468,21 +486,24 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
     console.print(f"[bold cyan]Fetching historical data from JRA-VAN DataLab...[/bold cyan]\n")
     console.print(f"  Data source: JRA (中央競馬)")
     console.print(f"  Date range: {date_from} -- {date_to}")
-    console.print(f"  Data spec:  {data_spec}")
+    console.print(f"  Data spec:  {', '.join(data_specs)}")
     console.print(f"  Option:     {jv_option} ({option_names.get(jv_option, '不明')})")
     console.print(f"  Database:   {db_type}")
 
-    # Validate data_spec and option combination
+    # Validate every requested spec before the database is touched: one bad
+    # spec must not leave the run half-imported.
     # 非対応の旧仕様種別は「option では取得できません」より先に理由を返す。
-    _reject_retired_data_spec(data_spec)
+    for data_spec in data_specs:
+        _reject_retired_data_spec(data_spec)
 
     from src.jvlink.constants import is_valid_jvopen_combination, JVOPEN_VALID_COMBINATIONS
-    if not is_valid_jvopen_combination(data_spec, jv_option):
-        console.print()
-        console.print(f"[red]Error:[/red] データ種別 '{data_spec}' は option={jv_option} では取得できません")
-        valid_specs = JVOPEN_VALID_COMBINATIONS.get(jv_option, [])
-        console.print(f"       option={jv_option} で取得可能: {', '.join(valid_specs)}")
-        sys.exit(1)
+    for data_spec in data_specs:
+        if not is_valid_jvopen_combination(data_spec, jv_option):
+            console.print()
+            console.print(f"[red]Error:[/red] データ種別 '{data_spec}' は option={jv_option} では取得できません")
+            valid_specs = JVOPEN_VALID_COMBINATIONS.get(jv_option, [])
+            console.print(f"       option={jv_option} で取得可能: {', '.join(valid_specs)}")
+            sys.exit(1)
 
     # The CLI prepares every table before BatchProcessor runs. Reject the
     # range here as well so malformed input cannot initialize a database or
@@ -530,23 +551,36 @@ def fetch(ctx, date_from, date_to, data_spec, jv_option, db, batch_size, progres
             if not progress:
                 console.print("[bold]Processing data...[/bold]")
 
-            result = processor.process_date_range(
-                data_spec=data_spec,
-                from_date=date_from,
-                to_date=date_to,
-                option=jv_option
-            )
+            # One BatchProcessor for the whole run. It owns a single
+            # HistoricalFetcher, and that fetcher establishes the JV-Link
+            # session once (JVInit). Rebuilding it per spec would bring the
+            # option=3/4 source dialog back once per dataspec.
+            for data_spec in data_specs:
+                # 単一指定の出力は従来どおりにする。前置きの "Data spec" 行が
+                # そのまま dataspec の見出しなので、複数のときだけ繰り返す。
+                if len(data_specs) > 1:
+                    console.print()
+                    console.print(f"  Data spec:  {data_spec}")
 
-            # Show results
-            console.print()
-            console.print("[bold green][OK] Fetch complete![/bold green]")
-            console.print()
-            console.print("[bold]Statistics:[/bold]")
-            console.print(f"  Fetched:  {result['records_fetched']}")
-            console.print(f"  Parsed:   {result['records_parsed']}")
-            console.print(f"  Imported: {result['records_imported']}")
-            console.print(f"  Failed:   {result['records_failed']}")
-            console.print(f"  Batches:  {result.get('batches_processed', 0)}")
+                # An exception here leaves the remaining specs unprocessed and
+                # exits non-zero (ADR-0023: stop and show a human).
+                result = processor.process_date_range(
+                    data_spec=data_spec,
+                    from_date=date_from,
+                    to_date=date_to,
+                    option=jv_option
+                )
+
+                # Show results
+                console.print()
+                console.print("[bold green][OK] Fetch complete![/bold green]")
+                console.print()
+                console.print("[bold]Statistics:[/bold]")
+                console.print(f"  Fetched:  {result['records_fetched']}")
+                console.print(f"  Parsed:   {result['records_parsed']}")
+                console.print(f"  Imported: {result['records_imported']}")
+                console.print(f"  Failed:   {result['records_failed']}")
+                console.print(f"  Batches:  {result.get('batches_processed', 0)}")
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted by user[/yellow]")
