@@ -94,6 +94,13 @@ def _recover_com_buffer(value, expected_size: int, method_name: str) -> bytes:
                 f"{method_name} buffer contains an irreversible Unicode replacement character"
             )
 
+        # Some COM dispatch paths expose one or more terminator/padding NULs
+        # after the byte count returned by JVRead.  They are not JV-Data (a
+        # fixed record ends in CRLF), and including them in candidate lengths
+        # can make a CP1252 buffer look like CP932 or vice versa.  Remove only
+        # this unambiguous trailing padding before choosing an encoding.
+        value = value.rstrip("\x00")
+
         # どの符号化で戻すかは、marshaling 経路によって変わる。pywin32 は同じ
         # バッファを latin-1 相当（1 バイト 1 符号位置）でも、CP1252 でも、
         # CP932 のテキストとしても渡してくる。
@@ -127,9 +134,31 @@ def _recover_com_buffer(value, expected_size: int, method_name: str) -> bytes:
         # 長さがちょうど合うものを最優先する。「以上」だけで選ぶと、CP1252 で
         # marshaling されたバッファに cp932 を当てた結果（1 文字 2 バイトに
         # 膨らむ）を採ってしまう。
-        recovered = next((c for c in candidates if len(c) == expected_size), None)
+        exact_candidates = {
+            candidate for candidate in candidates if len(candidate) == expected_size
+        }
+        if len(exact_candidates) > 1:
+            raise JVLinkError(
+                f"{method_name} buffer recovery is ambiguous at its return byte "
+                f"count of {expected_size}"
+            )
+        recovered = next(iter(exact_candidates), None)
         if recovered is None:
-            recovered = next((c for c in candidates if len(c) > expected_size), None)
+            # Preserve compatibility with genuinely oversized COM buffers,
+            # but never select one encoding merely because it was tried first.
+            # If their returned prefixes disagree, guessing would silently
+            # corrupt a record while still satisfying the byte count.
+            oversized_prefixes = {
+                candidate[:expected_size]
+                for candidate in candidates
+                if len(candidate) > expected_size
+            }
+            if len(oversized_prefixes) > 1:
+                raise JVLinkError(
+                    f"{method_name} buffer recovery is ambiguous above its return "
+                    f"byte count of {expected_size}"
+                )
+            recovered = next(iter(oversized_prefixes), None)
 
         if recovered is None:
             if failures:

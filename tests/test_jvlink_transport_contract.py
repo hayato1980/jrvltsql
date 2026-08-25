@@ -782,3 +782,32 @@ def test_recover_com_buffer_still_handles_a_cp1252_marshaled_buffer():
     recovered = _recover_com_buffer(marshaled, len(raw), "JVRead")
 
     assert recovered == raw
+
+
+@pytest.mark.parametrize("marshal_encoding", ["cp1252", "cp932"])
+def test_recover_com_buffer_ignores_trailing_com_nul_before_choosing_encoding(
+    marshal_encoding,
+):
+    """COM末尾NULを候補長へ混ぜても、別encodingを誤選択してはいけない。"""
+    from src.jvlink.wrapper import _recover_com_buffer
+
+    raw = b"A" * 10 + b"\x91\x92\x93\x94" + b"B" * 10
+    trailing_nuls = 1
+    if marshal_encoding == "cp932":
+        raw = b"A" * 10 + "‘’“”".encode("cp932") + b"B" * 10
+        # Four collapsed two-byte symbols plus four padding NULs produce the
+        # same candidate length, so length equality alone picks wrong bytes.
+        trailing_nuls = 4
+    marshaled = raw.decode(marshal_encoding) + "\x00" * trailing_nuls
+
+    recovered = _recover_com_buffer(marshaled, len(raw), "JVRead")
+
+    assert recovered == raw
+
+
+def test_recover_com_buffer_rejects_disagreeing_oversized_prefixes():
+    """期待長を満たす複数候補のbytesが違うなら、推測で成功させない。"""
+    from src.jvlink.wrapper import _recover_com_buffer
+
+    with pytest.raises(JVLinkError, match="ambiguous"):
+        _recover_com_buffer("¢A", 1, "JVRead")
