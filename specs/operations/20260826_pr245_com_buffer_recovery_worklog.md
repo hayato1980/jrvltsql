@@ -1,5 +1,7 @@
 # PR #245 COM buffer recovery worklog
 
+All dates in this worklog use the repository operator timezone, Asia/Tokyo.
+
 ## Scope and identity
 
 - Purpose: repair and independently validate `miyamamoto/jrvltsql#245` without broadening into unrelated parser/importer changes.
@@ -50,11 +52,13 @@
 - `git diff --check`: pass.
 - A direct Ruff run reports pre-existing style debt in `wrapper.py`; none was introduced by this bounded repair and Ruff is not the workflow's fatal lint gate.
 
-## Remaining before merge
+## Immutable candidate and remaining merge gate
 
-- Commit and push this exact repair to the contributor PR branch, recording the resulting full SHA on the PR.
-- Confirm required GitHub checks, actionable review findings, and unresolved-thread count on that pushed SHA.
-- Merge only from a clean worktree after those gates are green.
+- The production/test/worklog repair was committed and pushed as full SHA `eb6e1ec32f5ea553a1fbc12d4c59d12c08c8f186` to the contributor PR branch.
+- The Python 3.12 full suite, focused Python 3.12/3.13 tests, fatal lint, lock, test-gate and diff checks recorded above are bound to that full SHA.
+- GitHub test, lint, Windows batch syntax, and CodeRabbit checks all completed successfully on that SHA; performance is the workflow's intentional pull-request skip.
+- This evidence-only worklog update does not change production or tests. Its resulting full SHA is recorded in the PR rather than creating a prohibited self-referential worklog commit loop.
+- Merge only after replying to and resolving the current worklog review threads, confirming unresolved-thread count zero, and cleaning generated ignored artifacts from the dedicated worktree.
 
 ## STOP conditions
 
