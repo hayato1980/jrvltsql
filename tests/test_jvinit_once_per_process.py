@@ -167,14 +167,19 @@ def test_fetch_does_not_reissue_jvinit_after_a_stream_error():
 
 
 def test_single_dataspec_daily_diff_keeps_its_option1_jvopen_contract():
-    """option=1 の単一 dataspec は従来どおり ``{from_date}000000`` の start-only。"""
+    """単一 dataspec の option=1 は JVOpen 1 回。fromtime は master の形のまま。
+
+    RACE は範囲形式を使う dataspec なので、要求は暦年で刻まれた
+    ``{from}000000-{to}235959`` として届く（#246）。この hoist は JVOpen へ
+    渡す引数を動かさない。
+    """
     com = RecordingJVLinkCom(records=("RA-1", "RA-2"))
     fetcher = _historical_fetcher(com)
 
     records = list(fetcher.fetch("RACE", "20260820", "20260821", option=1))
 
     assert len(records) == 2
-    assert com.opens() == [("RACE", "20260820000000", 1)]
+    assert com.opens() == [("RACE", "20260820000000-20260821235959", 1)]
     assert com.count("JVClose") == 1
     assert fetcher.get_statistics()["records_parsed"] == 2
 
@@ -189,8 +194,8 @@ def test_repeated_daily_diff_fetches_send_one_jvopen_per_request():
 
     assert com.count("JVInit") == 1
     assert com.opens() == [
-        ("RACE", "20260820000000", 1),
-        ("RACE", "20260821000000", 1),
+        ("RACE", "20260820000000-20260820235959", 1),
+        ("RACE", "20260821000000-20260821235959", 1),
     ]
 
 

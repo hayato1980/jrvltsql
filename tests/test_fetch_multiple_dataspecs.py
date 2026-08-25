@@ -16,6 +16,7 @@ from click.testing import CliRunner
 from src.cli.main import (
     FETCH_NOTE_DATE_FIELDS,
     FETCH_NOTE_TO_CLIENT_FILTER,
+    FETCH_NOTE_TO_RANGE_CHUNKED,
     FETCH_NOTE_TO_SINGLE_OPEN,
     cli,
 )
@@ -35,11 +36,12 @@ STATS = {
 
 # option=1 のガードレール注記そのものは #290 の対象外なので、文言は定数から組む。
 # ここで転記すると、注記を直しただけでこのテストが無関係な差分で落ちる。
+# RACE は範囲形式を使う dataspec なので、刻む側の注記が出る（#246）。
 _OPTION1_NOTES = "\n".join(
     f"Note: {note}"
     for note in (
         FETCH_NOTE_TO_CLIENT_FILTER,
-        FETCH_NOTE_TO_SINGLE_OPEN,
+        FETCH_NOTE_TO_RANGE_CHUNKED,
         FETCH_NOTE_DATE_FIELDS,
     )
 )
@@ -124,6 +126,23 @@ def test_single_spec_output_is_unchanged():
     assert run.result.exit_code == 0, run.result.output
     assert run.result.output == SINGLE_SPEC_GOLDEN
     assert _processed_specs(run.processor) == ["RACE"]
+
+
+def test_guardrail_notes_cover_the_whole_run_without_repeating():
+    """注記は実走に 1 回。刻める spec と刻めない spec が混ざれば両方 1 回ずつ出る。
+
+    RACE は暦年で刻み、DIFN は start-only（#246）。dataspec ごとに注記を
+    出し直すと、同じ文が dataspec の数だけ並ぶ。
+    """
+    run = _invoke(["RACE", "DIFN"])
+
+    assert run.result.exit_code == 0, run.result.output
+    # rich は 1 行が幅を超えると折り返すので、改行を畳んでから数える。
+    output = run.result.output.replace("\n", "")
+    assert output.count(FETCH_NOTE_TO_RANGE_CHUNKED) == 1
+    assert output.count(FETCH_NOTE_TO_SINGLE_OPEN) == 1
+    assert output.count(FETCH_NOTE_DATE_FIELDS) == 1
+    assert _processed_specs(run.processor) == ["RACE", "DIFN"]
 
 
 def test_one_jvlink_session_serves_every_spec():
