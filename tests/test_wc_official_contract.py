@@ -288,7 +288,8 @@ def test_wc_accepts_real_calendar_dates_and_midnight() -> None:
     ),
 )
 def test_wc_rejects_noncurrent_or_corrupt_records(record: bytes) -> None:
-    assert WCParser().parse(record) is None
+    with pytest.raises(ValueError):
+        WCParser().parse(record)
 
 
 def test_wc_delete_record_keeps_the_exact_official_key_without_blank_body_rule() -> None:

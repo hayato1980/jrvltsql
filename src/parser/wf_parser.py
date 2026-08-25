@@ -11,7 +11,7 @@ so this parser distinguishes them by the embedded data-creation date.
 import json
 from datetime import date
 
-from src.parser.base import validate_fixed_record
+from src.parser.base import RecordValidationError, validate_fixed_record
 from src.parser.code_domains import OFFICIAL_JYO_CODES_2001
 from src.utils.logger import get_logger
 
@@ -82,7 +82,10 @@ class WFParser:
             or not value.isascii()
             or not value.isdigit()
         ):
-            raise ValueError(f"WF {name} must be exactly {width} ASCII digits")
+            raise RecordValidationError(
+                f"WF {name} must be exactly {width} ASCII digits",
+                record_type="WF", field_name=name, value=value,
+            )
 
     @staticmethod
     def _require_optional_digits(name: str, value: object, width: int) -> None:
@@ -95,24 +98,36 @@ class WFParser:
             or not value.isascii()
             or not value.isdigit()
         ):
-            raise ValueError(f"WF {name} must be blank or up to {width} ASCII digits")
+            raise RecordValidationError(
+                f"WF {name} must be blank or up to {width} ASCII digits",
+                record_type="WF", field_name=name, value=value,
+            )
 
     @classmethod
     def _require_digits(cls, name: str, value: object, width: int) -> None:
         if value == "":
-            raise ValueError(f"WF {name} is required for this DataKubun")
+            raise RecordValidationError(
+                f"WF {name} is required for this DataKubun",
+                record_type="WF", field_name=name, value=value,
+            )
         cls._require_optional_digits(name, value, width)
 
     @staticmethod
     def _require_blank(name: str, value: object) -> None:
         if value != "":
-            raise ValueError(f"WF {name} must keep its initial value for this DataKubun")
+            raise RecordValidationError(
+                f"WF {name} must keep its initial value for this DataKubun",
+                record_type="WF", field_name=name, value=value,
+            )
 
     @classmethod
     def _require_reserved_initial(cls, name: str, value: object) -> None:
         expected = cls.RESERVED_INITIAL_VALUES[name]
         if value != expected:
-            raise ValueError(f"WF {name} must keep its initial value {expected}")
+            raise RecordValidationError(
+                f"WF {name} must keep its initial value {expected}",
+                record_type="WF", field_name=name, value=value,
+            )
 
     @classmethod
     def _require_yyyymmdd(cls, name: str, value: object) -> date:
@@ -122,7 +137,10 @@ class WFParser:
         try:
             return date(int(value[:4]), int(value[4:6]), int(value[6:8]))
         except ValueError as error:
-            raise ValueError(f"WF {name} must be a real yyyymmdd date") from error
+            raise RecordValidationError(
+                f"WF {name} must be a real yyyymmdd date",
+                record_type="WF", field_name=name, value=value,
+            ) from error
 
     @classmethod
     def _require_event_date(cls, year: object, month_day: object) -> date:
@@ -133,27 +151,40 @@ class WFParser:
         try:
             return date(int(year), int(month_day[:2]), int(month_day[2:]))
         except ValueError as error:
-            raise ValueError("WF Year and MonthDay must form a real Gregorian date") from error
+            raise RecordValidationError(
+                "WF Year and MonthDay must form a real Gregorian date",
+                record_type="WF",
+            ) from error
 
     @classmethod
     def _require_race_composite(cls, name: str, value: object) -> None:
         """Require JyoCD(2 code) + Kaiji(2) + Nichiji(2) + RaceNum(2)."""
         if not isinstance(value, str) or len(value) != 8 or not value.isascii():
-            raise ValueError(f"WF {name} must be an 8-character race composite")
+            raise RecordValidationError(
+                f"WF {name} must be an 8-character race composite",
+                record_type="WF", field_name=name, value=value,
+            )
         jyo_cd, ordinal = value[:2], value[2:]
         if jyo_cd not in cls.OFFICIAL_JYO_CODES or not ordinal.isdigit():
-            raise ValueError(
-                f"WF {name} must use a pinned official venue code and six ASCII digits"
+            raise RecordValidationError(
+                f"WF {name} must use a pinned official venue code and six ASCII digits",
+                record_type="WF", field_name=name, value=value,
             )
 
     @classmethod
     def _require_flag(cls, name: str, value: object, *, availability: str) -> None:
         if availability == "initial":
             if value != cls.FLAG_INITIAL_VALUE:
-                raise ValueError(f"WF {name} must keep its initial value 0")
+                raise RecordValidationError(
+                    f"WF {name} must keep its initial value 0",
+                    record_type="WF", field_name=name, value=value,
+                )
             return
         if value not in cls.FLAG_VALUES:
-            raise ValueError(f"WF {name} must be 0 or 1")
+            raise RecordValidationError(
+                f"WF {name} must be 0 or 1",
+                record_type="WF", field_name=name, value=value,
+            )
 
     @classmethod
     def _require_payout_tuple(
@@ -168,18 +199,30 @@ class WFParser:
         """Require one payout slot to be fully blank or a complete tuple."""
         values = (kumi, pay, votes)
         if not all(isinstance(value, str) for value in values):
-            raise ValueError(f"WF payout slot {index} must contain text values")
+            raise RecordValidationError(
+                f"WF payout slot {index} must contain text values",
+                record_type="WF",
+            )
         if availability == "initial":
             if any(value != "" for value in values):
-                raise ValueError(f"WF payout slot {index} must keep its initial value")
+                raise RecordValidationError(
+                    f"WF payout slot {index} must keep its initial value",
+                    record_type="WF",
+                )
             return
         blank = [value == "" for value in values]
         if all(blank):
             if availability == "required":
-                raise ValueError(f"WF payout slot {index} is required for this DataKubun")
+                raise RecordValidationError(
+                    f"WF payout slot {index} is required for this DataKubun",
+                    record_type="WF",
+                )
             return
         if any(blank):
-            raise ValueError(f"WF payout slot {index} is a partial tuple")
+            raise RecordValidationError(
+                f"WF payout slot {index} is a partial tuple",
+                record_type="WF",
+            )
         cls._require_ascii_digits(f"payout slot {index} Kumi", kumi, cls.PAYOUT_KUMI_WIDTH)
         cls._require_optional_digits(
             f"payout slot {index} PayJyushosiki", pay, cls.PAYOUT_PAY_WIDTH
@@ -223,7 +266,10 @@ class WFParser:
         elif status in cls.REQUIRED_PAYLOAD_STATUSES:
             availability = "required"
         else:
-            raise ValueError(f"WF DataKubun has unsupported value {status!r}")
+            raise RecordValidationError(
+                f"WF DataKubun has unsupported value {status!r}",
+                record_type="WF",
+            )
 
         carryover_start = values.get("CarryOverStart")
         carryover_availability = cls.initial_carryover_availability(status, make_date)
@@ -252,7 +298,10 @@ class WFParser:
             cls._require_flag(name, values.get(name), availability=availability)
 
         if len(payouts) != cls.PAYOUT_COUNT:
-            raise ValueError(f"WF payout information must contain exactly {cls.PAYOUT_COUNT} slots")
+            raise RecordValidationError(
+                f"WF payout information must contain exactly {cls.PAYOUT_COUNT} slots",
+                record_type="WF",
+            )
         for index, (kumi, pay, votes) in enumerate(payouts, start=1):
             slot_availability = availability
             if availability == "required" and index > 1:
@@ -264,17 +313,19 @@ class WFParser:
             if tuple(payouts[0]) != cls.CANCELLATION_PAYOUT or any(
                 any(value != "" for value in payout) for payout in payouts[1:]
             ):
-                raise ValueError(
-                    "WF status 9 payout must be the documented cancellation tuple in slot 1"
+                raise RecordValidationError(
+                    "WF status 9 payout must be the documented cancellation tuple in slot 1",
+                    record_type="WF",
                 )
         if status in cls.REQUIRED_PAYLOAD_STATUSES and values.get("TekichuNasiFlag") == "1":
             for index, (kumi, pay, votes) in enumerate(payouts, start=1):
                 if kumi == "":
                     continue
                 if pay != cls.NO_HIT_PAY or votes != cls.NO_HIT_VOTES:
-                    raise ValueError(
+                    raise RecordValidationError(
                         f"WF final no-hit payout slot {index} must retain Kumi with "
-                        "zero PayJyushosiki and TekichuHyosu"
+                        "zero PayJyushosiki and TekichuHyosu",
+                        record_type="WF",
                     )
 
     def parse(self, data: bytes) -> dict[str, str] | None:
@@ -290,7 +341,10 @@ class WFParser:
             }
             status = result["DataKubun"]
             if status not in self.DATA_KUBUN_VALUES:
-                raise ValueError(f"WF DataKubun has unsupported value {status!r}")
+                raise RecordValidationError(
+                    f"WF DataKubun has unsupported value {status!r}",
+                    record_type="WF",
+                )
             make_date = self._require_yyyymmdd("MakeDate", result["MakeDate"])
             self._require_event_date(result["Year"], result["MonthDay"])
 
@@ -338,6 +392,5 @@ class WFParser:
             )
             result["RecordDelimiter"] = self.decode_field(data[7213:7215])
             return result
-        except Exception as exc:
-            self.logger.error(f"WFレコードパース中にエラー: {exc}")
-            return None
+        except Exception:
+            raise

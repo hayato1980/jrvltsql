@@ -165,9 +165,11 @@ class ParserFactory:
         except UnicodeDecodeError:
             logger.error("Failed to decode record type")
             return None
-        except Exception as e:
-            logger.error("Failed to parse record", error=str(e))
-            return None
+        except Exception:
+            # The failure artifact is assembled by the fetcher, which is the only
+            # place that also knows the file and the record number. Logging (and
+            # swallowing) here would cost both.
+            raise
 
     def __repr__(self) -> str:
         """String representation."""

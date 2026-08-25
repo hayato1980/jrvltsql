@@ -3,6 +3,7 @@
 This module provides the base class for fetching JV-Data from JV-Link.
 """
 
+import base64
 import gc
 import time
 from abc import ABC, abstractmethod
@@ -40,6 +41,12 @@ class BaseFetcher(ABC):
         jvlink: JV-Link wrapper instance
         parser_factory: Parser factory instance
     """
+
+    # Failure artifact limits. A whole record is worth keeping, but an odds or
+    # mining buffer runs to ~100KB and would be logged three times over (jltsql's
+    # own log, the driver's raw stream, the driver's masked stream).
+    FAILED_RECORD_BYTES_LOGGED = 4096
+    FAILED_RECORD_VALUE_CHARS = 64
 
     def __init__(
         self,
@@ -230,18 +237,11 @@ class BaseFetcher(ABC):
                                 yield record_item
                         else:
                             self._records_failed += 1
-                            logger.warning(
-                                "Failed to parse record",
-                                record_num=self._records_fetched,
-                            )
+                            self._log_failed_record(buff, filename, error=None)
 
-                    except Exception as e:
+                    except Exception as error:
                         self._records_failed += 1
-                        logger.error(
-                            "Error parsing record",
-                            record_num=self._records_fetched,
-                            error=str(e),
-                        )
+                        self._log_failed_record(buff, filename, error=error)
 
                     # Periodic GC to free COM buffer references (every 10s).
                     # kmy-keiba frees COM buffers with Array.Resize(ref buff, 0) after each read.
@@ -333,6 +333,34 @@ class BaseFetcher(ABC):
                 filename=filename,
                 result=result,
             )
+
+    def _log_failed_record(self, buff, filename, *, error) -> None:
+        """Emit the whole failure artifact for one rejected record, as one line.
+
+        One line, because the driver reads the child's stdout and stderr
+        separately and concatenates them per poll: a two-line artifact can be
+        split up in the masked log. ERROR, because jltsql's console handler
+        defaults to ERROR and the masked log is fed from that stream.
+        """
+        record = bytes(buff) if buff else b""
+        logged = record[: self.FAILED_RECORD_BYTES_LOGGED]
+        value = getattr(error, "value", None)
+        logger.error(
+            "Failed record artifact",
+            jvd_file=filename,
+            record_num=self._records_fetched,
+            record_spec=record[:2].decode("ascii", errors="replace"),
+            failure=type(error).__name__ if error is not None else "rejected",
+            field=getattr(error, "field", None),
+            # ascii() so a control character or a newline in provider data cannot
+            # break the artifact into two log lines.
+            value=None if value is None else ascii(value)[: self.FAILED_RECORD_VALUE_CHARS],
+            expected=getattr(error, "expected", None),
+            error=str(error) if error is not None else None,
+            record_len=len(record),
+            record_b64=base64.b64encode(logged).decode("ascii"),
+            record_b64_truncated=len(record) > len(logged),
+        )
 
     def get_statistics(self) -> dict:
         """Get fetching statistics.

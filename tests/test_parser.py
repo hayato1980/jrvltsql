@@ -199,11 +199,13 @@ class TestSEParser:
         assert data["KyakusituKubun"] == "4"
 
     def test_rejects_obsolete_463_byte_layout(self):
-        assert SEParser().parse(b"SE" + b" " * 461) is None
+        with pytest.raises(ValueError):
+            SEParser().parse(b"SE" + b" " * 461)
 
     def test_rejects_missing_crlf_and_trailing_bytes(self):
-        assert SEParser().parse(b"SE" + b" " * 553) is None
-        assert SEParser().parse(b"SE" + b" " * 551 + b"\r\nX") is None
+        for corrupt in (b"SE" + b" " * 553, b"SE" + b" " * 551 + b"\r\nX"):
+            with pytest.raises(ValueError):
+                SEParser().parse(corrupt)
 
 
 class TestHRParser:

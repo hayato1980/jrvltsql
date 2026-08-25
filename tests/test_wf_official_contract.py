@@ -452,7 +452,8 @@ def test_wf_parser_reads_every_manifest_scalar_and_repeat_at_the_pinned_offset()
 def test_wf_rejects_unsupported_status_and_semantically_corrupt_fields(
     record: bytes,
 ) -> None:
-    assert WFParser().parse(record) is None
+    with pytest.raises(ValueError):
+        WFParser().parse(record)
 
 
 def test_wf_accepts_all_official_accumulated_statuses_and_opaque_delete() -> None:
@@ -941,7 +942,8 @@ def test_wf_realtime_wrong_key_is_rejected_before_row_mutation(tmp_path) -> None
 
 
 def test_wf_rejects_the_repository_only_169_byte_reconstruction() -> None:
-    assert WFParser().parse(build_record()[:169]) is None
+    with pytest.raises(ValueError):
+        WFParser().parse(build_record()[:169])
 
 
 def _standard_tables(database: SQLiteDatabase) -> None:
@@ -1818,8 +1820,11 @@ def test_wf_realtime_raw_and_parsed_paths_upsert_retain_and_erase(tmp_path) -> N
             "TekichuHyosu": "0000000000",
         }
 
-        assert updater.process_record(build_record(data_kubun="8")) is None
-        assert updater.process_record(build_record(month_day="0230")) is None
+        # Rejected records now surface as an exception rather than a silent
+        # None, so the failure artifact keeps the field and the value (#300).
+        for rejected in (build_record(data_kubun="8"), build_record(month_day="0230")):
+            with pytest.raises(ValueError):
+                updater.process_record(rejected)
         accumulated_only = updater.process_record(build_record(data_kubun="7"))
         assert accumulated_only["success"] is False
         parsed_accumulated_only = updater.process_parsed_record(parsed_record(data_kubun="7"))

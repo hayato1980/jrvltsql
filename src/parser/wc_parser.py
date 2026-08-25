@@ -6,7 +6,7 @@ JV-Data 4.7.0.1 added availability notes but did not change this layout.
 
 from datetime import date, time
 
-from src.parser.base import BaseParser, FieldDef
+from src.parser.base import BaseParser, FieldDef, RecordValidationError
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -57,7 +57,10 @@ class WCParser(BaseParser):
             or not value.isascii()
             or not value.isdigit()
         ):
-            raise ValueError(f"WC {name} must be exactly {width} ASCII digits")
+            raise RecordValidationError(
+                f"WC {name} must be exactly {width} ASCII digits",
+                record_type="WC", field_name=name, value=value,
+            )
 
     @classmethod
     def _require_yyyymmdd(cls, name: str, value: object) -> None:
@@ -67,7 +70,10 @@ class WCParser(BaseParser):
         try:
             date(int(value[:4]), int(value[4:6]), int(value[6:8]))
         except ValueError as error:
-            raise ValueError(f"WC {name} must be a real yyyymmdd date") from error
+            raise RecordValidationError(
+                f"WC {name} must be a real yyyymmdd date",
+                record_type="WC", field_name=name, value=value,
+            ) from error
 
     @classmethod
     def _require_hhmm(cls, name: str, value: object) -> None:
@@ -77,7 +83,10 @@ class WCParser(BaseParser):
         try:
             time(int(value[:2]), int(value[2:4]))
         except ValueError as error:
-            raise ValueError(f"WC {name} must be a real HHMM time") from error
+            raise RecordValidationError(
+                f"WC {name} must be a real HHMM time",
+                record_type="WC", field_name=name, value=value,
+            ) from error
 
     @staticmethod
     def _require_cp932_width(name: str, value: object, width: int) -> None:
@@ -85,13 +94,22 @@ class WCParser(BaseParser):
         if value in (None, ""):
             return
         if not isinstance(value, str):
-            raise ValueError(f"WC {name} must be text or blank")
+            raise RecordValidationError(
+                f"WC {name} must be text or blank",
+                record_type="WC", field_name=name, value=value,
+            )
         try:
             encoded = value.encode("cp932", errors="strict")
         except UnicodeEncodeError as error:
-            raise ValueError(f"WC {name} must be valid CP932 text") from error
+            raise RecordValidationError(
+                f"WC {name} must be valid CP932 text",
+                record_type="WC", field_name=name, value=value,
+            ) from error
         if len(encoded) > width:
-            raise ValueError(f"WC {name} must fit in {width} CP932 byte(s)")
+            raise RecordValidationError(
+                f"WC {name} must fit in {width} CP932 byte(s)",
+                record_type="WC", field_name=name, value=value,
+            )
 
     def parse(self, record: bytes) -> dict[str, str] | None:
         """Return a validated current WC row, or ``None`` for invalid input."""
@@ -102,30 +120,41 @@ class WCParser(BaseParser):
             result["RecordDelimiter"] = ""
             data_kubun = result["DataKubun"]
             if data_kubun not in self.DATA_KUBUN_VALUES:
-                raise ValueError("WC DataKubun must be 0 or 1")
+                raise RecordValidationError(
+                    "WC DataKubun must be 0 or 1",
+                    record_type="WC",
+                )
             for name, width in self.KEY_FIXED_FIELDS:
                 self._require_ascii_digits(name, result[name], width)
             self._require_yyyymmdd("MakeDate", result["MakeDate"])
             self._require_yyyymmdd("ChokyoDate", result["ChokyoDate"])
             self._require_hhmm("ChokyoTime", result["ChokyoTime"])
             if result["TresenKubun"] not in self.TRESEN_KUBUN_VALUES:
-                raise ValueError("WC TresenKubun must be 0 or 1")
+                raise RecordValidationError(
+                    "WC TresenKubun must be 0 or 1",
+                    record_type="WC",
+                )
 
             # A status-0 row is an exact-key delete instruction. The provider
             # does not require its unused body to be blank, so do not interpret
             # or reject that body beyond the physical CP932/CRLF boundary.
             if data_kubun == "1":
                 if result["Course"] not in self.COURSE_VALUES:
-                    raise ValueError("WC Course must be in 0..4")
+                    raise RecordValidationError(
+                        "WC Course must be in 0..4",
+                        record_type="WC",
+                    )
                 if result["BabaMawari"] not in self.BABA_MAWARI_VALUES:
-                    raise ValueError("WC BabaMawari must be 0 or 1")
+                    raise RecordValidationError(
+                        "WC BabaMawari must be 0 or 1",
+                        record_type="WC",
+                    )
                 self._require_cp932_width("reserved", result["reserved"], 1)
                 for name, width in self.TIME_FIXED_FIELDS:
                     self._require_ascii_digits(name, result[name], width)
             return result
-        except Exception as error:
-            logger.error(f"WC record parse failed: {error}")
-            return None
+        except Exception:
+            raise
 
     def _define_fields(self) -> list[FieldDef]:
         """Define field positions with JRA-VAN standard names and types.

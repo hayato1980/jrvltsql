@@ -14,6 +14,30 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+class RecordValidationError(ValueError):
+    """A record was rejected by validation, carrying the offending field and value.
+
+    The fetcher turns these attributes into the failure artifact line; recovering
+    them by reading the message text would make the wording an API. Subclasses
+    ValueError so existing `except ValueError` callers keep working.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        record_type: str | None = None,
+        field_name: str | None = None,
+        value: Any = None,
+        expected: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.record_type = record_type
+        self.field = field_name
+        self.value = value
+        self.expected = expected
+
+
 def validate_fixed_record(
     record: bytes,
     record_type: str,

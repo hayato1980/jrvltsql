@@ -115,9 +115,9 @@ def test_se_record_length_and_crlf_are_strict() -> None:
     raw = _record()
     parser = SEParser()
     assert parser.parse(raw) is not None
-    assert parser.parse(raw[:-1]) is None
-    assert parser.parse(raw + b" ") is None
-    assert parser.parse(raw[:-2] + b"  ") is None
+    for corrupt in (raw[:-1], raw + b" ", raw[:-2] + b"  "):
+        with pytest.raises(ValueError):
+            parser.parse(corrupt)
 
 
 def test_maximum_odds_is_not_mistaken_for_a_sentinel() -> None:

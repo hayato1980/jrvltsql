@@ -657,7 +657,10 @@ class TestParserRobustness:
 
         assert len(data) == parser.RECORD_LENGTH + 100
 
-        result = parser.parse(data)
+        try:
+            result = parser.parse(data)
+        except ValueError:
+            return  # parsers migrated to raising rejections (#300)
         assert result is None
 
 
