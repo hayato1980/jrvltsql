@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
-from src.parser.base import validate_fixed_record
+from src.parser.base import RecordValidationError, validate_fixed_record
 from src.parser.canonical import canonicalize_se_fields
 from src.parser.code_domains import OFFICIAL_JYO_CODES_2001
 from src.utils.logger import get_logger
@@ -123,7 +123,11 @@ class SEParser:
             or not value.isascii()
             or not value.isdigit()
         ):
-            raise ValueError(f"SE {name} must be exactly {width} ASCII digits")
+            raise RecordValidationError(
+                f"SE {name} must be exactly {width} ASCII digits",
+                record_type="SE", field=name, value=value,
+                expected=f"{width} ASCII digits",
+            )
 
     @classmethod
     def validate_key_fields(cls, record: Mapping[str, object]) -> None:
@@ -138,15 +142,27 @@ class SEParser:
         try:
             date(int(make_date[:4]), int(make_date[4:6]), int(make_date[6:]))
         except ValueError as error:
-            raise ValueError("SE MakeDate must be a real yyyymmdd date") from error
+            raise RecordValidationError(
+                "SE MakeDate must be a real yyyymmdd date",
+                record_type="SE", field="MakeDate", value=make_date,
+                expected="a real yyyymmdd date",
+            ) from error
         try:
             date(int(year), int(month_day[:2]), int(month_day[2:]))
         except ValueError as error:
-            raise ValueError("SE Year and MonthDay must form a real date") from error
+            raise RecordValidationError(
+                "SE Year and MonthDay must form a real date",
+                record_type="SE", field="Year+MonthDay", value=f"{year}{month_day}",
+                expected="a real date",
+            ) from error
 
         jyo_cd = record.get("JyoCD")
         if jyo_cd not in cls.OFFICIAL_JYO_CODES:
-            raise ValueError("SE JyoCD is not in official code table 2001")
+            raise RecordValidationError(
+                "SE JyoCD is not in official code table 2001",
+                record_type="SE", field="JyoCD", value=jyo_cd,
+                expected="official code table 2001",
+            )
         for name, width in (
             ("Kaiji", 2),
             ("Nichiji", 2),
@@ -169,11 +185,19 @@ class SEParser:
                 continue
             value = record[field_name]
             if not isinstance(value, str):
-                raise ValueError(f"SE {field_name} must be a provider text value")
+                raise RecordValidationError(
+                    f"SE {field_name} must be a provider text value",
+                    record_type="SE", field=field_name, value=value,
+                    expected="provider text value",
+                )
             try:
                 encoded = value.encode("cp932", errors="strict")
             except UnicodeEncodeError as error:
-                raise ValueError(f"SE {field_name} is not CP932 encodable") from error
+                raise RecordValidationError(
+                    f"SE {field_name} is not CP932 encodable",
+                    record_type="SE", field=field_name, value=value,
+                    expected="CP932 encodable",
+                ) from error
             if len(encoded) > byte_width:
                 raise ValueError(
                     f"SE {field_name} exceeds its official {byte_width}-byte span"
@@ -421,6 +445,5 @@ class SEParser:
 
             return result
 
-        except Exception as e:
-            self.logger.error(f"SEレコードパース中にエラー: {e}")
-            return None
+        except Exception:
+            raise

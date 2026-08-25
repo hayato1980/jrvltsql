@@ -377,6 +377,5 @@ class CKParser:
                     if value:
                         self._require_digits(f"CK summary row {row_number} {name}", value)
             return result
-        except (ConversionError, UnicodeDecodeError, ValueError, TypeError) as error:
-            self.logger.error(f"CKレコードパース中にエラー: {error}")
-            return None
+        except Exception:
+            raise

@@ -288,9 +288,8 @@ def test_tk_parses_complete_header_and_all_300_registered_horses() -> None:
     ],
 )
 def test_tk_rejects_non_official_or_internally_inconsistent_records(record: bytes) -> None:
-    assert TKParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        TKParser().parse(record)
 def test_tk_delete_preserves_official_key_without_child_payload() -> None:
     parsed = TKParser().parse(build_tk_record(data_kubun="0")[0])
 

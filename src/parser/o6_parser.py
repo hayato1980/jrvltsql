@@ -101,6 +101,5 @@ class O6Parser(odds_domain.OddsCombinationValidationMixin):
             totals_only["Ninki"] = ""
             return odds_domain.attach_snapshot_metadata([totals_only])
 
-        except Exception as e:
-            self.logger.error(f"O6レコードパース中にエラー: {e}")
-            return None
+        except Exception:
+            raise

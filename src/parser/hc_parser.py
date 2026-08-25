@@ -148,9 +148,8 @@ class HCParser:
                 }
             self.validate_current_fields(result, data_kubun=data_kubun)
             return result
-        except Exception as error:
-            self.logger.error(f"HCレコードパース中にエラー: {error}")
-            return None
+        except Exception:
+            raise
 
     def get_field_names(self) -> list[str]:
         return [field.name for field in self._fields]

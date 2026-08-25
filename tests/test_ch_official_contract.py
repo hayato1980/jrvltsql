@@ -243,9 +243,8 @@ def test_ch_reads_every_official_field_without_silent_omission() -> None:
     ],
 )
 def test_ch_rejects_truncated_or_corrupt_physical_records(record: bytes) -> None:
-    assert CHParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        CHParser().parse(record)
 def test_ch_normalized_schemas_match_official_cardinality_and_keys() -> None:
     assert set(get_table_column_types("NL_CH")) == NATIVE_HEADER_FIELDS
     assert set(get_table_column_types("CHOKYO")) == set(STANDARD_HEADER_ALIASES.values())

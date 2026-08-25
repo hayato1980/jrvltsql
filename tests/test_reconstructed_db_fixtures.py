@@ -298,9 +298,10 @@ class TestHCParserReconstructedValues:
         assert "HonSyokinHeichi" not in result
 
     def test_rejects_reconstructed_rows_with_blank_fixed_numeric_times(self):
-        assert self.parser.parse(self.records[0]) is None
-        assert self.parser.parse(self.records[1]) is None
-
+        with pytest.raises(ValueError):
+            self.parser.parse(self.records[0])
+        with pytest.raises(ValueError):
+            self.parser.parse(self.records[1])
     def test_parses_official_hanro_positions(self):
         result = self.parser.parse(self.records[-1])
 

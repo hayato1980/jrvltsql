@@ -236,6 +236,5 @@ class SKParser:
 
             return result
 
-        except Exception as e:
-            self.logger.error(f"SKレコードパース中にエラー: {e}")
-            return None
+        except Exception:
+            raise

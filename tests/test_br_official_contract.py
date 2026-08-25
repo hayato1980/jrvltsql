@@ -144,9 +144,8 @@ def test_br_emits_exactly_the_official_flattened_fields() -> None:
     ],
 )
 def test_br_rejects_unsupported_or_corrupt_physical_records(record: bytes) -> None:
-    assert BRParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        BRParser().parse(record)
 def test_br_standard_mapping_selects_canonical_seisan_and_keeps_alias() -> None:
     assert JLTSQL_TO_JRAVAN["NL_BR"] == "SEISAN"
     assert JRAVAN_TO_JLTSQL["SEISAN"] == "NL_BR"

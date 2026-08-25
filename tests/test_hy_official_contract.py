@@ -116,9 +116,8 @@ def test_hy_layout_is_gap_free_and_reads_every_official_field() -> None:
     ),
 )
 def test_hy_rejects_noncurrent_or_corrupt_records(record: bytes) -> None:
-    assert HYParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        HYParser().parse(record)
 def test_hy_native_and_standard_schemas_match_current_business_fields() -> None:
     assert set(get_table_column_types("NL_HY")) == BUSINESS_FIELDS
     assert get_table_primary_key_columns("NL_HY") == ["KettoNum"]

@@ -192,6 +192,5 @@ class KSParser:
             ]
             result["RecordDelimiter"] = self.decode_field(data[4171:4173])
             return result
-        except (UnicodeDecodeError, ValueError, TypeError) as error:
-            self.logger.error(f"KSレコードパース中にエラー: {error}")
-            return None
+        except Exception:
+            raise

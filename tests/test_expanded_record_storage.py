@@ -1216,10 +1216,10 @@ def test_sqlite_standard_h6_direct_parser_revisions_replace_nullable_snapshot(
 
 
 def test_provider_vote_parsers_reject_repository_flattened_layouts():
-    assert H1Parser().parse(_make_repository_h1_vote_flat_record()) is None
-    assert H6Parser().parse(_make_repository_h6_vote_flat_record()) is None
-
-
+    with pytest.raises(ValueError):
+        H1Parser().parse(_make_repository_h1_vote_flat_record())
+    with pytest.raises(ValueError):
+        H6Parser().parse(_make_repository_h6_vote_flat_record())
 @pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_sqlite_standard_vote_verification_is_reused(
     sqlite_db, importer_class, monkeypatch

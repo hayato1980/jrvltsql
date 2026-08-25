@@ -142,6 +142,5 @@ class DMParser:
 
             self.logger.warning("DM record has no populated prediction entries")
             return None
-        except Exception as exc:
-            self.logger.error(f"DM record parse failed: {exc}")
-            return None
+        except Exception:
+            raise

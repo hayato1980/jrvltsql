@@ -190,9 +190,8 @@ def test_wh_parses_official_847_byte_record_by_byte_offset() -> None:
     ],
 )
 def test_wh_rejects_non_official_record_boundaries(record: bytes) -> None:
-    assert WHParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        WHParser().parse(record)
 def test_wh_accepts_official_zero_initialized_unused_slots() -> None:
     record = bytearray(_wh_record())
     for index in range(1, 17):

@@ -141,9 +141,8 @@ def test_tm_parses_all_18_official_entries_by_exact_byte_offset() -> None:
     ],
 )
 def test_tm_rejects_truncated_or_corrupt_physical_records(record: bytes) -> None:
-    assert TMParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        TMParser().parse(record)
 def test_tm_skips_empty_slots_but_preserves_all_wide_slots() -> None:
     entries = _official_entries()
     entries[1] = _entry()

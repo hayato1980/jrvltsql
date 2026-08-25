@@ -176,9 +176,8 @@ def test_jg_layout_is_gap_free_and_reads_every_official_field() -> None:
     ),
 )
 def test_jg_rejects_noncurrent_or_corrupt_records(record: bytes) -> None:
-    assert JGParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        JGParser().parse(record)
 def test_jg_delete_record_preserves_only_the_official_key() -> None:
     deleted = JGParser().parse(
         build_record(

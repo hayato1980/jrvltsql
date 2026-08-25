@@ -123,9 +123,8 @@ class WCParser(BaseParser):
                 for name, width in self.TIME_FIXED_FIELDS:
                     self._require_ascii_digits(name, result[name], width)
             return result
-        except Exception as error:
-            logger.error(f"WC record parse failed: {error}")
-            return None
+        except Exception:
+            raise
 
     def _define_fields(self) -> list[FieldDef]:
         """Define field positions with JRA-VAN standard names and types.

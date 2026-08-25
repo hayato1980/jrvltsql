@@ -151,6 +151,5 @@ class TKParser:
                 raise ValueError("registered-horse sequence must be contiguous from 001")
             result["_tk_registered_horse_rows"] = rows
             return result
-        except (UnicodeDecodeError, ValueError, TypeError) as error:
-            self.logger.error(f"TK record parse failed: {error}")
-            return None
+        except Exception:
+            raise

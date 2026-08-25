@@ -210,9 +210,8 @@ class H6Parser:
                 interpreted_data, self.RECORD_TYPE, self.RECORD_LENGTH
             )
             return self._parse_full(interpreted_data)
-        except Exception as e:
-            self.logger.error(f"H6レコードパース中にエラー: {e}")
-            return None
+        except Exception:
+            raise
 
     def _parse_full(self, data: bytes) -> List[Dict[str, str]]:
         """Parse full 102,890-byte struct into multiple rows."""

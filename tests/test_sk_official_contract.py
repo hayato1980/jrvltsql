@@ -79,9 +79,8 @@ def _table(use_standard: bool) -> tuple[str, str]:
 def test_sk_parser_rejects_official_domain_violations(offset: int, value: bytes) -> None:
     raw = bytearray(build_current_record())
     raw[offset : offset + len(value)] = value
-    assert SKParser().parse(bytes(raw)) is None
-
-
+    with pytest.raises(ValueError):
+        SKParser().parse(bytes(raw))
 def test_sk_parser_accepts_official_initial_and_blank_values() -> None:
     raw = bytearray(build_current_record())
     raw[29:30] = b"0"
@@ -114,9 +113,8 @@ def test_sk_status_zero_raw_body_is_opaque_but_live_body_remains_strict() -> Non
 
     live = bytearray(erase)
     live[2:3] = b"1"
-    assert SKParser().parse(bytes(live)) is None
-
-
+    with pytest.raises(ValueError):
+        SKParser().parse(bytes(live))
 @pytest.mark.parametrize(
     "change",
     (

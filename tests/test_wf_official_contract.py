@@ -452,9 +452,8 @@ def test_wf_parser_reads_every_manifest_scalar_and_repeat_at_the_pinned_offset()
 def test_wf_rejects_unsupported_status_and_semantically_corrupt_fields(
     record: bytes,
 ) -> None:
-    assert WFParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        WFParser().parse(record)
 def test_wf_accepts_all_official_accumulated_statuses_and_opaque_delete() -> None:
     for status in ("0", "1", "2", "3", "7", "9"):
         overrides = None
@@ -941,9 +940,8 @@ def test_wf_realtime_wrong_key_is_rejected_before_row_mutation(tmp_path) -> None
 
 
 def test_wf_rejects_the_repository_only_169_byte_reconstruction() -> None:
-    assert WFParser().parse(build_record()[:169]) is None
-
-
+    with pytest.raises(ValueError):
+        WFParser().parse(build_record()[:169])
 def _standard_tables(database: SQLiteDatabase) -> None:
     database.create_table("JYUSYOSIKI_HEAD", JRAVAN_SCHEMAS["JYUSYOSIKI_HEAD"])
     database.create_table("JYUSYOSIKI", JRAVAN_SCHEMAS["JYUSYOSIKI"])

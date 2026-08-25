@@ -273,9 +273,8 @@ def test_ks_reads_every_official_field_without_silent_omission() -> None:
     ],
 )
 def test_ks_rejects_truncated_or_corrupt_records(record: bytes) -> None:
-    assert KSParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        KSParser().parse(record)
 def test_ks_normalized_schemas_match_official_cardinality_and_keys() -> None:
     assert set(get_table_column_types("NL_KS")) == NATIVE_HEADER_FIELDS
     assert set(get_table_column_types("KISYU")) == NATIVE_HEADER_FIELDS

@@ -71,6 +71,5 @@ class YSParser:
                     )
             result["RecordDelimiter"] = self.decode_field(data[380:382])
             return result
-        except (UnicodeDecodeError, ValueError) as error:
-            self.logger.warning(f"YS record parse failed: {error}")
-            return None
+        except Exception:
+            raise

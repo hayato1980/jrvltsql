@@ -110,6 +110,5 @@ class BRParser:
 
             return result
 
-        except Exception as e:
-            self.logger.error(f"BRレコードパース中にエラー: {e}")
-            return None
+        except Exception:
+            raise

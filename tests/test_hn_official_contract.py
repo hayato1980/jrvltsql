@@ -58,9 +58,8 @@ def test_hn_parser_rejects_official_domain_violations(offset: int, value: bytes)
     raw[39:40] = b"0"
     raw[204:205] = b"1"
     raw[offset : offset + len(value)] = value
-    assert HNParser().parse(bytes(raw)) is None
-
-
+    with pytest.raises(ValueError):
+        HNParser().parse(bytes(raw))
 def test_hn_status_zero_raw_body_is_opaque_but_live_body_remains_strict() -> None:
     erase = bytearray(build_record())
     erase[2:3] = b"0"
@@ -71,9 +70,8 @@ def test_hn_status_zero_raw_body_is_opaque_but_live_body_remains_strict() -> Non
 
     live = bytearray(erase)
     live[2:3] = b"1"
-    assert HNParser().parse(bytes(live)) is None
-
-
+    with pytest.raises(ValueError):
+        HNParser().parse(bytes(live))
 @pytest.mark.parametrize(
     "change",
     (

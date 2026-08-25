@@ -136,9 +136,8 @@ def test_bn_emits_exactly_the_official_flattened_fields() -> None:
     ],
 )
 def test_bn_rejects_unsupported_or_corrupt_physical_records(record: bytes) -> None:
-    assert BNParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        BNParser().parse(record)
 def test_bn_native_and_standard_schemas_match_the_business_contract() -> None:
     for table_name in ("NL_BN", "BANUSI"):
         assert set(get_table_column_types(table_name)) == BUSINESS_FIELDS

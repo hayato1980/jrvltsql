@@ -14,6 +14,29 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+class RecordValidationError(ValueError):
+    """A record was rejected by validation, carrying the offending field/value.
+
+    ValueError subclass so existing `except ValueError` paths keep working; the
+    attributes are what the fetcher puts into the failure artifact line.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        record_type: str | None = None,
+        field: str | None = None,
+        value: object = None,
+        expected: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.record_type = record_type
+        self.field = field
+        self.value = value
+        self.expected = expected
+
+
 def validate_fixed_record(
     record: bytes,
     record_type: str,

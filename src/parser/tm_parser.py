@@ -134,6 +134,5 @@ class TMParser:
 
             self.logger.warning("TM record has no populated prediction entries")
             return None
-        except Exception as exc:
-            self.logger.error(f"TM record parse failed: {exc}")
-            return None
+        except Exception:
+            raise

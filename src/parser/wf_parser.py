@@ -338,6 +338,5 @@ class WFParser:
             )
             result["RecordDelimiter"] = self.decode_field(data[7213:7215])
             return result
-        except Exception as exc:
-            self.logger.error(f"WFレコードパース中にエラー: {exc}")
-            return None
+        except Exception:
+            raise

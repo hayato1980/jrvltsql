@@ -233,9 +233,8 @@ def test_se_current_fixture_is_provider_shaped_and_old_length_is_rejected() -> N
     # explicit unsupported input instead of being inferred.
     old_length = current[:542] + current[550:553] + b"\r\n"
     assert len(old_length) == 547
-    assert SEParser().parse(old_length) is None
-
-
+    with pytest.raises(ValueError):
+        SEParser().parse(old_length)
 def test_every_se_parser_slice_is_bound_to_the_pinned_sdk_manifest() -> None:
     expected = _official_se_slices()
     actual = _se_parser_slices()

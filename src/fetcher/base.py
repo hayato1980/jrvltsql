@@ -3,6 +3,7 @@
 This module provides the base class for fetching JV-Data from JV-Link.
 """
 
+import base64
 import gc
 import time
 from abc import ABC, abstractmethod
@@ -230,17 +231,14 @@ class BaseFetcher(ABC):
                                 yield record_item
                         else:
                             self._records_failed += 1
-                            logger.warning(
-                                "Failed to parse record",
-                                record_num=self._records_fetched,
+                            self._log_failure_artifact(
+                                buff, filename, failure="rejected", error=None
                             )
 
                     except Exception as e:
                         self._records_failed += 1
-                        logger.error(
-                            "Error parsing record",
-                            record_num=self._records_fetched,
-                            error=str(e),
+                        self._log_failure_artifact(
+                            buff, filename, failure="validation", error=e
                         )
 
                     # Periodic GC to free COM buffer references (every 10s).
@@ -333,6 +331,39 @@ class BaseFetcher(ABC):
                 filename=filename,
                 result=result,
             )
+
+
+    FAILED_RECORD_B64_LIMIT = 4096
+    FAILED_RECORD_VALUE_LIMIT = 64
+
+    def _log_failure_artifact(self, buff, filename, *, failure, error):
+        """One ERROR line per failed record: the whole failure artifact.
+
+        Everything an operator needs to chase the record afterwards lives on
+        this single line, because the driver tees the child stdout/stderr line
+        by line into the masked log.
+        """
+        record = bytes(buff or b"")
+        head = record[: self.FAILED_RECORD_B64_LIMIT]
+        field = getattr(error, "field", None)
+        raw_value = getattr(error, "value", None)
+        value = None
+        if raw_value is not None:
+            value = ascii(raw_value)[: self.FAILED_RECORD_VALUE_LIMIT]
+        logger.error(
+            "Failed record artifact",
+            jvd_file=filename,
+            record_num=self._records_fetched,
+            record_spec=record[:2].decode("ascii", errors="replace"),
+            failure=failure if error is None else type(error).__name__,
+            field=field,
+            value=value,
+            expected=getattr(error, "expected", None),
+            error=None if error is None else str(error),
+            record_len=len(record),
+            record_b64=base64.b64encode(head).decode("ascii"),
+            record_b64_truncated=len(record) > len(head),
+        )
 
     def get_statistics(self) -> dict:
         """Get fetching statistics.

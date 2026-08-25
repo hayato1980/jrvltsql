@@ -258,6 +258,5 @@ class O1Parser:
             totals_only["Kumi"] = self.TOTAL_COMBINATION
             return odds_domain.attach_snapshot_metadata([totals_only])
 
-        except Exception as e:
-            self.logger.error(f"O1レコードパース中にエラー: {e}")
-            return None
+        except Exception:
+            raise

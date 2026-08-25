@@ -195,9 +195,8 @@ def test_hr_layout_status_key_and_all_reserved_repeats_match_official_sources() 
     ),
 )
 def test_hr_parser_rejects_malformed_official_keys(changes: dict[str, str]) -> None:
-    assert HRParser().parse(build_hr_record(**changes)) is None
-
-
+    with pytest.raises(ValueError):
+        HRParser().parse(build_hr_record(**changes))
 @pytest.mark.parametrize(
     "field,value",
     (
@@ -513,9 +512,8 @@ def test_hr_parser_rejects_malformed_cp932_outside_opaque_ranges(
 ) -> None:
     raw = bytearray(build_hr_record(**record_kwargs))
     raw[offset : offset + 2] = b"\x81\x20"
-    assert HRParser().parse(bytes(raw)) is None
-
-
+    with pytest.raises(ValueError):
+        HRParser().parse(bytes(raw))
 def test_hr_wrong_primary_key_is_rejected_before_mutation(tmp_path) -> None:
     unsafe = SCHEMAS["NL_HR"].replace(
         "PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum)",

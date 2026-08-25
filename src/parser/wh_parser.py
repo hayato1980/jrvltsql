@@ -136,6 +136,5 @@ class WHParser:
 
             self.logger.warning("WH record has no populated horse-weight entries")
             return None
-        except Exception as exc:
-            self.logger.error(f"WH record parse failed: {exc}")
-            return None
+        except Exception:
+            raise

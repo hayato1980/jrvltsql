@@ -243,26 +243,25 @@ class TestH1RepositoryOnlyFlatLayout:
     """The former 317-byte reconstruction is not provider JV-Data."""
 
     def test_flat_layout_is_rejected(self):
-        assert H1Parser().parse(make_h1_record_flat()) is None
-
-
+        with pytest.raises(ValueError):
+            H1Parser().parse(make_h1_record_flat())
 class TestH1EdgeCases:
     """Edge cases for H1 parser."""
 
     def test_empty_data_is_rejected(self):
         """Empty bytes are not a physical record."""
-        assert H1Parser().parse(b"") is None
-
+        with pytest.raises(ValueError):
+            H1Parser().parse(b"")
     def test_short_data_is_rejected(self):
         """Data shorter than the declared flat layout is rejected."""
         data = b"H1" + b" " * 50
-        assert H1Parser().parse(data) is None
-
+        with pytest.raises(ValueError):
+            H1Parser().parse(data)
     def test_between_flat_and_full_size_is_rejected(self):
         """An unknown length between the two declared layouts is rejected."""
         data = b"H1" + b" " * 500
-        assert H1Parser().parse(data) is None
-
+        with pytest.raises(ValueError):
+            H1Parser().parse(data)
     def test_all_empty_entries_returns_header_only(self):
         """Full struct with no valid entries returns header row."""
         # Create a full record but with all entries as spaces
@@ -374,29 +373,25 @@ class TestH6RepositoryOnlyFlatLayout:
     """The former 78-byte reconstruction is not provider JV-Data."""
 
     def test_flat_layout_is_rejected(self):
-        assert H6Parser().parse(make_h6_record_flat()) is None
-
-
+        with pytest.raises(ValueError):
+            H6Parser().parse(make_h6_record_flat())
 class TestH6EdgeCases:
     """Edge cases for H6 parser."""
 
     def test_empty_data_is_rejected(self):
         """Empty bytes are not a physical record."""
-        assert H6Parser().parse(b"") is None
-
+        with pytest.raises(ValueError):
+            H6Parser().parse(b"")
     def test_short_data(self):
         """Short data is rejected."""
         data = b"H6" + b" " * 50
-        assert H6Parser().parse(data) is None
-
+        with pytest.raises(ValueError):
+            H6Parser().parse(data)
     def test_between_flat_and_full(self):
         """Data between 78 and 102890 bytes is rejected."""
         data = b"H6" + b" " * 200
-        assert H6Parser().parse(data) is None
-
-
-
-
+        with pytest.raises(ValueError):
+            H6Parser().parse(data)
 # ============================================================
 # Quickstart: CLI Argument Parsing Tests
 # ============================================================

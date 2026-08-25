@@ -156,9 +156,8 @@ def test_dm_parses_all_18_official_entries_by_exact_byte_offset() -> None:
     ],
 )
 def test_dm_rejects_truncated_or_corrupt_physical_records(record: bytes) -> None:
-    assert DMParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        DMParser().parse(record)
 def test_dm_skips_empty_slots_but_preserves_all_wide_slots() -> None:
     entries = _official_entries()
     entries[1] = _entry()

@@ -244,9 +244,8 @@ def test_ys_parses_all_46_official_fields_at_gap_free_offsets() -> None:
     ],
 )
 def test_ys_rejects_non_official_record_boundaries(record: bytes) -> None:
-    assert YSParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        YSParser().parse(record)
 def test_ys_schemas_and_metadata_match_the_complete_contract() -> None:
     parser_fields = {name for name, _, _ in OFFICIAL_YS_LAYOUT}
 

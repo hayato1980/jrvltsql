@@ -208,9 +208,8 @@ class TestUMParserExactLayoutEnforcement:
         ],
     )
     def test_unsupported_record_returns_none(self, mutate):
-        assert self.parser.parse(mutate(self.record)) is None
-
-
+        with pytest.raises(ValueError):
+            self.parser.parse(mutate(self.record))
 def parsed_record(**kwargs):
     parsed = UMParser().parse(build_record(**kwargs))
     assert parsed is not None

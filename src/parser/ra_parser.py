@@ -172,6 +172,5 @@ class RAParser:
             result["TsukaJyuni3"] = result["Jyuni3"]
             result["TsukaJyuni4"] = result["Jyuni4"]
             return result
-        except Exception as exc:
-            self.logger.error(f"RA record parse failed: {exc}")
-            return None
+        except Exception:
+            raise

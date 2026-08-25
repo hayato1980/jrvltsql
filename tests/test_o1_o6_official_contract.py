@@ -196,9 +196,8 @@ def test_official_statuses_are_parsed(record_type: str, data_kubun: str) -> None
 @pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
 def test_unofficial_status_is_rejected(record_type: str) -> None:
     layout = LAYOUTS[record_type]
-    assert layout.parser_class().parse(layout.raw(data_kubun="8")) is None
-
-
+    with pytest.raises(ValueError):
+        layout.parser_class().parse(layout.raw(data_kubun="8"))
 @pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
 @pytest.mark.parametrize("sale_flag", OFFICIAL_SALE_FLAGS)
 def test_official_sale_flags_are_parsed(record_type: str, sale_flag: str) -> None:

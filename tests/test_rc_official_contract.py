@@ -229,9 +229,8 @@ def test_rc_parses_all_49_official_fields_at_gap_free_offsets() -> None:
     ],
 )
 def test_rc_rejects_non_official_record_boundaries(record: bytes) -> None:
-    assert RCParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        RCParser().parse(record)
 def test_rc_native_and_standard_schemas_store_the_complete_contract() -> None:
     parser_fields = {name for name, _, _ in OFFICIAL_RC_LAYOUT}
 

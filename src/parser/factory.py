@@ -165,9 +165,8 @@ class ParserFactory:
         except UnicodeDecodeError:
             logger.error("Failed to decode record type")
             return None
-        except Exception as e:
-            logger.error("Failed to parse record", error=str(e))
-            return None
+        except Exception:
+            raise
 
     def __repr__(self) -> str:
         """String representation."""

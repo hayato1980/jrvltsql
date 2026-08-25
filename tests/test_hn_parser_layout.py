@@ -111,9 +111,8 @@ class TestHNParserExactLayoutEnforcement:
         ],
     )
     def test_unsupported_record_returns_none(self, mutate):
-        assert self.parser.parse(mutate(self.record)) is None
-
-
+        with pytest.raises(ValueError):
+            self.parser.parse(mutate(self.record))
 def test_native_schema_matches_the_current_parser_contract():
     assert set(get_table_column_types("NL_HN")) == set(EXPECTED)
     assert get_table_primary_key_columns("NL_HN") == ["HansyokuNum"]

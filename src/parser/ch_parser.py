@@ -127,6 +127,5 @@ class CHParser:
             ]
             result["RecordDelimiter"] = self.decode_field(data[3860:3862])
             return result
-        except (UnicodeDecodeError, ValueError, TypeError) as error:
-            self.logger.error(f"CHレコードパース中にエラー: {error}")
-            return None
+        except Exception:
+            raise

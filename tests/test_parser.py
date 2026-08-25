@@ -115,8 +115,9 @@ class TestRAParser:
         """Test parsing empty record."""
         parser = RAParser()
 
-        assert parser.parse(b"") is None
+        with pytest.raises(ValueError):
 
+            parser.parse(b"")
     def test_parse_returns_all_expected_fields(self):
         """Test that parse returns expected fields."""
         parser = RAParser()
@@ -199,13 +200,13 @@ class TestSEParser:
         assert data["KyakusituKubun"] == "4"
 
     def test_rejects_obsolete_463_byte_layout(self):
-        assert SEParser().parse(b"SE" + b" " * 461) is None
-
+        with pytest.raises(ValueError):
+            SEParser().parse(b"SE" + b" " * 461)
     def test_rejects_missing_crlf_and_trailing_bytes(self):
-        assert SEParser().parse(b"SE" + b" " * 553) is None
-        assert SEParser().parse(b"SE" + b" " * 551 + b"\r\nX") is None
-
-
+        with pytest.raises(ValueError):
+            SEParser().parse(b"SE" + b" " * 553)
+        with pytest.raises(ValueError):
+            SEParser().parse(b"SE" + b" " * 551 + b"\r\nX")
 class TestHRParser:
     """Test cases for HR (Payout) parser."""
 

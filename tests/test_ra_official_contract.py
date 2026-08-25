@@ -311,9 +311,8 @@ def test_ra_parses_all_111_official_fields_at_independent_offsets() -> None:
     ],
 )
 def test_ra_rejects_non_official_record_boundaries(record: bytes) -> None:
-    assert RAParser().parse(record) is None
-
-
+    with pytest.raises(ValueError):
+        RAParser().parse(record)
 def test_ra_native_and_standard_schemas_store_the_complete_contract() -> None:
     repeated_fields = {
         *[f"Honsyokin{i}" for i in range(1, 8)],

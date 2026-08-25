@@ -82,6 +82,5 @@ class RCParser:
 
             result["Crlf"] = self.decode_field(data[499:501])
             return result
-        except (UnicodeDecodeError, ValueError) as error:
-            self.logger.warning(f"RC record parse failed: {error}")
-            return None
+        except Exception:
+            raise

@@ -353,9 +353,8 @@ def test_ck_rejects_previous_6864_byte_layout() -> None:
 def test_ck_rejects_non_numeric_official_count_leaf() -> None:
     record = bytearray(build_record()[0])
     record[127:130] = b"0X1"
-    assert CKParser().parse(bytes(record)) is None
-
-
+    with pytest.raises(ValueError):
+        CKParser().parse(bytes(record))
 def test_ck_normalized_native_schemas_fit_postgresql_and_have_exact_keys() -> None:
     assert set(CHILD_TABLES) <= set(SCHEMAS)
     assert get_table_primary_key_columns("NL_CK") == list(PARENT_KEY)

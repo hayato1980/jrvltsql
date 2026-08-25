@@ -328,9 +328,8 @@ def test_hs_sdk500_layout_and_current_only_boundary() -> None:
     previous = build_previous_hs_record()
     assert len(previous) == 196
     assert previous[-2:] == b"\r\n"
-    assert HSParser().parse(previous) is None
-
-
+    with pytest.raises(ValueError):
+        HSParser().parse(previous)
 def test_hs_historical_barei_is_preserved_without_make_date_reinterpretation() -> None:
     semantics = HS_CONTRACT["historical_semantics"]
     assert semantics["barei_is_unified_to_post_2001_method"] is True
@@ -358,9 +357,8 @@ def test_hs_status_zero_non_key_bytes_are_opaque_project_policy() -> None:
         "20260818",
     )
     raw[11:21] = b"20221A0105"
-    assert HSParser().parse(bytes(raw)) is None
-
-
+    with pytest.raises(ValueError):
+        HSParser().parse(bytes(raw))
 def test_hs_official_zero_and_parent_registration_initial_values() -> None:
     parsed = parsed_hs(
         make_date="00000000",

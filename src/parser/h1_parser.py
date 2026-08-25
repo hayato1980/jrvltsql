@@ -262,9 +262,8 @@ class H1Parser:
         try:
             validate_fixed_record(data, self.RECORD_TYPE, self.RECORD_LENGTH)
             return self._parse_full(data)
-        except Exception as e:
-            self.logger.error(f"H1レコードパース中にエラー: {e}")
-            return None
+        except Exception:
+            raise
 
     def _parse_full(self, data: bytes) -> List[Dict[str, str]]:
         """Parse full 28,955-byte struct into multiple rows."""
