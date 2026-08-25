@@ -717,11 +717,7 @@ class HistoricalFetcher(BaseFetcher):
                     parsed = self.parser_factory.parse(raw)
                     if not parsed:
                         self._records_failed += 1
-                        logger.warning(
-                            "Failed to parse cached record",
-                            record_num=self._records_fetched,
-                            data_spec=data_spec,
-                        )
+                        self._log_failed_record(raw, f"cache:{data_spec}", error=None)
                         continue
 
                     records = parsed if isinstance(parsed, list) else [parsed]
@@ -731,12 +727,7 @@ class HistoricalFetcher(BaseFetcher):
                         yield record
                 except Exception as error:
                     self._records_failed += 1
-                    logger.error(
-                        "Error parsing cached record",
-                        record_num=self._records_fetched,
-                        data_spec=data_spec,
-                        error=str(error),
-                    )
+                    self._log_failed_record(raw, f"cache:{data_spec}", error=error)
         else:
             # Cache miss: fetch from JV-Link, write to cache
             self.cache_manager = cache_manager

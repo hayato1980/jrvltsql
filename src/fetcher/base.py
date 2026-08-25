@@ -3,6 +3,7 @@
 This module provides the base class for fetching JV-Data from JV-Link.
 """
 
+import base64
 import gc
 import time
 from abc import ABC, abstractmethod
@@ -40,6 +41,11 @@ class BaseFetcher(ABC):
         jvlink: JV-Link wrapper instance
         parser_factory: Parser factory instance
     """
+
+    # An odds or mining buffer runs to ~100KB and would be written three times
+    # over (this log, and the caller's raw and masked streams), so cap what a
+    # single failure can add.
+    FAILED_RECORD_BYTES_LOGGED = 4096
 
     def __init__(
         self,
@@ -230,18 +236,11 @@ class BaseFetcher(ABC):
                                 yield record_item
                         else:
                             self._records_failed += 1
-                            logger.warning(
-                                "Failed to parse record",
-                                record_num=self._records_fetched,
-                            )
+                            self._log_failed_record(buff, filename, error=None)
 
                     except Exception as e:
                         self._records_failed += 1
-                        logger.error(
-                            "Error parsing record",
-                            record_num=self._records_fetched,
-                            error=str(e),
-                        )
+                        self._log_failed_record(buff, filename, error=e)
 
                     # Periodic GC to free COM buffer references (every 10s).
                     # kmy-keiba frees COM buffers with Array.Resize(ref buff, 0) after each read.
@@ -333,6 +332,28 @@ class BaseFetcher(ABC):
                 filename=filename,
                 result=result,
             )
+
+    def _log_failed_record(self, buff, filename, *, error) -> None:
+        """Log one rejected record with enough context to find it again.
+
+        A record number alone cannot identify a record: it counts this run, so a
+        re-run points it at a different record, and the buffer it came from is
+        gone by the time anyone reads the log (the download cache is purged on
+        failure). Name the file it arrived in and carry the bytes themselves, so
+        the record can be replayed through a parser afterwards.
+        """
+        record = bytes(buff) if buff else b""
+        logged = record[: self.FAILED_RECORD_BYTES_LOGGED]
+        logger.error(
+            "Failed to parse record",
+            jvd_file=filename,
+            record_num=self._records_fetched,
+            record_spec=record[:2].decode("ascii", errors="replace"),
+            error=str(error) if error is not None else None,
+            record_len=len(record),
+            record_b64=base64.b64encode(logged).decode("ascii"),
+            record_b64_truncated=len(record) > len(logged),
+        )
 
     def get_statistics(self) -> dict:
         """Get fetching statistics.
