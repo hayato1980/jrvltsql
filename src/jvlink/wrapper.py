@@ -120,16 +120,30 @@ def _recover_com_buffer(value, expected_size: int, method_name: str) -> bytes:
         # これで選ぶ。長さの合った候補だけを採る。
         candidates: list[bytes] = []
         failures: list[str] = []
-        for build in (
-            lambda: value.encode("latin-1"),
-            lambda: value.encode("cp932"),
-            lambda: _decode_via_cp1252_table(value, method_name),
-        ):
+
+        def build_candidate(build) -> bool:
+            """候補を 1 つ作る。作れたら True、作れなければ False。"""
             try:
                 candidates.append(build())
             except UnicodeEncodeError as exc:
                 bad = exc.object[exc.start]
                 failures.append(f"U+{ord(bad):04X}")
+                return False
+            return True
+
+        latin1_built = build_candidate(lambda: value.encode("latin-1"))
+        build_candidate(lambda: value.encode("cp932"))
+        # CP1252 表の経路だけは 1 文字ずつ Python で回るので高い。RACE の実走
+        # （6,485 records / 810.5 秒）のプロファイルでは _decode_via_cp1252_table が
+        # 17.1 秒、その中の bytearray.append が 7.8 秒、ord が 6.1 秒で、合わせて
+        # 31.0 秒 = 実時間の 3.8% だった。
+        #
+        # latin-1 が通った値は符号位置がすべて 0xFF 以下で、表の経路もその範囲は
+        # 1 文字 1 バイトで写すだけなので、latin-1 と同じバイト列にしかならない。
+        # 候補は集合として突き合わせるため、同じバイト列をもう一度作っても選択も
+        # 曖昧さの判定も変わらない。作らずに飛ばす。
+        if not latin1_built:
+            build_candidate(lambda: _decode_via_cp1252_table(value, method_name))
 
         # 長さがちょうど合うものを最優先する。「以上」だけで選ぶと、CP1252 で
         # marshaling されたバッファに cp932 を当てた結果（1 文字 2 バイトに
