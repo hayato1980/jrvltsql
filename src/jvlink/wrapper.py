@@ -54,6 +54,30 @@ CP1252_TO_BYTE = {
 }
 
 
+def _decode_via_cp1252_table(value: str, method_name: str) -> bytes:
+    """CP1252 で marshaling されたバッファを 1 文字 1 バイトで戻す。
+
+    この経路は「1 文字 = 1 バイト」を前提にしているので、CP932 として渡ってきた
+    バッファに当ててはいけない。呼び出し側が expected_size で長さを検査する。
+    """
+    result = bytearray()
+    for char in value:
+        codepoint = ord(char)
+        if codepoint <= 0xFF:
+            result.append(codepoint)
+        elif codepoint in CP1252_TO_BYTE:
+            result.append(CP1252_TO_BYTE[codepoint])
+        else:
+            try:
+                result.extend(char.encode("cp932"))
+            except UnicodeEncodeError as exc:
+                raise JVLinkError(
+                    f"{method_name} buffer contains an unrecoverable "
+                    f"character U+{codepoint:04X}"
+                ) from exc
+    return bytes(result)
+
+
 def _recover_com_buffer(value, expected_size: int, method_name: str) -> bytes:
     """Recover the exact JV-Data bytes from a pywin32 out buffer.
 
@@ -70,35 +94,82 @@ def _recover_com_buffer(value, expected_size: int, method_name: str) -> bytes:
                 f"{method_name} buffer contains an irreversible Unicode replacement character"
             )
 
-        try:
-            recovered = value.encode("latin-1")
-        except UnicodeEncodeError:
-            if any(ord(char) in CP1252_TO_BYTE for char in value):
-                result = bytearray()
-                for char in value:
-                    codepoint = ord(char)
-                    if codepoint <= 0xFF:
-                        result.append(codepoint)
-                    elif codepoint in CP1252_TO_BYTE:
-                        result.append(CP1252_TO_BYTE[codepoint])
-                    else:
-                        try:
-                            result.extend(char.encode("cp932"))
-                        except UnicodeEncodeError as exc:
-                            raise JVLinkError(
-                                f"{method_name} buffer contains an unrecoverable "
-                                f"character U+{codepoint:04X}"
-                            ) from exc
-                recovered = bytes(result)
-            else:
-                try:
-                    recovered = value.encode("cp932")
-                except UnicodeEncodeError as exc:
-                    bad = exc.object[exc.start]
-                    raise JVLinkError(
-                        f"{method_name} buffer contains an unrecoverable "
-                        f"character U+{ord(bad):04X}"
-                    ) from exc
+        # Some COM dispatch paths expose one or more terminator/padding NULs
+        # after the byte count returned by JVRead.  They are not JV-Data (a
+        # fixed record ends in CRLF), and including them in candidate lengths
+        # can make a CP1252 buffer look like CP932 or vice versa.  Remove only
+        # this unambiguous trailing padding before choosing an encoding.
+        value = value.rstrip("\x00")
+
+        # どの符号化で戻すかは、marshaling 経路によって変わる。pywin32 は同じ
+        # バッファを latin-1 相当（1 バイト 1 符号位置）でも、CP1252 でも、
+        # CP932 のテキストとしても渡してくる。
+        #
+        # 「1 文字 = 1 バイト」を前提にした経路（latin-1 と CP1252 表）は、
+        # CP932 として渡ってきたバッファに当てると長さが縮む。CP932 では
+        # 2 バイトなのに 1 バイトに落ちる文字が 2 群ある:
+        #
+        #   符号位置 0xFF 以下      ´ ¨ ± × ÷ ° § ¶
+        #   CP1252 表に載っている   ‘ ’ “ ” † ‡ … ‰
+        #
+        # 実例: 1987 年の RA レコードの Hondai が「’８７ゴールデンスパーＴ…」で、
+        # 年を表す ’（U+2019・CP932 では 81 66）が CP1252 表で 0x92 の 1 バイトに
+        # なり、1272 バイトのレコードが 1271 バイトになって取り込みが止まった。
+        #
+        # expected_size は呼び出し側が JV-Link から受け取った正解なので、推測せず
+        # これで選ぶ。長さの合った候補だけを採る。
+        candidates: list[bytes] = []
+        failures: list[str] = []
+        for build in (
+            lambda: value.encode("latin-1"),
+            lambda: value.encode("cp932"),
+            lambda: _decode_via_cp1252_table(value, method_name),
+        ):
+            try:
+                candidates.append(build())
+            except UnicodeEncodeError as exc:
+                bad = exc.object[exc.start]
+                failures.append(f"U+{ord(bad):04X}")
+
+        # 長さがちょうど合うものを最優先する。「以上」だけで選ぶと、CP1252 で
+        # marshaling されたバッファに cp932 を当てた結果（1 文字 2 バイトに
+        # 膨らむ）を採ってしまう。
+        exact_candidates = {
+            candidate for candidate in candidates if len(candidate) == expected_size
+        }
+        if len(exact_candidates) > 1:
+            raise JVLinkError(
+                f"{method_name} buffer recovery is ambiguous at its return byte "
+                f"count of {expected_size}"
+            )
+        recovered = next(iter(exact_candidates), None)
+        if recovered is None:
+            # Preserve compatibility with genuinely oversized COM buffers,
+            # but never select one encoding merely because it was tried first.
+            # If their returned prefixes disagree, guessing would silently
+            # corrupt a record while still satisfying the byte count.
+            oversized_prefixes = {
+                candidate[:expected_size]
+                for candidate in candidates
+                if len(candidate) > expected_size
+            }
+            if len(oversized_prefixes) > 1:
+                raise JVLinkError(
+                    f"{method_name} buffer recovery is ambiguous above its return "
+                    f"byte count of {expected_size}"
+                )
+            recovered = next(iter(oversized_prefixes), None)
+
+        if recovered is None:
+            if failures:
+                raise JVLinkError(
+                    f"{method_name} buffer contains an unrecoverable "
+                    f"character {failures[0]}"
+                )
+            raise JVLinkError(
+                f"{method_name} buffer could not be recovered at its return byte "
+                f"count of {expected_size}"
+            )
     else:
         raise JVLinkError(
             f"{method_name} returned unsupported buffer type {type(value).__name__}"

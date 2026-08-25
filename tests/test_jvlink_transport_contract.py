@@ -706,3 +706,108 @@ def test_historical_wait_rejects_count_overshoot_and_status_error_immediately():
                 interval=0.01,
             )
         jvlink.jv_status.assert_called_once()
+
+
+# --- JVRead の往復変換でレコードが 1 バイト縮む回帰 ---
+#
+# pywin32 は同じバッファを latin-1 相当でも CP1252 でも CP932 のテキストとしても
+# 渡してくる。「1 文字 = 1 バイト」を前提にした戻し方を CP932 のバッファへ当てると
+# 長さが縮む。CP932 では 2 バイトなのに 1 バイトへ落ちる文字が 2 群ある。
+CP932_TWO_BYTE_BUT_LATIN1_CODEPOINT = [
+    b"\x81\x4c",  # U+00B4 ´
+    b"\x81\x4e",  # U+00A8 ¨
+    b"\x81\x7d",  # U+00B1 ±
+    b"\x81\x7e",  # U+00D7 ×
+    b"\x81\x80",  # U+00F7 ÷
+    b"\x81\x8b",  # U+00B0 °
+    b"\x81\x98",  # U+00A7 §
+    b"\x81\xf7",  # U+00B6 ¶
+]
+CP932_TWO_BYTE_BUT_IN_CP1252_TABLE = [
+    b"\x81\x65",  # U+2018 ‘
+    b"\x81\x66",  # U+2019 ’   実際に取り込みを止めた文字
+    b"\x81\x67",  # U+201C “
+    b"\x81\x68",  # U+201D ”
+    b"\x81\xf5",  # U+2020 †
+    b"\x81\xf6",  # U+2021 ‡
+    b"\x81\x63",  # U+2026 …
+    b"\x81\xf1",  # U+2030 ‰
+]
+
+
+@pytest.mark.parametrize(
+    "two_byte",
+    CP932_TWO_BYTE_BUT_LATIN1_CODEPOINT + CP932_TWO_BYTE_BUT_IN_CP1252_TABLE,
+)
+def test_recover_com_buffer_keeps_every_two_byte_cp932_character(two_byte):
+    """CP932 で 2 バイトの文字は、符号位置が何であれ 2 バイトのまま戻す。"""
+    from src.jvlink.wrapper import _recover_com_buffer
+
+    raw = b"A" * 635 + two_byte + b"B" * 635
+    assert len(raw) == 1272
+
+    recovered = _recover_com_buffer(raw.decode("cp932"), len(raw), "JVRead")
+
+    assert recovered == raw
+
+
+def test_recover_com_buffer_restores_the_ra_record_that_stopped_the_import():
+    """実際に取り込みを止めた RA レコードを戻せること。
+
+    1987-12-05 阪神 5 回 1 日目 9R。Hondai（競走名本題・data[32:92]）が
+    「’８７ゴールデンスパーＴ」で始まり、年を表す ’（U+2019・CP932 では 81 66）が
+    CP1252 表で 0x92 の 1 バイトになっていた。1272 -> 1271。
+    """
+    from src.jvlink.wrapper import _recover_com_buffer
+
+    header = b"RA720021220198712050905010910000"
+    hondai = "’８７ゴールデンスパーＴ".encode("cp932")
+    raw = header + hondai + b"\x81\x40" * ((1272 - len(header) - len(hondai)) // 2)
+    assert len(raw) == 1272
+    assert raw[32:34] == b"\x81\x66"  # Hondai の先頭が ’
+
+    recovered = _recover_com_buffer(raw.decode("cp932"), len(raw), "JVRead")
+
+    assert recovered == raw
+    assert recovered[32:34] == b"\x81\x66"
+
+
+def test_recover_com_buffer_still_handles_a_cp1252_marshaled_buffer():
+    """CP1252 で渡ってきたバッファは従来どおり 1 文字 1 バイトで戻す。"""
+    from src.jvlink.wrapper import _recover_com_buffer
+
+    raw = b"A" * 10 + b"\x91\x92\x93\x94" + b"B" * 10  # CP1252 の ‘ ’ “ ”
+    marshaled = raw.decode("cp1252")
+
+    recovered = _recover_com_buffer(marshaled, len(raw), "JVRead")
+
+    assert recovered == raw
+
+
+@pytest.mark.parametrize("marshal_encoding", ["cp1252", "cp932"])
+def test_recover_com_buffer_ignores_trailing_com_nul_before_choosing_encoding(
+    marshal_encoding,
+):
+    """COM末尾NULを候補長へ混ぜても、別encodingを誤選択してはいけない。"""
+    from src.jvlink.wrapper import _recover_com_buffer
+
+    raw = b"A" * 10 + b"\x91\x92\x93\x94" + b"B" * 10
+    trailing_nuls = 1
+    if marshal_encoding == "cp932":
+        raw = b"A" * 10 + "‘’“”".encode("cp932") + b"B" * 10
+        # Four collapsed two-byte symbols plus four padding NULs produce the
+        # same candidate length, so length equality alone picks wrong bytes.
+        trailing_nuls = 4
+    marshaled = raw.decode(marshal_encoding) + "\x00" * trailing_nuls
+
+    recovered = _recover_com_buffer(marshaled, len(raw), "JVRead")
+
+    assert recovered == raw
+
+
+def test_recover_com_buffer_rejects_disagreeing_oversized_prefixes():
+    """期待長を満たす複数候補のbytesが違うなら、推測で成功させない。"""
+    from src.jvlink.wrapper import _recover_com_buffer
+
+    with pytest.raises(JVLinkError, match="ambiguous"):
+        _recover_com_buffer("¢A", 1, "JVRead")
