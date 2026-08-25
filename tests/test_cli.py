@@ -338,9 +338,9 @@ class TestFetchCommand(unittest.TestCase):
         self.assertIn('current race-cycle data', help_text)
         self.assertIn('Sunday or Monday may cover two cycles', help_text)
         self.assertIn('ChokyoDate', help_text)
-        self.assertIn('not a JVOpen end bound', help_text)
-        self.assertIn('historical setup tail', help_text)
-        self.assertIn('single start-only JVOpen', help_text)
+        self.assertIn('one JVOpen per calendar year', help_text)
+        self.assertIn('live-verified RACE, except option 2', help_text)
+        self.assertIn('opens once from the start point only', help_text)
 
     @patch('src.database.create_database_from_config')
     def test_fetch_rejects_invalid_dates_before_database_initialization(

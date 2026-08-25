@@ -310,10 +310,12 @@ class JVLinkWrapper:
                      official start-end form
                      "YYYYMMDDhhmmss-YYYYMMDDhhmmss" (start-end joined by a
                      half-width hyphen; 仕様書 4.9.0.1 p.17-18).
-                     For option 3/4, p.20 says the end point bounds only the
-                     current-month normal-data portion; it does not cap the
-                     historical setup tail. TOKU/DIFF/DIFN/HOSE/HOSN/HOYU/
-                     COMM forbid an end timestamp entirely.
+                     The end point bounds the setup archive by period as
+                     well; see RANGE_FROMTIME_DATA_SPECS in
+                     src/jvlink/constants.py for which dataspecs accept it and
+                     why the caller splits a request by calendar year.
+                     TOKU/DIFF/DIFN/HOSE/HOSN/HOYU/COMM forbid an end
+                     timestamp entirely (p.18).
             option: Option flag:
                     1=通常データ（差分データ取得）
                     2=今週データ（直近のレースのみ）

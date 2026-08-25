@@ -335,6 +335,31 @@ def get_all_race_keys_for_date(date: str) -> list:
     return keys
 
 
+# 範囲形式 fromtime（YYYYMMDDhhmmss-YYYYMMDDhhmmss）を渡してよいデータ種別。
+#
+# JVRead 1 回の費用は JVOpen が並べた対象ファイル数で決まる。実測（2026-08-23・RACE・
+# option=4・先頭 200 レコードを固定してファイル数だけを変えたもの）では 44 ファイルで
+# 3.4 ms、5,096 ファイルで 67.6 ms。だから期間を暦年で刻んで 1 回の対象を小さく保つ。
+#
+# 拒否リストではなく許可リストにする。表を間違えたとき、許可リストは「刻まないので遅い
+# まま」で倒れ、拒否リストは「範囲形式を受け付けない種別に渡して無言の 0 件」＝取りこぼしで
+# 倒れる。TOKU / DIFF・DIFN / HOSE・HOSN / HOYU / COMM は公式仕様（4.9.0.1 p.18）が終了時刻を
+# 受け付けないと明記しており、指定すると戻り値 -1 になる。
+#
+# ここに載せてよいのは、範囲形式で期間ぶんの件数が返ることを実機で確かめた種別だけ。
+# PR #246 の記録済み実機証跡は RACE のみ。SLOP/WOOD は API 表上end禁止ではないが、
+# 同じprovider挙動を確認するまではstart-onlyへ安全側フォールバックする。
+RANGE_FROMTIME_DATA_SPECS = frozenset({"RACE"})
+
+
+def uses_range_fromtime(data_spec: str, option: int) -> bool:
+    """Whether this request is split into one JVOpen per calendar year.
+
+    刻むかどうかの判断はここ 1 箇所だけに置く（fetcher と CLI の両方が呼ぶ）。
+    option 2（今週データ）は開催サイクルが対象で期間の概念が違うので刻まない。
+    """
+    return data_spec in RANGE_FROMTIME_DATA_SPECS and option != JVOPEN_OPTION_THIS_WEEK
+
 # JVOpen データ種別とoption対応表
 # Option: 1=通常データ, 2=今週データ, 3/4=セットアップ
 JVOPEN_VALID_COMBINATIONS = {
