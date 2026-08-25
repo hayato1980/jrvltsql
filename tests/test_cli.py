@@ -339,7 +339,7 @@ class TestFetchCommand(unittest.TestCase):
         self.assertIn('Sunday or Monday may cover two cycles', help_text)
         self.assertIn('ChokyoDate', help_text)
         self.assertIn('one JVOpen per calendar year', help_text)
-        self.assertIn('RACE, SLOP, WOOD', help_text)
+        self.assertIn('live-verified RACE, except option 2', help_text)
         self.assertIn('opens once from the start point only', help_text)
 
     @patch('src.database.create_database_from_config')

@@ -31,12 +31,14 @@ jltsql fetch --from 20260101 --to 20260417 --spec RACE --option 1
 `option 4` は長期間をまとめて取得するため、一定件数ごとにコミットします。途中で中断しても、
 そこまでに取り込んだぶんは残ります。
 
-範囲形式 `fromtime` を使える spec（`RACE` / `SLOP` / `WOOD`）は、`--from`〜`--to` を
-暦年で刻んで `JVOpen` を繰り返します。1 回の `JVOpen` に並ぶ対象ファイル数が `JVRead`
-1 回の費用を決めるためで、`--to` はそのまま download 範囲の終端になります。
-終了時刻を指定できない spec（`TOKU` / `DIFN` / `HOSN` / `HOYU` / `COMM` など）は
-要求開始日の直前1秒を指定した start-only `JVOpen` を 1 回だけ使い、この場合の `--to` は
-取得後の client-side filter です。
+実機で範囲形式 `fromtime` を確認済みの `RACE`（option `1` / `3` / `4`）は、
+`--from`〜`--to` を暦年で刻んで `JVOpen` を繰り返します。1 回の `JVOpen` に並ぶ
+対象ファイル数が `JVRead` 1 回の費用を決めるためで、`--to` はそのまま download 範囲の
+終端になります。option `2` は `RACE` でも start-only です。終了時刻を指定できない spec
+（`TOKU` / `DIFN` / `HOSN` / `HOYU` / `COMM` など）と、range挙動を実機確認していない
+spec（`SLOP` / `WOOD` を含む）も、安全側で start-only `JVOpen` を 1 回だけ使います。
+start-onlyの場合の `--to` は取得後の client-side filterです。option `3` / `4` は要求開始日の
+直前 `23:59:59`、option `1` / `2` は要求開始日の `00:00:00` を開始cursorに使います。
 複数年setupは数時間かかり得るため、配備側では監視可能な有限の
 `JVLINK_OPEN_TIMEOUT_SECONDS`（1〜86,400秒、既定120秒）を指定できます。
 

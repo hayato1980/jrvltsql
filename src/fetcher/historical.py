@@ -322,6 +322,7 @@ class HistoricalFetcher(BaseFetcher):
         # JVOpen 自体を try の中で呼ぶ。wrapper は -202 のように「開いたが
         # 例外で返る」経路で JVClose を要求するので、close の義務はこの
         # finally 1 箇所に集約する。
+        primary_error = None
         try:
             result, read_count, download_count, last_file_timestamp = (
                 self.jvlink.jv_open(data_spec, fromtime, option)
@@ -430,6 +431,11 @@ class HistoricalFetcher(BaseFetcher):
                     f"{self._recoverable_read_errors} unrepaired JVRead error(s); "
                     "refusing to commit incomplete output"
                 )
+        except BaseException as exc:
+            # JVClose below is still mandatory, but a secondary close failure
+            # must not replace the provider/read error that started unwinding.
+            primary_error = exc
+            raise
         finally:
             self._jv_open_context = None
             self._jv_open_last_file_timestamp = None
@@ -438,8 +444,17 @@ class HistoricalFetcher(BaseFetcher):
             try:
                 self.jvlink.jv_close()
                 logger.info("Data stream closed", chunk=chunk_label)
-            except Exception as e:
-                logger.warning(f"Failed to close stream: {e}")
+            except Exception as close_error:
+                if primary_error is None:
+                    raise FetcherError(
+                        f"JVClose failed for chunk {chunk_label}: {close_error}"
+                    ) from close_error
+                logger.error(
+                    "JVClose failed while preserving an earlier stream error",
+                    chunk=chunk_label,
+                    close_error=str(close_error),
+                    primary_error=repr(primary_error),
+                )
 
     def fetch(
         self,

@@ -347,7 +347,9 @@ def get_all_race_keys_for_date(date: str) -> list:
 # 受け付けないと明記しており、指定すると戻り値 -1 になる。
 #
 # ここに載せてよいのは、範囲形式で期間ぶんの件数が返ることを実機で確かめた種別だけ。
-RANGE_FROMTIME_DATA_SPECS = frozenset({"RACE", "SLOP", "WOOD"})
+# PR #246 の記録済み実機証跡は RACE のみ。SLOP/WOOD は API 表上end禁止ではないが、
+# 同じprovider挙動を確認するまではstart-onlyへ安全側フォールバックする。
+RANGE_FROMTIME_DATA_SPECS = frozenset({"RACE"})
 
 
 def uses_range_fromtime(data_spec: str, option: int) -> bool:

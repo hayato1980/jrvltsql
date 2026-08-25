@@ -39,8 +39,9 @@ FETCH_NOTE_TO_CLIENT_FILTER = (
     "範囲形式を使える dataspec では JVOpen の終端にもなります。"
 )
 FETCH_NOTE_TO_SINGLE_OPEN = (
-    "この dataspec は範囲形式 fromtime を使えないため、--to を狭めても"
-    "サーバからのダウンロード量は減りません（終了時刻を指定できない種別です）。"
+    "この要求は start-only JVOpen です。終了時刻を使えない dataspec に加え、"
+    "option=2 と、range挙動を実機確認していない dataspec も安全側で該当します。"
+    "--to を狭めてもサーバからのダウンロード量は減りません。"
 )
 FETCH_NOTE_TO_RANGE_CHUNKED = (
     "この dataspec は --from〜--to を暦年で刻んで JVOpen を繰り返します。"
@@ -412,7 +413,8 @@ def update(ctx, force):
         "End date (YYYYMMDD). Filters Year+MonthDay and HC/WC ChokyoDate "
         "client-side; records without either date are kept and prevent a "
         "complete-cache marker. For a dataspec that accepts a range fromtime "
-        "(RACE, SLOP, WOOD) it is also the JVOpen end bound: the request is "
+        "(currently live-verified RACE, except option 2) it is also the "
+        "JVOpen end bound: the request is "
         "split into one JVOpen per calendar year, because the per-read cost "
         "grows with the number of files one JVOpen lists. Every other dataspec "
         "opens once from the start point only, since the official spec does "

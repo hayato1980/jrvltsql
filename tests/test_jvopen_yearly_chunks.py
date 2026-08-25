@@ -30,6 +30,10 @@ def _starts_and_ends(fromtimes: list[str]) -> list[tuple[str, str]]:
 
 
 class TestAllowList:
+    def test_only_the_live_verified_race_spec_is_enabled(self):
+        """PR evidence is provider-bound to RACE; unmeasured specs stay safe."""
+        assert RANGE_FROMTIME_DATA_SPECS == frozenset({"RACE"})
+
     @pytest.mark.parametrize(
         "data_spec", ["TOKU", "DIFF", "DIFN", "HOSE", "HOSN", "HOYU", "COMM"]
     )
@@ -342,6 +346,35 @@ class TestChunkFailuresDoNotLeakAcrossChunks:
 
         assert wrapper.close_count == 1
 
+    def test_close_failure_stops_before_the_next_chunk_and_cache_completion(self):
+        """A chunk is not complete until its JVClose obligation succeeds."""
+        wrapper = _Wrapper(
+            opens=[_one_record_open(), _one_record_open()],
+            reads_per_open=[[(4, b"aaaa", "f1"), DONE], [(4, b"bbbb", "f2"), DONE]],
+        )
+        wrapper.jv_close = MagicMock(side_effect=RuntimeError("close failed"))
+        fetcher = _fetcher_with(wrapper)
+        fetcher.cache_manager = MagicMock()
+        fetcher.cache_manager.checkpoint_nl.return_value = 0
+
+        with pytest.raises(FetcherError, match="JVClose.*close failed"):
+            list(fetcher.fetch("RACE", "20240101", "20251231", option=4))
+
+        assert len(wrapper.open_fromtimes) == 1
+        fetcher.cache_manager.mark_nl_range_complete.assert_not_called()
+
+    def test_close_failure_does_not_replace_the_primary_open_error(self):
+        """Close diagnostics must not hide the provider error that caused unwind."""
+        primary_error = RuntimeError("JVOpen blew up")
+        wrapper = _Wrapper(opens=[primary_error], reads_per_open=[[]])
+        wrapper.jv_close = MagicMock(side_effect=RuntimeError("close failed"))
+        fetcher = _fetcher_with(wrapper)
+
+        with pytest.raises(FetcherError, match="JVOpen blew up") as exc_info:
+            list(fetcher.fetch("RACE", "20240101", "20241231", option=4))
+
+        assert exc_info.value.__cause__ is primary_error
+
     def test_an_error_code_is_not_absorbed_as_an_empty_window(self):
         """-113（終了時刻のパラメータ不正）も read_count 0 で返る。黙って進まない."""
         wrapper = _Wrapper(opens=[(-113, 0, 0, "")], reads_per_open=[[]])
@@ -370,6 +403,27 @@ class TestChunkFailuresDoNotLeakAcrossChunks:
         list(fetcher.fetch("RACE", "20240101", "20251231", option=4))
 
         assert seen == [1], "2 つめの chunk でリトライ回数が 0 に戻っていない"
+
+    def test_second_chunk_recovery_replays_only_its_own_emitted_prefix(self):
+        """Earlier chunks must not inflate the reopened stream's drain count."""
+        wrapper = MagicMock()
+        wrapper.jv_file_delete.return_value = 0
+        wrapper.jv_open.return_value = (0, 3, 1, "second-ts")
+        fetcher = _fetcher_with(wrapper)
+        fetcher._records_fetched = 5  # 3 from chunk 1, then 2 from chunk 2
+        fetcher._open_records_baseline = 3
+        fetcher._total_files = 3
+        fetcher._jv_open_context = (
+            "RACE",
+            "20241231235959-20251231235959",
+            4,
+        )
+        fetcher._jv_open_last_file_timestamp = "second-ts"
+        fetcher._wait_for_download = MagicMock()
+
+        fetcher._recover_historical_read_error(-402, "corrupt-second.jvd")
+
+        assert fetcher._jvd_replay_records_remaining == 2
 
 
 def test_the_headline_backfill_request_opens_once_per_year():
