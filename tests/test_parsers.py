@@ -657,11 +657,13 @@ class TestParserRobustness:
 
         assert len(data) == parser.RECORD_LENGTH + 100
 
-        try:
-            result = parser.parse(data)
-        except ValueError:
-            return  # parsers migrated to raising rejections (#300)
-        assert result is None
+        if record_type == 'SE':
+            # Migrated to raising rejections so the failure artifact keeps the
+            # field and the value (keibaai_cloud#300).
+            with pytest.raises(ValueError):
+                parser.parse(data)
+        else:
+            assert parser.parse(data) is None
 
 
 class TestAllParsersComprehensive:

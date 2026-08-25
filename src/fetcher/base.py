@@ -11,6 +11,7 @@ from typing import Callable, Iterator, Optional
 
 from src.jvlink.constants import JV_READ_NO_MORE_DATA, JV_READ_SUCCESS
 from src.jvlink.wrapper import JVLinkWrapper
+from src.parser.base import RecordValidationError
 from src.parser.factory import ParserFactory
 from src.utils.logger import get_logger
 from src.utils.progress import JVLinkProgressDisplay
@@ -344,18 +345,25 @@ class BaseFetcher(ABC):
         """
         record = bytes(buff) if buff else b""
         logged = record[: self.FAILED_RECORD_BYTES_LOGGED]
-        value = getattr(error, "value", None)
+        rejection = error if isinstance(error, RecordValidationError) else None
+        value = None if rejection is None else rejection.value
         logger.error(
             "Failed record artifact",
             jvd_file=filename,
             record_num=self._records_fetched,
-            record_spec=record[:2].decode("ascii", errors="replace"),
+            # What actually arrived, not what the parser expected -- except when
+            # the buffer is too short to say, where the parser is all we have.
+            record_spec=(
+                record[:2].decode("ascii", errors="replace")
+                if len(record) >= 2
+                else (rejection.record_type if rejection else "")
+            ),
             failure=type(error).__name__ if error is not None else "rejected",
-            field=getattr(error, "field", None),
+            field=None if rejection is None else rejection.field,
             # ascii() so a control character or a newline in provider data cannot
             # break the artifact into two log lines.
             value=None if value is None else ascii(value)[: self.FAILED_RECORD_VALUE_CHARS],
-            expected=getattr(error, "expected", None),
+            expected=None if rejection is None else rejection.expected,
             error=str(error) if error is not None else None,
             record_len=len(record),
             record_b64=base64.b64encode(logged).decode("ascii"),

@@ -224,7 +224,12 @@ class SEParser:
             data: パース対象のバイトデータ
 
         Returns:
-            フィールド名をキーとした辞書、エラー時はNone
+            フィールド名をキーとした辞書
+
+        Raises:
+            RecordValidationError: 検証で弾いたとき。どのフィールドのどの値で
+                弾いたかを例外が運び、fetcher が失敗レコード証跡に載せる
+                （keibaai_cloud#300）
         """
         try:
             validate_fixed_record(data, self.RECORD_TYPE, self.RECORD_LENGTH)
@@ -459,4 +464,8 @@ class SEParser:
             return result
 
         except Exception:
+            # Deliberately a no-op handler: the failure artifact is
+            # assembled by the fetcher, which alone knows the file and the
+            # record number. The `try` stays so the method body keeps its
+            # indentation across upstream rebases.
             raise

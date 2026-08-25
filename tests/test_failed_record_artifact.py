@@ -18,6 +18,7 @@ import structlog
 from src.fetcher.historical import HistoricalFetcher
 from src.parser.factory import ParserFactory
 from tests.fixtures.record_factory import make_se_record, make_wf_record
+from tests.test_wc_official_contract import build_record as make_wc_record
 
 JV_READ_COMPLETE = 0
 ARTIFACT_EVENT = "Failed record artifact"
@@ -114,6 +115,43 @@ def test_wf_records_get_the_same_artifact() -> None:
     assert artifact["record_spec"] == "WF"
     assert artifact["field"] == "MakeDate"
     assert "00000000" in artifact["value"]
+    assert artifact["expected"]
+
+
+def test_wc_records_get_the_same_artifact() -> None:
+    record = make_wc_record(make_date="00000000")
+
+    artifact = _artifacts([(record, "f1.jvd")])[0]
+
+    assert artifact["record_spec"] == "WC"
+    assert artifact["field"] == "MakeDate"
+    assert "00000000" in artifact["value"]
+    assert artifact["expected"]
+
+
+def test_validation_failures_are_named_as_such() -> None:
+    """`failure` で「弾いた」と「壊れた」を見分けられること."""
+    artifact = _artifacts([(make_se_record(make_date="00000000"), "f1.jvd")])[0]
+
+    assert artifact["failure"] == "RecordValidationError"
+    assert artifact["expected"] == "a real yyyymmdd date"
+
+
+def test_cached_records_get_the_same_artifact() -> None:
+    """キャッシュ再生経路も同じ失敗で、証跡が無いと同じ困り方をする."""
+    record = make_se_record(make_date="00000000")
+    cache = MagicMock()
+    cache.has_nl_range.return_value = True
+    cache.read_nl.return_value = iter([record])
+    fetcher = _fetcher([(JV_READ_COMPLETE, None, None)])
+
+    with structlog.testing.capture_logs() as logs:
+        list(fetcher.fetch_with_cache(cache, "RACE", "20220101", "20221231", option=4))
+
+    artifact = [e for e in logs if e.get("event") == ARTIFACT_EVENT][0]
+    assert artifact["jvd_file"] == "cache:RACE"
+    assert artifact["field"] == "MakeDate"
+    assert base64.b64decode(artifact["record_b64"]) == record
 
 
 def test_unexpected_failures_get_an_artifact_too() -> None:

@@ -85,6 +85,7 @@ class WFParser:
             raise RecordValidationError(
                 f"WF {name} must be exactly {width} ASCII digits",
                 record_type="WF", field_name=name, value=value,
+                expected=f"{width} ASCII digits",
             )
 
     @staticmethod
@@ -101,6 +102,7 @@ class WFParser:
             raise RecordValidationError(
                 f"WF {name} must be blank or up to {width} ASCII digits",
                 record_type="WF", field_name=name, value=value,
+                expected=f"blank or up to {width} ASCII digits",
             )
 
     @classmethod
@@ -109,6 +111,7 @@ class WFParser:
             raise RecordValidationError(
                 f"WF {name} is required for this DataKubun",
                 record_type="WF", field_name=name, value=value,
+                expected="a value for this DataKubun",
             )
         cls._require_optional_digits(name, value, width)
 
@@ -118,6 +121,7 @@ class WFParser:
             raise RecordValidationError(
                 f"WF {name} must keep its initial value for this DataKubun",
                 record_type="WF", field_name=name, value=value,
+                expected="its initial value for this DataKubun",
             )
 
     @classmethod
@@ -127,6 +131,7 @@ class WFParser:
             raise RecordValidationError(
                 f"WF {name} must keep its initial value {expected}",
                 record_type="WF", field_name=name, value=value,
+                expected="its documented initial value",
             )
 
     @classmethod
@@ -140,6 +145,7 @@ class WFParser:
             raise RecordValidationError(
                 f"WF {name} must be a real yyyymmdd date",
                 record_type="WF", field_name=name, value=value,
+                expected="a real yyyymmdd date",
             ) from error
 
     @classmethod
@@ -154,6 +160,9 @@ class WFParser:
             raise RecordValidationError(
                 "WF Year and MonthDay must form a real Gregorian date",
                 record_type="WF",
+                field_name="Year+MonthDay",
+                value=f"{year}{month_day}",
+                expected="a real Gregorian date",
             ) from error
 
     @classmethod
@@ -163,6 +172,7 @@ class WFParser:
             raise RecordValidationError(
                 f"WF {name} must be an 8-character race composite",
                 record_type="WF", field_name=name, value=value,
+                expected="an 8-character race composite",
             )
         jyo_cd, ordinal = value[:2], value[2:]
         if jyo_cd not in cls.OFFICIAL_JYO_CODES or not ordinal.isdigit():
@@ -184,6 +194,7 @@ class WFParser:
             raise RecordValidationError(
                 f"WF {name} must be 0 or 1",
                 record_type="WF", field_name=name, value=value,
+                expected="0 or 1",
             )
 
     @classmethod
@@ -202,12 +213,18 @@ class WFParser:
             raise RecordValidationError(
                 f"WF payout slot {index} must contain text values",
                 record_type="WF",
+                field_name=f"payout slot {index}",
+                value=values,
+                expected="text values",
             )
         if availability == "initial":
             if any(value != "" for value in values):
                 raise RecordValidationError(
                     f"WF payout slot {index} must keep its initial value",
                     record_type="WF",
+                    field_name=f"payout slot {index}",
+                    value=values,
+                    expected="an all-blank slot",
                 )
             return
         blank = [value == "" for value in values]
@@ -216,12 +233,18 @@ class WFParser:
                 raise RecordValidationError(
                     f"WF payout slot {index} is required for this DataKubun",
                     record_type="WF",
+                    field_name=f"payout slot {index}",
+                    value=values,
+                    expected="a complete tuple for this DataKubun",
                 )
             return
         if any(blank):
             raise RecordValidationError(
                 f"WF payout slot {index} is a partial tuple",
                 record_type="WF",
+                field_name=f"payout slot {index}",
+                value=values,
+                expected="a complete tuple or an all-blank slot",
             )
         cls._require_ascii_digits(f"payout slot {index} Kumi", kumi, cls.PAYOUT_KUMI_WIDTH)
         cls._require_optional_digits(
@@ -269,6 +292,9 @@ class WFParser:
             raise RecordValidationError(
                 f"WF DataKubun has unsupported value {status!r}",
                 record_type="WF",
+                field_name="DataKubun",
+                value=status,
+                expected="an official DataKubun",
             )
 
         carryover_start = values.get("CarryOverStart")
@@ -301,6 +327,9 @@ class WFParser:
             raise RecordValidationError(
                 f"WF payout information must contain exactly {cls.PAYOUT_COUNT} slots",
                 record_type="WF",
+                field_name="PayoutsJson",
+                value=len(payouts),
+                expected=f"exactly {cls.PAYOUT_COUNT} slots",
             )
         for index, (kumi, pay, votes) in enumerate(payouts, start=1):
             slot_availability = availability
@@ -393,4 +422,8 @@ class WFParser:
             result["RecordDelimiter"] = self.decode_field(data[7213:7215])
             return result
         except Exception:
+            # Deliberately a no-op handler: the failure artifact is
+            # assembled by the fetcher, which alone knows the file and the
+            # record number. The `try` stays so the method body keeps its
+            # indentation across upstream rebases.
             raise

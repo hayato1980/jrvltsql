@@ -60,6 +60,7 @@ class WCParser(BaseParser):
             raise RecordValidationError(
                 f"WC {name} must be exactly {width} ASCII digits",
                 record_type="WC", field_name=name, value=value,
+                expected=f"{width} ASCII digits",
             )
 
     @classmethod
@@ -73,6 +74,7 @@ class WCParser(BaseParser):
             raise RecordValidationError(
                 f"WC {name} must be a real yyyymmdd date",
                 record_type="WC", field_name=name, value=value,
+                expected="a real yyyymmdd date",
             ) from error
 
     @classmethod
@@ -86,6 +88,7 @@ class WCParser(BaseParser):
             raise RecordValidationError(
                 f"WC {name} must be a real HHMM time",
                 record_type="WC", field_name=name, value=value,
+                expected="a real HHMM time",
             ) from error
 
     @staticmethod
@@ -97,6 +100,7 @@ class WCParser(BaseParser):
             raise RecordValidationError(
                 f"WC {name} must be text or blank",
                 record_type="WC", field_name=name, value=value,
+                expected="text or blank",
             )
         try:
             encoded = value.encode("cp932", errors="strict")
@@ -104,15 +108,22 @@ class WCParser(BaseParser):
             raise RecordValidationError(
                 f"WC {name} must be valid CP932 text",
                 record_type="WC", field_name=name, value=value,
+                expected="valid CP932 text",
             ) from error
         if len(encoded) > width:
             raise RecordValidationError(
                 f"WC {name} must fit in {width} CP932 byte(s)",
                 record_type="WC", field_name=name, value=value,
+                expected=f"at most {width} CP932 bytes",
             )
 
     def parse(self, record: bytes) -> dict[str, str] | None:
-        """Return a validated current WC row, or ``None`` for invalid input."""
+        """Return a validated current WC row.
+
+        Raises RecordValidationError (or another ValueError) for invalid input:
+        the field and the value travel with the exception so the fetcher can
+        log the failure artifact (keibaai_cloud#300).
+        """
         try:
             result = super().parse(record)
             # CRLF is a structural field. BaseParser strips it to None after the
@@ -154,6 +165,10 @@ class WCParser(BaseParser):
                     self._require_ascii_digits(name, result[name], width)
             return result
         except Exception:
+            # Deliberately a no-op handler: the failure artifact is
+            # assembled by the fetcher, which alone knows the file and the
+            # record number. The `try` stays so the method body keeps its
+            # indentation across upstream rebases.
             raise
 
     def _define_fields(self) -> list[FieldDef]:
