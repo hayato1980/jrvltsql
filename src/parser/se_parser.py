@@ -129,16 +129,21 @@ class SEParser:
     def validate_key_fields(cls, record: Mapping[str, object]) -> None:
         """Validate the complete current eight-part provider identity."""
 
-        cls._require_ascii_digits("MakeDate", record.get("MakeDate"), 8)
+        make_date = record.get("MakeDate")
+        cls._require_ascii_digits("MakeDate", make_date, 8)
+        if make_date != "00000000":
+            try:
+                date(
+                    int(str(make_date)[:4]),
+                    int(str(make_date)[4:6]),
+                    int(str(make_date)[6:]),
+                )
+            except ValueError as error:
+                raise ValueError("SE MakeDate must be a real yyyymmdd date or 00000000") from error
         cls._require_ascii_digits("Year", record.get("Year"), 4)
         cls._require_ascii_digits("MonthDay", record.get("MonthDay"), 4)
-        make_date = str(record["MakeDate"])
         year = str(record["Year"])
         month_day = str(record["MonthDay"])
-        try:
-            date(int(make_date[:4]), int(make_date[4:6]), int(make_date[6:]))
-        except ValueError as error:
-            raise ValueError("SE MakeDate must be a real yyyymmdd date") from error
         try:
             date(int(year), int(month_day[:2]), int(month_day[2:]))
         except ValueError as error:
