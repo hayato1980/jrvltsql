@@ -130,10 +130,11 @@ obtain one independent critical review of that immutable SHA.
 
 ### P2 disposition
 
-1. A future `.gitattributes` binary rule could make fixture handling more
-   obvious, but the full SHA-256 plus exact length/CRLF tests already make any
-   normalization a visible failure rather than a false green. Record as a
-   non-blocking repository-hygiene follow-up; do not widen this repair.
+1. The reviewer noted that the captured `.bin` fixture was still classified as
+   text. Final base-to-head `git diff --check` then concretely reported its CRLF
+   as trailing whitespace. A narrow `.gitattributes` rule now marks only
+   `tests/fixtures/captured_records/*.bin` as binary; the full digest test is
+   rerun after this metadata change.
 2. PostgreSQL integration remains opt-in in the existing CI architecture. The
    exact candidate was therefore tested against a fresh local PostgreSQL 16
    instance, including both success and rejection paths. Changing CI service
@@ -149,8 +150,9 @@ obtain one independent critical review of that immutable SHA.
    in the separate `2.0.0.dev7` release iteration. They are deliberately not
    mixed into PR #248 repair.
 
-The post-review change is documentation/worklog-only; production code, schema,
-tests, and built artifact inputs are byte-identical to the reviewed commit.
+The post-review changes are documentation/worklog plus binary classification
+for the already-reviewed fixture; production code, schema, tests, and fixture
+bytes are byte-identical to the reviewed commit.
 Next safe action: commit this review disposition, push both commits to the
 existing PR head, verify exact remote SHA/CI/review state, and merge only when
 all required gates are green.
