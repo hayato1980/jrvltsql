@@ -129,12 +129,17 @@ class SEParser:
     def validate_key_fields(cls, record: Mapping[str, object]) -> None:
         """Validate the complete current eight-part provider identity."""
 
-        # MakeDate is provider provenance, kept as text and only ever compared
-        # for equality -- no path reads it as a date. Requiring the eight ASCII
-        # digits still catches a corrupt read of this span; calendar-checking
-        # them on top of that rejects records nothing downstream would mind,
-        # and it stopped a full 1986-2026 backfill for twelve of them.
-        cls._require_ascii_digits("MakeDate", record.get("MakeDate"), 8)
+        make_date = record.get("MakeDate")
+        cls._require_ascii_digits("MakeDate", make_date, 8)
+        if make_date != "00000000":
+            try:
+                date(
+                    int(str(make_date)[:4]),
+                    int(str(make_date)[4:6]),
+                    int(str(make_date)[6:]),
+                )
+            except ValueError as error:
+                raise ValueError("SE MakeDate must be a real yyyymmdd date or 00000000") from error
         cls._require_ascii_digits("Year", record.get("Year"), 4)
         cls._require_ascii_digits("MonthDay", record.get("MonthDay"), 4)
         year = str(record["Year"])

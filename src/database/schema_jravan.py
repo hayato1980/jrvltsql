@@ -1814,7 +1814,7 @@ JRAVAN_SCHEMAS: Dict[str, str] = {
         CREATE TABLE IF NOT EXISTS UMA_RACE (
             RecordSpec                     CHAR(2)             ,  -- レコード種別ID
             DataKubun                      CHAR(1)             ,  -- データ区分
-            MakeDate                       DATE                ,  -- YYYYMMDD形式の日付
+            MakeDate                       VARCHAR(8)          ,  -- YYYYMMDDまたは00000000
             Year                           SMALLINT NOT NULL   ,  -- 年(4桁)
             MonthDay                       SMALLINT NOT NULL   ,  -- 月日(MMDD)
             JyoCD                          CHAR(2) NOT NULL    ,  -- 競馬場コード
