@@ -580,9 +580,9 @@ cache の変更に入る前に、対応する現行種別名を示して停止�
   exclusion、PostgreSQL の deferrable 主キーは取込や他表の additive migration
   より前に拒否します。
 - `UMA_RACE.MakeDate` が旧 `DATE` 型の表も mutation 前に拒否します。
-  `00000000` を既存 `DATE` 行から復元できないため、自動 ALTER は行わず、
-  DB をバックアップして対象表を現行 schema で再作成し、`RACE` から再取込して
-  ください。
+  旧 `DATE` 表では `00000000` のレコードを保存できず、その欠落行は列型の
+  ALTER だけでは復元できません。自動 ALTER は行わず、DB をバックアップして
+  対象表を現行 schema で再作成し、`RACE` から再取込してください。
 - 自動で主キーを作り替えず、DB をバックアップして対象表を現行 schema で
   再作成し、`RACE` から再取込してください。
 - 正しい 8 項目キーを持つ表への非キー列の安全な additive migration は

@@ -110,3 +110,47 @@ identity was mutated. The PostgreSQL service used here is a disposable local
 Next safe action: freeze a commit, build wheel/sdist from its git archive, run
 the distribution/installed-wheel smokes and Windows launcher contract, then
 obtain one independent critical review of that immutable SHA.
+
+## Immutable candidate review and artifact evidence
+
+- Production/test candidate commit:
+  `dd2ee0b98355113458a031decd5e7162d5246a49`.
+- Fresh wheel and sdist built from `git archive` of that exact commit. The
+  distribution-content gate and installed-wheel init smoke both passed;
+  generated names and metadata remained `2.0.0.dev6`, as intended for this
+  non-release repair.
+- Independent read-only critical review used Claude Code `--model fable`
+  (chosen because this validator/schema/fail-before-mutation boundary is a
+  high-cost data-integrity change), session
+  `c6fb141c-9dfd-4edc-ae32-8ea9b2f6fc1a`. Verdict: **GREEN**, P0=0, P1=0.
+- The reviewer independently confirmed exact sentinel matching, rejection of
+  impossible non-zero dates, lossless text storage, SQLite/PostgreSQL schema
+  preflight, full fixture digest, and the absence of a downstream date-coercion
+  path.
+
+### P2 disposition
+
+1. A future `.gitattributes` binary rule could make fixture handling more
+   obvious, but the full SHA-256 plus exact length/CRLF tests already make any
+   normalization a visible failure rather than a false green. Record as a
+   non-blocking repository-hygiene follow-up; do not widen this repair.
+2. PostgreSQL integration remains opt-in in the existing CI architecture. The
+   exact candidate was therefore tested against a fresh local PostgreSQL 16
+   instance, including both success and rejection paths. Changing CI service
+   topology is a separate iteration.
+3. The migration wording was clarified after review: old `DATE` storage could
+   not save sentinel rows, so an in-place type conversion cannot restore the
+   missing rows. The fail-closed rebuild/reimport policy remains unchanged.
+4. A new SQLite-only duplicate of the legacy-DATE test was not added. The same
+   generic declared-type verifier already has SQLite mismatch coverage, while
+   this iteration adds the exact PostgreSQL regression where the production
+   failure occurred. This avoids reviewer-hypothesis test proliferation.
+5. CHANGELOG/RELEASE_NOTES and the operational migration notice are mandatory
+   in the separate `2.0.0.dev7` release iteration. They are deliberately not
+   mixed into PR #248 repair.
+
+The post-review change is documentation/worklog-only; production code, schema,
+tests, and built artifact inputs are byte-identical to the reviewed commit.
+Next safe action: commit this review disposition, push both commits to the
+existing PR head, verify exact remote SHA/CI/review state, and merge only when
+all required gates are green.
