@@ -1,10 +1,13 @@
 #!/usr/bin/env python
 """BN parser and storage contract for the official current 477-byte layout."""
 
+import os
 from itertools import pairwise
+from uuid import uuid4
 
 import pytest
 
+from src.database.base import DatabaseError
 from src.database.migration import SchemaMigrationError, migrate_table_if_needed
 from src.database.schema import SCHEMAS
 from src.database.schema_jravan import JRAVAN_SCHEMAS
@@ -178,6 +181,116 @@ def test_bn_round_trips_every_business_field(
     for field_name in BUSINESS_FIELDS - NUMERIC_FIELDS - {"MakeDate"}:
         assert row[field_name] == EXPECTED[field_name]
     assert str(row["MakeDate"]).replace("-", "") == EXPECTED["MakeDate"]
+
+
+@pytest.fixture(params=("sqlite", "postgresql"))
+def bn_statistics_database(request, tmp_path):
+    if request.param == "sqlite":
+        database = SQLiteDatabase({"path": str(tmp_path / "bn-statistics.db")})
+        with database:
+            yield database
+        return
+
+    if os.getenv("JLTSQL_RUN_POSTGRESQL_INTEGRATION") != "1":
+        pytest.skip("Set JLTSQL_RUN_POSTGRESQL_INTEGRATION=1 to run PostgreSQL tests")
+
+    from scripts.setup_pg_test_db import postgresql_test_config
+    from src.database.postgresql_handler import PostgreSQLDatabase
+
+    database = PostgreSQLDatabase(postgresql_test_config())
+    schema_name = f"jlt_bn_stats_{uuid4().hex[:12]}"
+    database.connect()
+    try:
+        database.execute(f"CREATE SCHEMA {schema_name}")
+        database.execute(f"SET search_path TO {schema_name}")
+        database.commit()
+        yield database
+    finally:
+        try:
+            database.rollback()
+        except Exception:
+            pass
+        try:
+            database.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+            database.commit()
+        finally:
+            database.disconnect()
+
+
+def _same_key_provider_revisions() -> tuple[dict, dict]:
+    first = BNParser().parse(build_record())
+    assert first is not None
+    second_raw = bytearray(build_record())
+    second_raw[81:145] = _pad("Updated Owner Sentinel", 64)
+    second = BNParser().parse(bytes(second_raw))
+    assert second is not None
+    return first, second
+
+
+def _distinct_key_provider_records() -> tuple[dict, dict]:
+    first = BNParser().parse(build_record())
+    assert first is not None
+    second_raw = bytearray(build_record())
+    second_raw[11:17] = b"654321"
+    second_raw[81:145] = _pad("Updated Owner Sentinel", 64)
+    second = BNParser().parse(bytes(second_raw))
+    assert second is not None
+    return first, second
+
+
+@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
+def test_bn_same_key_provider_revisions_count_as_two_operations(
+    bn_statistics_database, importer_class
+) -> None:
+    database = bn_statistics_database
+    database.execute(SCHEMAS["NL_BN"])
+    database.commit()
+    first, second = _same_key_provider_revisions()
+
+    stats = importer_class(database).import_records(iter([first, second]), auto_commit=True)
+    stored = database.fetch_all(
+        'SELECT BanusiCode AS "BanusiCode", BanusiName AS "BanusiName" FROM NL_BN'
+    )
+
+    assert stats["records_imported"] == 2
+    assert stats["records_failed"] == 0
+    assert stored == [
+        {"BanusiCode": EXPECTED["BanusiCode"], "BanusiName": "Updated Owner Sentinel"}
+    ]
+
+
+class _TwoCommitFailuresSQLite(SQLiteDatabase):
+    remaining_commit_failures = 0
+
+    def commit(self) -> None:
+        if self.remaining_commit_failures:
+            self.remaining_commit_failures -= 1
+            raise DatabaseError("injected commit failure")
+        super().commit()
+
+
+@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
+def test_bn_commit_failures_count_only_durable_individual_retries(
+    tmp_path, importer_class
+) -> None:
+    database = _TwoCommitFailuresSQLite({"path": str(tmp_path / "bn-commit-failure.db")})
+    with database:
+        database.execute(SCHEMAS["NL_BN"])
+        database.commit()
+        database.remaining_commit_failures = 2
+        first, second = _distinct_key_provider_records()
+
+        stats = importer_class(database).import_records(iter([first, second]), auto_commit=True)
+        stored = database.fetch_all(
+            'SELECT BanusiCode AS "BanusiCode", BanusiName AS "BanusiName" FROM NL_BN'
+        )
+
+    assert stats["records_imported"] == 1
+    assert stats["records_failed"] == 1
+    assert stats["batches_processed"] == 0
+    assert stored == [
+        {"BanusiCode": "654321", "BanusiName": "Updated Owner Sentinel"}
+    ]
 
 
 OBSOLETE_STANDARD_SCHEMA = """

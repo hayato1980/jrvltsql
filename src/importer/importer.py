@@ -75,6 +75,25 @@ def inspect_pending_transaction_or_invalidate(database: BaseDatabase, *, context
         ) from inspection_error
 
 
+def rollback_pending_retry_or_raise(database: BaseDatabase, *, context: str) -> None:
+    """Clear failed auto-commit work before retrying on the same connection."""
+    if not inspect_pending_transaction_or_invalidate(database, context=context):
+        return
+    try:
+        database.rollback()
+    except Exception as rollback_error:
+        try:
+            database.invalidate_connection()
+        except Exception as invalidation_error:
+            raise TransactionRecoveryError(
+                f"{context}: rollback failed ({rollback_error}); connection "
+                f"invalidation failed ({invalidation_error})"
+            ) from invalidation_error
+        raise TransactionRecoveryError(
+            f"{context}: rollback failed; connection invalidated"
+        ) from rollback_error
+
+
 def resolve_standard_storage_table_name(native_table_name: str) -> str:
     """Resolve the canonical standard storage owner without database checks."""
     from src.database.table_mappings import (
@@ -987,17 +1006,6 @@ _UM_LOSSLESS_TEXT_WIDTHS = {
     "NL_UM": _UM_NATIVE_LOSSLESS_TEXT_WIDTHS,
     "UMA": _UM_STANDARD_LOSSLESS_TEXT_WIDTHS,
 }
-_PROVIDER_OPERATION_COUNT_STORAGE_TABLES = (
-    _AV_STORAGE_TABLES
-    | _HR_STORAGE_TABLES
-    | _HS_STORAGE_TABLES
-    | _HC_STORAGE_TABLES
-    | _HN_STORAGE_TABLES
-    | _SK_STORAGE_TABLES
-    | _TC_STORAGE_TABLES
-    | _CC_STORAGE_TABLES
-    | _UM_ERASE_STORAGE_TABLES
-)
 _JC_STORAGE_TABLES = frozenset({"NL_JC", "RT_JC", "KISYU_CHANGE"})
 _JC_KEY_COLUMNS = (
     "Year",
@@ -8892,20 +8900,18 @@ class DataImporter:
                 return
 
             # Insert batch using INSERT OR REPLACE
-            affected_rows = self.database.insert_many(table_name, converted_batch, use_replace=True)
+            self.database.insert_many(table_name, converted_batch, use_replace=True)
             # PostgreSQL collapses same-key replacement operations before one upsert.
-            # Statistics count accepted provider operations, not final rows.
-            rows = (
-                len(converted_batch)
-                if table_name in _PROVIDER_OPERATION_COUNT_STORAGE_TABLES
-                else affected_rows
-            )
-
-            self._records_imported += rows
-            self._batches_processed += 1
+            # A successful generic batch accepted every converted input row, so
+            # statistics count provider operations rather than deduplicated
+            # physical upserts. Batch failures take the per-record fallback below.
+            rows = len(converted_batch)
 
             if auto_commit:
                 self.database.commit()
+
+            self._records_imported += rows
+            self._batches_processed += 1
 
             logger.debug(
                 "Batch inserted",
@@ -8937,23 +8943,10 @@ class DataImporter:
                 error=str(e),
             )
 
-            # PostgreSQLDatabase performs driver-specific rollback when
-            # insert_many() fails. Avoid a second rollback here.
-            try:
-                db_type = self.database.get_db_type()
-            except AttributeError:
-                # Fallback for databases without get_db_type() method
-                db_type = "unknown"
-
-            if db_type != "postgresql":
-                try:
-                    self.database.rollback()
-                except Exception as rollback_error:
-                    logger.debug(
-                        "Rollback failed during batch fallback",
-                        table=table_name,
-                        error=str(rollback_error),
-                    )
+            rollback_pending_retry_or_raise(
+                self.database,
+                context=f"generic batch fallback for {table_name}",
+            )
 
             # Try inserting one by one on batch failure
             success_count = 0
@@ -8980,12 +8973,16 @@ class DataImporter:
                     success_count += 1
 
                 except DatabaseError as record_error:
-                    fail_count += 1
                     logger.error(
                         "Failed to insert record",
                         table=table_name,
                         error=str(record_error),
                     )
+                    rollback_pending_retry_or_raise(
+                        self.database,
+                        context=f"individual batch fallback for {table_name}",
+                    )
+                    fail_count += 1
 
             self._records_imported += success_count
             self._records_failed += fail_count

@@ -17,7 +17,6 @@ from src.importer.importer import (
     _PREPARED_CH_SEISEKI_ROWS_KEY,
     _PREPARED_CK_ROWS_KEY,
     _PREPARED_KS_SEISEKI_ROWS_KEY,
-    _PROVIDER_OPERATION_COUNT_STORAGE_TABLES,
     _RC_STORAGE_TABLES,
     _STANDARD_ODDS_CONFIG_BY_OWNER,
     _STANDARD_VOTE_CONFIG_BY_OWNER,
@@ -68,6 +67,7 @@ from src.importer.importer import (
     resolve_standard_storage_table_name,
     resolve_standard_table_name,
     rollback_failed_import,
+    rollback_pending_retry_or_raise,
     validate_av_record,
     validate_cc_record,
     validate_hc_record,
@@ -1094,25 +1094,23 @@ class OptimizedDataImporter:
             # Use optimized insert if available
             if hasattr(self.database, "insert_many_optimized"):
                 # Optimized path
-                affected_rows = self.database.insert_many_optimized(table_name, batch)
+                self.database.insert_many_optimized(table_name, batch)
             else:
                 # Standard insert_many
-                affected_rows = self.database.insert_many(table_name, batch)
+                self.database.insert_many(table_name, batch)
 
             # PostgreSQL collapses same-key replacement operations before one upsert.
-            # Statistics count accepted provider operations, not final rows.
-            rows = (
-                len(batch)
-                if table_name in _PROVIDER_OPERATION_COUNT_STORAGE_TABLES
-                else affected_rows
-            )
-
-            self._records_imported += rows
-            self._batches_processed += 1
+            # A successful generic batch accepted every input row, so statistics
+            # count provider operations rather than deduplicated physical upserts.
+            # Batch failures take the per-record fallback below.
+            rows = len(batch)
 
             # Only commit if not in a larger transaction
             if commit_batch:
                 self.database.commit()
+
+            self._records_imported += rows
+            self._batches_processed += 1
 
             logger.debug(
                 "Batch inserted",
@@ -1135,21 +1133,31 @@ class OptimizedDataImporter:
                 error=str(e),
             )
 
+            rollback_pending_retry_or_raise(
+                self.database,
+                context=f"optimized generic batch fallback for {table_name}",
+            )
+
             for record in batch:
                 try:
                     self.database.insert(table_name, record)
-                    self._records_imported += 1
 
                     if commit_batch:
                         self.database.commit()
 
+                    self._records_imported += 1
+
                 except DatabaseError as e:
-                    self._records_failed += 1
                     logger.error(
                         "Failed to insert record",
                         table=table_name,
                         error=str(e),
                     )
+                    rollback_pending_retry_or_raise(
+                        self.database,
+                        context=f"optimized individual fallback for {table_name}",
+                    )
+                    self._records_failed += 1
 
     def get_statistics(self) -> Dict[str, Union[int, float]]:
         """Get import statistics."""
