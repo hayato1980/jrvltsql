@@ -547,7 +547,9 @@ class HistoricalFetcher(BaseFetcher):
                 self.progress_display.print_spec_header(data_spec, from_date, to_date)
 
             # The session was established in BaseFetcher.__init__, so this
-            # method starts at JVOpen and never re-issues JVInit.
+            # method starts at JVOpen and never re-issues JVInit. Re-issuing it
+            # would put the option=3/4 source dialog in front of the operator
+            # again for every dataspec of a multi-spec setup run.
             # リトライ上限は fetch 全体で 1 本。chunk 数ぶんは増やさない。
             self._jvd_self_repair_attempts = 0
 
