@@ -202,9 +202,6 @@ def test_hr_parser_rejects_malformed_official_keys(changes: dict[str, str]) -> N
     "field,value",
     (
         ("FuseirituFlag1", "9"),
-        ("FuseirituFlag6", "1"),
-        ("TokubaraiFlag6", "1"),
-        ("HenkanFlag6", "1"),
         ("HenkanUma28", "X"),
         ("TanPay", "notnumber"),
         ("WideKumi7", "123"),
@@ -222,6 +219,18 @@ def test_hr_caller_body_rejects_non_official_values_but_allows_blank_popularity(
     invalid[field] = value
     with pytest.raises(SchemaMigrationError):
         validate_import_record_header(invalid)
+
+
+@pytest.mark.parametrize("field", ("FuseirituFlag6", "TokubaraiFlag6", "HenkanFlag6"))
+@pytest.mark.parametrize("value", ("1", " ", "X"))
+def test_hr_keeps_the_reserved_flag_slot_without_interpreting_it(
+    field: str, value: str
+) -> None:
+    """Slot 6 of each flag array is reserved, so it is kept rather than read as a flag."""
+
+    record = parsed_hr()
+    record[field] = value
+    assert validate_import_record_header(record) == ("HR", "1")
 
 
 @pytest.mark.parametrize(
