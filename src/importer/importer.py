@@ -7783,6 +7783,17 @@ def convert_record_types(record: dict, table_name: str) -> dict:
     if not column_types:
         return record
 
+    # テーブル側の判定はレコード内で不変なので、フィールドのループへ入る前に
+    # 1 回だけ引く。RACE の実走はフィールドを約 3,600 万回回すため、ここを
+    # ループ内に置くと同じ判定が数億回走る。
+    is_cs_record = record.get("RecordSpec") == "CS"
+    is_hn = table_name in _HN_STORAGE_TABLES
+    is_odds = table_name in _ODDS_STORAGE_TABLES
+    is_h6 = table_name in _H6_STORAGE_TABLES
+    is_h1 = table_name in _H1_STORAGE_TABLES
+    is_um = table_name in _UM_ERASE_STORAGE_TABLES
+    is_sk = table_name in _SK_STORAGE_TABLES
+
     converted = {}
 
     for field_name, value in record.items():
@@ -7792,8 +7803,8 @@ def convert_record_types(record: dict, table_name: str) -> dict:
         col_type = column_types[field_name]
 
         if (
-            field_name == "CourseEx"
-            and record.get("RecordSpec") == "CS"
+            is_cs_record
+            and field_name == "CourseEx"
             and isinstance(value, str)
             and not value.strip()
         ):
@@ -7801,7 +7812,7 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _HN_STORAGE_TABLES
+            is_hn
             and field_name in _HN_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()
@@ -7813,7 +7824,7 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _ODDS_STORAGE_TABLES
+            is_odds
             and field_name in _ODDS_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()
@@ -7824,7 +7835,7 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _H6_STORAGE_TABLES
+            is_h6
             and field_name in _H6_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()
@@ -7835,7 +7846,7 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _H1_STORAGE_TABLES
+            is_h1
             and field_name in _H1_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()
@@ -7846,7 +7857,7 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _UM_ERASE_STORAGE_TABLES
+            is_um
             and field_name in _UM_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()
@@ -7858,7 +7869,7 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _SK_STORAGE_TABLES
+            is_sk
             and field_name in _SK_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()

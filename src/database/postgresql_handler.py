@@ -21,6 +21,7 @@ except ImportError:
         )
 
 from src.database.base import BaseDatabase, DatabaseError
+from src.database.schema_types import get_table_column_types
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -645,7 +646,7 @@ class PostgreSQLDatabase(BaseDatabase):
             raise DatabaseError(f"PostgreSQL reconnect failed: {e}")
 
     @staticmethod
-    def _normalize_insert_value(table_name: str, column: str, value: Any) -> Any:
+    def _normalize_insert_value(column_type: Optional[str], value: Any) -> Any:
         """Normalize parser output before PostgreSQL binding.
 
         JV-Data parsers preserve blank numeric fields as empty strings for
@@ -653,13 +654,6 @@ class PostgreSQLDatabase(BaseDatabase):
         convert only blank/placeholder numeric fields to NULL and leave text
         fields intact. Odds records use '*' placeholders for unavailable odds.
         """
-        try:
-            from src.database.schema_types import get_column_type
-
-            column_type = get_column_type(table_name, column)
-        except Exception:
-            column_type = None
-
         if column_type not in ("INTEGER", "BIGINT", "REAL"):
             return value
 
@@ -688,8 +682,12 @@ class PostgreSQLDatabase(BaseDatabase):
     @classmethod
     def _normalize_insert_data(cls, table_name: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize a row dictionary for PostgreSQL inserts."""
+        try:
+            column_types = get_table_column_types(table_name)
+        except Exception:
+            column_types = {}
         return {
-            column: cls._normalize_insert_value(table_name, column, value)
+            column: cls._normalize_insert_value(column_types.get(column), value)
             for column, value in data.items()
         }
 
