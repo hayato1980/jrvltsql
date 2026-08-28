@@ -43,22 +43,48 @@ def hn_record(
     return parsed
 
 
-@pytest.mark.parametrize(
-    ("offset", "value"),
-    (
-        pytest.param(11, b"12345A7890", id="non-digit-key"),
-        pytest.param(21, b"00000001", id="nonzero-reserved"),
-        pytest.param(39, b"1", id="nonzero-reserved-code"),
-        pytest.param(204, b"8", id="invalid-mochi-code"),
-    ),
-)
-def test_hn_parser_rejects_official_domain_violations(offset: int, value: bytes) -> None:
+def official_domain_record() -> bytearray:
+    """Return one current HN record whose official-domain spans are all valid."""
+
     raw = bytearray(build_record())
     raw[21:29] = b"00000000"
     raw[39:40] = b"0"
     raw[204:205] = b"1"
+    return raw
+
+
+@pytest.mark.parametrize(
+    ("offset", "value"),
+    (
+        pytest.param(11, b"12345A7890", id="non-digit-key"),
+        pytest.param(204, b"8", id="invalid-mochi-code"),
+    ),
+)
+def test_hn_parser_rejects_official_domain_violations(offset: int, value: bytes) -> None:
+    raw = official_domain_record()
     raw[offset : offset + len(value)] = value
     assert HNParser().parse(bytes(raw)) is None
+
+
+@pytest.mark.parametrize(
+    ("offset", "value", "field_name", "expected"),
+    (
+        pytest.param(21, b"00000001", "reserved", "00000001", id="nonzero-reserved"),
+        pytest.param(21, b"        ", "reserved", "", id="blank-reserved"),
+        pytest.param(39, b"1", "DelKubun", "1", id="nonzero-reserved-code"),
+        pytest.param(39, b" ", "DelKubun", "", id="blank-reserved-code"),
+    ),
+)
+def test_hn_parser_keeps_reserved_spans_without_interpreting_them(
+    offset: int, value: bytes, field_name: str, expected: str
+) -> None:
+    """The official layout defines no item for these spans, so any content is kept."""
+
+    raw = official_domain_record()
+    raw[offset : offset + len(value)] = value
+    parsed = HNParser().parse(bytes(raw))
+    assert parsed is not None
+    assert parsed[field_name] == expected
 
 
 def test_hn_status_zero_raw_body_is_opaque_but_live_body_remains_strict() -> None:
@@ -81,6 +107,8 @@ def test_hn_status_zero_raw_body_is_opaque_but_live_body_remains_strict() -> Non
         pytest.param({"Bamei": None}, id="missing-required-body"),
         pytest.param({"Bamei": "　"}, id="whitespace-only-required-body"),
         pytest.param({"FHansyokuNum": "12345A7890"}, id="invalid-parent-key"),
+        pytest.param({"reserved": "0" * 9}, id="reserved-exceeds-its-span"),
+        pytest.param({"DelKubun": "00"}, id="reserved-code-exceeds-its-span"),
         pytest.param(
             {"MochiKubun": "1", "HansyokuMochiKubun": "2"},
             id="conflicting-standard-alias",

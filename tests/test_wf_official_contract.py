@@ -375,14 +375,6 @@ def test_wf_parser_reads_every_manifest_scalar_and_repeat_at_the_pinned_offset()
             id="status2-blank-flag",
         ),
         pytest.param(
-            build_record(field_overrides={"Yobi1": "01"}),
-            id="noninitial-reserved1",
-        ),
-        pytest.param(
-            build_record(field_overrides={"Yobi2": "000001"}),
-            id="noninitial-reserved2",
-        ),
-        pytest.param(
             build_record(
                 data_kubun="1",
                 make_date="20111201",
@@ -453,6 +445,25 @@ def test_wf_rejects_unsupported_status_and_semantically_corrupt_fields(
     record: bytes,
 ) -> None:
     assert WFParser().parse(record) is None
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    (
+        pytest.param("Yobi1", "01", id="noninitial-reserved1"),
+        pytest.param("Yobi2", "000001", id="noninitial-reserved2"),
+        pytest.param("Yobi1", "  ", id="blank-reserved1"),
+        pytest.param("Yobi2", "      ", id="blank-reserved2"),
+    ),
+)
+def test_wf_keeps_reserved_spans_without_interpreting_them(
+    field_name: str, value: str
+) -> None:
+    """The official layout defines no item for these spans, so any content is kept."""
+
+    parsed = WFParser().parse(build_record(field_overrides={field_name: value}))
+    assert parsed is not None
+    assert parsed[field_name] == value.strip()
 
 
 def test_wf_accepts_all_official_accumulated_statuses_and_opaque_delete() -> None:
