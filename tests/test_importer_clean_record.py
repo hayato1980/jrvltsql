@@ -169,3 +169,39 @@ def test_jravan_schema_types_cover_every_declared_sql_type():
     se_types = get_table_column_types("UMA_RACE")
     assert se_types["Bamei3"] == "TEXT"
     assert se_types["DMTime"] == "REAL"
+
+
+# convert_record_types の blank-text ブロック 6 個と 1 対 1 に対応する。テーブル
+# 判定をループ外へ引き上げた際にブロックを 1 つ落とせば、その行が落ちる。
+BLANK_TEXT_CASES = [
+    ("HANSYOKU", "BameiEng"),
+    ("NL_O1", "FukuNinki"),
+    ("HYOSU_SANRENTAN", "Ninki"),
+    ("HYOSU_SANREN", "Ninki"),
+    ("NL_UM", "Bamei"),
+    ("NL_SK", "SanchiName"),
+]
+
+
+@pytest.mark.parametrize("table_name,field_name", BLANK_TEXT_CASES)
+def test_blank_provider_value_is_kept_as_empty_string(table_name, field_name):
+    """空白も提供値である項目は、NULL に落とさず空文字のまま保つ。"""
+    from src.importer.importer import convert_record_types
+
+    assert convert_record_types({field_name: "   "}, table_name)[field_name] == ""
+
+
+def test_blank_text_outside_every_family_still_becomes_null():
+    from src.importer.importer import convert_record_types
+
+    assert convert_record_types({"Hondai": "   "}, "NL_RA")["Hondai"] is None
+
+
+def test_course_ex_blank_is_kept_only_for_cs_records():
+    from src.importer.importer import convert_record_types
+
+    kept = convert_record_types({"RecordSpec": "CS", "CourseEx": "  "}, "NL_CS")
+    assert kept["CourseEx"] == ""
+
+    dropped = convert_record_types({"RecordSpec": "RA", "CourseEx": "  "}, "NL_CS")
+    assert dropped["CourseEx"] is None
