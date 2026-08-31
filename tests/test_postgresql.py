@@ -131,6 +131,31 @@ def test_setup_pg_test_db_uses_shared_contract_connect_timeout_and_quoted_identi
     assert "password-value" not in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("table_name", ["NL_RA", "NL_O1"])
+def test_normalize_row_matches_per_column_type_lookup(table_name):
+    """行ごとに 1 回引いた列型が、列ごとに引いた場合と同じ結果を出すこと。"""
+    from src.database.postgresql_handler import PostgreSQLDatabase
+    from src.database.schema_types import get_column_type, get_table_column_types
+
+    row = {
+        column: ["", "  ", "***", "0103*****", "42", "12.5", None][index % 7]
+        for index, column in enumerate(get_table_column_types(table_name))
+    }
+    assert PostgreSQLDatabase._normalize_insert_data(table_name, row) == {
+        column: PostgreSQLDatabase._normalize_insert_value(
+            get_column_type(table_name, column), value
+        )
+        for column, value in row.items()
+    }
+
+
+def test_normalize_row_leaves_an_unknown_table_untouched():
+    from src.database.postgresql_handler import PostgreSQLDatabase
+
+    row = {"Whatever": "  ", "Another": "42"}
+    assert PostgreSQLDatabase._normalize_insert_data("NO_SUCH_TABLE", row) == row
+
+
 def test_normalize_blank_numeric_insert_values():
     """PostgreSQL inserts convert blank numeric JV-Data fields to NULL."""
     from src.database.postgresql_handler import PostgreSQLDatabase
