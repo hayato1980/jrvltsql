@@ -84,6 +84,10 @@ def _mutated_record(start: int, value: bytes) -> bytes:
     return bytes(record)
 
 
+def _columns(ddl: str) -> set[str]:
+    return set(re.findall(r"^\s+(\w+)\s+\w+", ddl, re.MULTILINE))
+
+
 def _primary_key(ddl: str) -> list[str]:
     match = re.search(r"PRIMARY KEY \(([^)]*)\)", ddl)
     assert match
@@ -332,7 +336,7 @@ def test_wh_native_schema_matches_expanded_official_rows() -> None:
 
     for table_name in ("NL_WH", "RT_WH"):
         ddl = SCHEMAS[table_name]
-        assert expected_columns <= set(re.findall(r"^\s+(\w+)\s+\w+", ddl, re.MULTILINE))
+        assert expected_columns <= _columns(ddl)
         assert forbidden_weather_columns.isdisjoint(ddl)
         assert _primary_key(ddl) == expected_key
 
@@ -500,3 +504,43 @@ def test_wh_postgresql_native_and_standard_storage(postgresql_db) -> None:
     assert [dict(row) for row in standard] == [
         {"umaban1": 1, "weight1": 480, "umaban18": 18, "weight18": 999}
     ]
+
+
+@pytest.mark.parametrize(
+    "importer_class",
+    [DataImporter, OptimizedDataImporter],
+    ids=["regular", "optimized"],
+)
+def test_wh_native_storage_keeps_the_weight_change_sentinel_uninterpreted(
+    tmp_path, importer_class
+) -> None:
+    """WH keeps no interpreted column, so the sentinel reaches storage as a number."""
+    database = SQLiteDatabase({"path": str(tmp_path / f"wh-native-{uuid4().hex}.db")})
+    database.connect()
+    try:
+        database.execute(SCHEMAS["NL_WH"])
+        database.commit()
+        rows = WHParser().parse(_wh_record())
+        assert rows is not None
+
+        stats = importer_class(database, batch_size=1).import_records(iter(rows))
+        assert stats["records_imported"] == 2
+
+        stored = database.fetch_all(
+            "SELECT Umaban, BaTaijyu, ZogenFugo, ZogenSa FROM NL_WH ORDER BY Umaban"
+        )
+    finally:
+        database.disconnect()
+
+    assert [dict(row) for row in stored] == [
+        {"Umaban": 1, "BaTaijyu": 480, "ZogenFugo": "+", "ZogenSa": 5},
+        {"Umaban": 18, "BaTaijyu": 999, "ZogenFugo": None, "ZogenSa": 999},
+    ]
+
+
+def test_wh_native_schema_has_no_raw_or_interpreted_weight_columns() -> None:
+    for table_name in ("NL_WH", "RT_WH"):
+        columns = _columns(SCHEMAS[table_name])
+        assert not [name for name in columns if name.startswith("Provider")]
+        assert not [name for name in columns if name.endswith("Kg")]
+        assert "ParserContractVersion" not in columns
