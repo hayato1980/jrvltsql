@@ -466,3 +466,109 @@ def test_jravan_importers_reject_malformed_semantic_primary_key(
         count = db.fetch_one("SELECT COUNT(*) AS count FROM UMA_RACE")
 
     assert count == {"count": 0}
+
+
+@pytest.mark.parametrize(
+    "optimized",
+    [False, True],
+    ids=["regular", "optimized"],
+)
+@pytest.mark.parametrize(
+    ("zogen_fugo", "zogen_sa", "stored"),
+    [
+        (
+            " ",
+            "999",
+            {
+                "ProviderZogenFugoRaw": None,
+                "ProviderZogenSaRaw": "999",
+                "ZogenFugo": None,
+                "ZogenSa": 999.0,
+                "ZogenSaKg": None,
+            },
+        ),
+        (
+            "+",
+            "004",
+            {
+                "ProviderZogenFugoRaw": "+",
+                "ProviderZogenSaRaw": "004",
+                "ZogenFugo": "+",
+                "ZogenSa": 4.0,
+                "ZogenSaKg": 4,
+            },
+        ),
+        (
+            " ",
+            "   ",
+            {
+                "ProviderZogenFugoRaw": None,
+                "ProviderZogenSaRaw": None,
+                "ZogenFugo": None,
+                "ZogenSa": None,
+                "ZogenSaKg": None,
+            },
+        ),
+        (
+            "+",
+            "999",
+            {
+                "ProviderZogenFugoRaw": "+",
+                "ProviderZogenSaRaw": "999",
+                "ZogenFugo": "+",
+                "ZogenSa": 999.0,
+                "ZogenSaKg": None,
+            },
+        ),
+    ],
+    ids=[
+        "unknown-change-sentinel",
+        "signed-change",
+        "blank-first-start",
+        "signed-unknown-change-sentinel",
+    ],
+)
+def test_se_weight_change_sentinel_stays_raw_and_clears_the_interpreted_column(
+    tmp_path, optimized: bool, zogen_fugo: str, zogen_sa: str, stored: dict
+) -> None:
+    """The sentinel survives in the raw column and clears only the interpreted one.
+
+    The sentinel is read from the magnitude alone, so a sign does not make it real.
+    """
+    from src.database.schema import create_all_tables
+    from src.database.sqlite_handler import SQLiteDatabase
+    from src.importer.importer import DataImporter
+    from src.importer.importer_optimized import OptimizedDataImporter
+
+    parsed = SEParser().parse(_record(ZogenFugo=zogen_fugo, ZogenSa=zogen_sa))
+    assert parsed is not None
+
+    importer_class = OptimizedDataImporter if optimized else DataImporter
+    db = SQLiteDatabase({"path": str(tmp_path / f"weight-change-{optimized}.db")})
+    with db:
+        create_all_tables(db)
+        stats = importer_class(db).import_records(iter([parsed]))
+        row = db.fetch_one(
+            "SELECT ProviderZogenFugoRaw, ProviderZogenSaRaw, ZogenFugo, ZogenSa, "
+            "ZogenSaKg FROM NL_SE"
+        )
+
+    assert stats["records_imported"] == 1
+    assert row == stored
+
+
+@pytest.mark.parametrize(
+    ("field", "stored"),
+    [
+        ("ZogenSa", 999.0),
+        ("BaTaijyu", 999.0),
+        ("Futan", 99.9),
+        ("HaronTimeL3", 99.9),
+    ],
+    ids=["weight-change", "body-weight", "carried-weight", "final-furlong"],
+)
+def test_official_name_column_keeps_the_numeric_sentinel_as_a_number(
+    field: str, stored: float
+) -> None:
+    """Type conversion never clears a numeric sentinel, it only scales tenth units."""
+    assert convert_record_types({field: "999"}, "NL_SE")[field] == stored
