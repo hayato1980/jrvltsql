@@ -3,21 +3,301 @@
 This module provides realtime data fetching from JV-Link.
 """
 
-from typing import Callable, Iterable, Iterator, Optional, List
+from collections.abc import Callable, Iterable, Iterator
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from src.fetcher.base import BaseFetcher, FetcherError
 from src.jvlink.constants import (
+    JYO_CODES,
     JV_RT_SUCCESS,
     JVRTOPEN_SPEED_REPORT_SPECS,
     JVRTOPEN_TIME_SERIES_SPECS,
-    is_valid_jvrtopen_spec,
-    is_time_series_spec,
     generate_time_series_key,
-    JYO_CODES,
+    is_time_series_spec,
 )
+from src.parser.status_domain import DataKubunContext, validate_data_kubun
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Japan has observed UTC+09:00 year-round since 1951.  A fixed offset avoids
+# making the base/SQLite installation depend on an IANA tzdata package, which
+# is not present by default on Windows.
+JST = timezone(timedelta(hours=9), name="JST")
+
+
+def _now_jst() -> datetime:
+    """Return the race-window reference clock in Japan time."""
+    return datetime.now(JST)
+
+
+def _validated_window_now(reference_now: datetime | None = None) -> datetime:
+    """Return one timezone-aware JST reference shared by window stages."""
+    now = reference_now if reference_now is not None else _now_jst()
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise FetcherError("Race post-time window clock must be timezone-aware")
+    return now.astimezone(JST)
+
+
+def _group_race_rows_by_window_date(
+    race_rows: list[tuple],
+    *,
+    reference_now: datetime,
+    post_time_within_minutes: int | None,
+    post_time_not_past_minutes: int | None,
+) -> tuple[dict[str, list[tuple]], dict[str, list[tuple]], int, int, int]:
+    """Group race rows and prune whole dates that cannot intersect the window."""
+    grouped: dict[str, list[tuple]] = {}
+    race_dates: dict[str, datetime] = {}
+    for row in race_rows:
+        if len(row) != 7:
+            raise FetcherError(
+                "Race post-time window requires Year, MonthDay, JyoCD, "
+                "Kaiji, Nichiji, RaceNum, and HassoTime"
+            )
+        year, monthday, jyo_cd, _kaiji, _nichiji, race_num, _post_time = row
+        try:
+            date_str = f"{int(year):04d}{int(monthday):04d}"
+            race_date = datetime.strptime(date_str, "%Y%m%d").replace(tzinfo=JST)
+            jyo_cd_text = str(jyo_cd).strip().zfill(2)
+            key = generate_time_series_key(date_str, jyo_cd_text, int(race_num))
+        except (TypeError, ValueError) as exc:
+            raise FetcherError(
+                "Race post-time window cannot name invalid race identity " f"{row[:6]!r}: {exc}"
+            ) from exc
+        grouped.setdefault(key, []).append(row)
+        race_dates.setdefault(key, race_date)
+
+    latest_allowed = (
+        reference_now + timedelta(minutes=post_time_within_minutes)
+        if post_time_within_minutes is not None
+        else None
+    )
+    earliest_allowed = (
+        reference_now - timedelta(minutes=post_time_not_past_minutes)
+        if post_time_not_past_minutes is not None
+        else None
+    )
+    candidates: dict[str, list[tuple]] = {}
+    dropped_too_far_future = 0
+    dropped_too_far_past = 0
+    skipped_out_of_window_by_date = 0
+    for key, rows in grouped.items():
+        race_date_start = race_dates[key]
+        race_date_end = race_date_start + timedelta(days=1) - timedelta(minutes=1)
+        if latest_allowed is not None and race_date_start > latest_allowed:
+            dropped_too_far_future += 1
+            skipped_out_of_window_by_date += 1
+        elif earliest_allowed is not None and race_date_end < earliest_allowed:
+            dropped_too_far_past += 1
+            skipped_out_of_window_by_date += 1
+        else:
+            candidates[key] = rows
+
+    return (
+        grouped,
+        candidates,
+        dropped_too_far_future,
+        dropped_too_far_past,
+        skipped_out_of_window_by_date,
+    )
+
+
+def _filter_race_rows_by_post_time(
+    race_rows: list[tuple],
+    *,
+    post_time_within_minutes: Optional[int],
+    post_time_not_past_minutes: Optional[int],
+    reference_now: datetime | None = None,
+) -> tuple[list[tuple], dict[str, int]]:
+    """Date-filter, validate, de-duplicate, and post-time-filter race rows."""
+    now = _validated_window_now(reference_now)
+    (
+        grouped,
+        candidates,
+        dropped_too_far_future,
+        dropped_too_far_past,
+        skipped_out_of_window_by_date,
+    ) = _group_race_rows_by_window_date(
+        race_rows,
+        reference_now=now,
+        post_time_within_minutes=post_time_within_minutes,
+        post_time_not_past_minutes=post_time_not_past_minutes,
+    )
+
+    validated: list[tuple[tuple, datetime]] = []
+    problems: list[str] = []
+    for key, rows in candidates.items():
+        raw_post_times = [row[6] for row in rows]
+        normalized_post_times = {
+            str(value).strip()
+            for value in raw_post_times
+            if value is not None and str(value).strip()
+        }
+        if any(value is None or not str(value).strip() for value in raw_post_times):
+            problems.append(f"{key}: missing HassoTime")
+            continue
+        if len(normalized_post_times) != 1:
+            values = ", ".join(sorted(normalized_post_times))
+            problems.append(f"{key}: ambiguous HassoTime values [{values}]")
+            continue
+
+        post_time_text = next(iter(normalized_post_times))
+        if (
+            len(post_time_text) != 4
+            or not post_time_text.isascii()
+            or not post_time_text.isdigit()
+            or int(post_time_text[:2]) > 23
+            or int(post_time_text[2:]) > 59
+        ):
+            problems.append(f"{key}: unparsable HassoTime {post_time_text!r}")
+            continue
+
+        post_time = datetime.strptime(f"{key[:8]}{post_time_text}", "%Y%m%d%H%M").replace(
+            tzinfo=JST
+        )
+        validated.append((rows[0][:6], post_time))
+
+    if problems:
+        raise FetcherError("Race post-time window rejected keys: " + "; ".join(problems))
+
+    kept: list[tuple] = []
+    for row, post_time in validated:
+        minutes_until_post = (post_time - now).total_seconds() / 60
+        if post_time_within_minutes is not None and minutes_until_post > post_time_within_minutes:
+            dropped_too_far_future += 1
+        elif (
+            post_time_not_past_minutes is not None
+            and minutes_until_post < -post_time_not_past_minutes
+        ):
+            dropped_too_far_past += 1
+        else:
+            kept.append(row)
+
+    stats = {
+        "considered_keys": len(grouped),
+        "window_candidate_keys": len(candidates),
+        "window_kept_keys": len(kept),
+        "dropped_too_far_future": dropped_too_far_future,
+        "dropped_too_far_past": dropped_too_far_past,
+        "skipped_out_of_window_by_date": skipped_out_of_window_by_date,
+    }
+    return kept, stats
+
+
+def _race_key_label(key_fields: tuple) -> str:
+    """Name a race by its 12-digit JVRTOpen key, or raw fields when malformed."""
+    year, monthday, jyo_cd, _kaiji, _nichiji, race_num = key_fields
+    try:
+        date_str = f"{int(year):04d}{int(monthday):04d}"
+        return str(generate_time_series_key(date_str, str(jyo_cd).strip().zfill(2), int(race_num)))
+    except (TypeError, ValueError):
+        return repr(key_fields)
+
+
+def _overlay_current_lifecycle_rows(
+    race_rows: list[tuple],
+    *,
+    reference_now: datetime,
+    post_time_within_minutes: int | None,
+    post_time_not_past_minutes: int | None,
+) -> tuple[list[tuple], set[str]]:
+    """Select the current lifecycle source for each exact full race key.
+
+    Rows carry (LifecycleSource, DataKubun, Year, MonthDay, JyoCD, Kaiji,
+    Nichiji, RaceNum, HassoTime). A same-day RT_RA row supersedes the
+    historical NL_RA row for the identical full key before lifecycle-state
+    validation, including cancellation status 9; NL_RA rows are used only for
+    full keys absent from RT_RA. Duplicates from the selected source are
+    preserved so a genuine 12-digit-key post-time conflict still fails closed
+    downstream.
+
+    Whole dates that cannot intersect the requested live window are identified
+    after source ownership but before lifecycle validation. Their DataKubun and
+    HassoTime values cannot affect this request and are left for the existing
+    date-exclusion counters. For every date candidate, DataKubun decides whether
+    the selected row is active or canceled, so it must carry an officially valid
+    current RA DataKubun (``src.parser.status_domain``); an undecidable status
+    fails closed with the 12-digit race key named, and nothing is opened.
+    DataKubun 0 is an erase instruction which the normal updater physically
+    removes, so finding one persisted on a candidate is an inconsistent state
+    and also fails closed.
+
+    The selected full keys are also grouped by their normalized 12-digit
+    JVRTOpen key. If one such key is both active and canceled, its state cannot
+    be represented by JVRTOpen and the batch fails closed independent of row
+    order. Returns the selected 7-column rows and the 12-digit keys whose
+    selected rows all report cancellation (DataKubun 9) — from RT or NL alike,
+    since selection already happened and RT 9 never exposes the NL row.
+    Cancellations are not removed here: their rows stay subject to
+    fail-closed post-time validation first.
+    """
+    rt_full_keys: set[tuple] = set()
+    for row in race_rows:
+        if len(row) != 9:
+            raise FetcherError(
+                "Race lifecycle overlay requires LifecycleSource, DataKubun, "
+                "Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, and HassoTime"
+            )
+        if row[0] == "RT":
+            rt_full_keys.add(tuple(row[2:8]))
+        elif row[0] != "NL":
+            raise FetcherError(f"Race lifecycle overlay cannot classify source {row[0]!r}")
+
+    selected_lifecycle_rows: list[tuple] = []
+    for row in race_rows:
+        source = row[0]
+        full_key = tuple(row[2:8])
+        if source == "NL" and full_key in rt_full_keys:
+            continue
+        selected_lifecycle_rows.append(row)
+
+    selected = [tuple(row[2:]) for row in selected_lifecycle_rows]
+    _, date_candidates, _, _, _ = _group_race_rows_by_window_date(
+        selected,
+        reference_now=reference_now,
+        post_time_within_minutes=post_time_within_minutes,
+        post_time_not_past_minutes=post_time_not_past_minutes,
+    )
+    candidate_race_keys = set(date_candidates)
+
+    lifecycle_states: dict[str, set[str]] = {}
+    canceled_race_keys: set[str] = set()
+    for row in selected_lifecycle_rows:
+        source, data_kubun = row[0], row[1]
+        race_key = _race_key_label(row[2:8])
+        if race_key not in candidate_race_keys:
+            continue
+        try:
+            validated_kubun = validate_data_kubun(
+                "RA",
+                data_kubun,
+                context=(
+                    DataKubunContext.REALTIME if source == "RT" else DataKubunContext.ACCUMULATED
+                ),
+            )
+        except ValueError as exc:
+            raise FetcherError(
+                f"Race lifecycle selection rejected {_race_key_label(row[2:8])}: {exc}"
+            ) from exc
+        if validated_kubun == "0":
+            raise FetcherError(
+                f"Race lifecycle selection rejected {race_key}: "
+                "persisted RA DataKubun '0' erase marker"
+            )
+        lifecycle_state = "canceled" if validated_kubun == "9" else "active"
+        lifecycle_states.setdefault(race_key, set()).add(lifecycle_state)
+        if validated_kubun == "9":
+            canceled_race_keys.add(race_key)
+
+    mixed_state_keys = [key for key, states in lifecycle_states.items() if len(states) > 1]
+    if mixed_state_keys:
+        problems = "; ".join(
+            f"{key}: ambiguous active/canceled lifecycle states" for key in mixed_state_keys
+        )
+        raise FetcherError("Race lifecycle selection rejected keys: " + problems)
+    return selected, canceled_race_keys
 
 
 def materialize_complete_records(
@@ -81,8 +361,7 @@ class RealtimeFetcher(BaseFetcher):
         """Keep realtime snapshots fail-fast on corrupt JV-Link files."""
         self._delete_corrupt_file_best_effort(error_code, filename)
         raise FetcherError(
-            f"Realtime JVRead returned {error_code} for "
-            f"{filename or 'an unknown file'}"
+            f"Realtime JVRead returned {error_code} for " f"{filename or 'an unknown file'}"
         )
 
     def fetch(
@@ -131,24 +410,20 @@ class RealtimeFetcher(BaseFetcher):
 
         if data_spec not in RT_DATA_SPECS:
             logger.warning(
-                f"Unknown data spec: {data_spec}. "
-                "Proceeding anyway, but this may not be valid."
+                f"Unknown data spec: {data_spec}. " "Proceeding anyway, but this may not be valid."
             )
 
         # Default key to today's date if not specified
         # JVRTOpen requires a date key (YYYYMMDD) to function properly
         if key is None:
             from datetime import datetime
+
             key = datetime.now().strftime("%Y%m%d")
             logger.debug("Using today's date as key", key=key)
 
         try:
-            # Initialize JV-Link
-            logger.info("Initializing JV-Link")
-            ret = self.jvlink.jv_init()
-            if ret != JV_RT_SUCCESS:
-                raise FetcherError(f"JV-Link initialization failed: {ret}")
-
+            # The session was established in BaseFetcher.__init__ and spans
+            # every JVRTOpen below.
             logger.info(
                 "Starting realtime data fetch",
                 data_spec=data_spec,
@@ -193,7 +468,7 @@ class RealtimeFetcher(BaseFetcher):
             raise
         except Exception as e:
             # -114: 契約外エラーはdebugレベル
-            if '-114' in str(e):
+            if "-114" in str(e):
                 logger.debug("Realtime fetch skipped (not subscribed)", error=str(e))
             else:
                 logger.error("Realtime fetch error", error=str(e))
@@ -319,6 +594,7 @@ class RealtimeFetcher(BaseFetcher):
         # Generate date if not provided
         if date is None:
             from datetime import datetime
+
             date = datetime.now().strftime("%Y%m%d")
 
         # Generate key: YYYYMMDDJJRR
@@ -373,6 +649,8 @@ class RealtimeFetcher(BaseFetcher):
         to_date: Optional[str] = None,
         pg_config: Optional[dict] = None,
         progress_callback: Optional[Callable[[dict], None]] = None,
+        post_time_within_minutes: Optional[int] = None,
+        post_time_not_past_minutes: Optional[int] = None,
     ) -> Iterator[dict]:
         """Fetch time series odds for races registered in the database.
 
@@ -407,6 +685,22 @@ class RealtimeFetcher(BaseFetcher):
                        of SQLite.
             progress_callback: Optional callback called after each race key is
                                attempted. Receives counters and key status.
+                               When a post-time window is requested, the
+                               initial ``window_filter`` entry carries the
+                               window statistics, including
+                               ``omitted_canceled_keys``: the number of
+                               normalized JVRTOpen keys whose selected
+                               lifecycle rows all report DataKubun 9, passed
+                               validation, and otherwise fell inside the
+                               requested window. It is always present (0 when
+                               none), and
+                               ``window_kept_keys`` is reduced by the same
+                               amount so it equals total_keys and the keys
+                               actually opened.
+            post_time_within_minutes: Keep keys no more than this many minutes
+                                      before their race-record post time.
+            post_time_not_past_minutes: Drop keys more than this many minutes
+                                        after their race-record post time.
 
         Yields:
             Dictionary of parsed record data
@@ -437,22 +731,72 @@ class RealtimeFetcher(BaseFetcher):
                 f"Time series specs: {', '.join(sorted(JVRTOPEN_TIME_SERIES_SPECS.keys()))}"
             )
 
+        for option_name, option_value in (
+            ("post_time_within_minutes", post_time_within_minutes),
+            ("post_time_not_past_minutes", post_time_not_past_minutes),
+        ):
+            if option_value is not None and option_value < 0:
+                raise FetcherError(f"{option_name} must be zero or greater")
+        window_filter_requested = (
+            post_time_within_minutes is not None or post_time_not_past_minutes is not None
+        )
+
         # Forward-only 0B15 cards are stored in RT_RA, while historical RACE
-        # records are stored in NL_RA. Use both sources and de-duplicate the
-        # key-bearing columns. This exposes no result fields: only the race
-        # identity is used to construct the JVRTOpen request key.
+        # records are stored in NL_RA. Without a post-time window both sources
+        # are merged and de-duplicated on the key-bearing columns. With a
+        # window, rows always keep their source and DataKubun so the selected
+        # current lifecycle row is validated and can cancel its key: a current
+        # RT_RA row supersedes the stale NL_RA row for the same full race key,
+        # and when RT_RA is absent NL_RA owns every full key. This exposes no
+        # result fields: only the race identity is used to construct the
+        # JVRTOpen request key.
         if pg_config:
-            rt_union = (
-                """
+            if window_filter_requested:
+                if self._postgres_table_exists(pg_config, "rt_ra"):
+                    # UNION ALL: duplicates inside the selected source must
+                    # survive the overlay so a genuine 12-digit-key post-time
+                    # conflict still fails closed.
+                    query = """
+                        WITH race_targets AS (
+                            SELECT 'RT' AS lifecycle_source, datakubun,
+                                   year, monthday, jyocd, kaiji, nichiji, racenum, hassotime
+                            FROM rt_ra
+                            UNION ALL
+                            SELECT 'NL', datakubun,
+                                   year, monthday, jyocd, kaiji, nichiji, racenum, hassotime
+                            FROM nl_ra
+                        )
+                        SELECT
+                            lifecycle_source, datakubun,
+                            year, monthday, jyocd, kaiji, nichiji, racenum, hassotime
+                        FROM race_targets
+                        WHERE 1=1
+                    """
+                else:
+                    query = """
+                        WITH race_targets AS (
+                            SELECT 'NL' AS lifecycle_source, datakubun,
+                                   year, monthday, jyocd, kaiji, nichiji, racenum, hassotime
+                            FROM nl_ra
+                        )
+                        SELECT
+                            lifecycle_source, datakubun,
+                            year, monthday, jyocd, kaiji, nichiji, racenum, hassotime
+                        FROM race_targets
+                        WHERE 1=1
+                    """
+            else:
+                rt_union = (
+                    """
                     UNION
                     SELECT year, monthday, jyocd, kaiji, nichiji, racenum
                     FROM rt_ra
                 """
-                if self._postgres_table_exists(pg_config, "rt_ra")
-                else ""
-            )
-            distinct = "" if rt_union else " DISTINCT"
-            query = f"""
+                    if self._postgres_table_exists(pg_config, "rt_ra")
+                    else ""
+                )
+                distinct = "" if rt_union else " DISTINCT"
+                query = f"""
                 WITH race_targets AS (
                     SELECT year, monthday, jyocd, kaiji, nichiji, racenum
                     FROM nl_ra
@@ -474,27 +818,57 @@ class RealtimeFetcher(BaseFetcher):
             from contextlib import closing
 
             with closing(sqlite3.connect(db_path)) as conn:
-                has_rt_ra = (
-                    conn.execute(
-                        """
+                has_rt_ra = conn.execute("""
                         SELECT 1
                         FROM sqlite_master
                         WHERE type = 'table' AND lower(name) = lower('RT_RA')
-                        """
-                    ).fetchone()
-                    is not None
-                )
-            rt_union = (
-                """
+                        """).fetchone() is not None
+            if window_filter_requested:
+                if has_rt_ra:
+                    # UNION ALL: duplicates inside the selected source must
+                    # survive the overlay so a genuine 12-digit-key post-time
+                    # conflict still fails closed.
+                    query = """
+                        WITH race_targets AS (
+                            SELECT 'RT' AS LifecycleSource, DataKubun,
+                                   Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, HassoTime
+                            FROM RT_RA
+                            UNION ALL
+                            SELECT 'NL', DataKubun,
+                                   Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, HassoTime
+                            FROM NL_RA
+                        )
+                        SELECT
+                            LifecycleSource, DataKubun,
+                            Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, HassoTime
+                        FROM race_targets
+                        WHERE 1=1
+                    """
+                else:
+                    query = """
+                        WITH race_targets AS (
+                            SELECT 'NL' AS LifecycleSource, DataKubun,
+                                   Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, HassoTime
+                            FROM NL_RA
+                        )
+                        SELECT
+                            LifecycleSource, DataKubun,
+                            Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, HassoTime
+                        FROM race_targets
+                        WHERE 1=1
+                    """
+            else:
+                rt_union = (
+                    """
                     UNION
                     SELECT Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum
                     FROM RT_RA
                 """
-                if has_rt_ra
-                else ""
-            )
-            distinct = "" if rt_union else " DISTINCT"
-            query = f"""
+                    if has_rt_ra
+                    else ""
+                )
+                distinct = "" if rt_union else " DISTINCT"
+                query = f"""
                 WITH race_targets AS (
                     SELECT Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum
                     FROM NL_RA
@@ -551,6 +925,12 @@ class RealtimeFetcher(BaseFetcher):
         else:
             query += " ORDER BY Year, MonthDay, JyoCD, RaceNum"
 
+        log_context = {}
+        if window_filter_requested:
+            log_context = {
+                "post_time_within_minutes": post_time_within_minutes,
+                "post_time_not_past_minutes": post_time_not_past_minutes,
+            }
         logger.info(
             "Starting batch time series fetch from database",
             data_spec=data_spec,
@@ -558,12 +938,15 @@ class RealtimeFetcher(BaseFetcher):
             db_path="postgresql" if pg_config else db_path,
             from_date=from_date,
             to_date=to_date,
+            **log_context,
         )
 
         # Get race keys from database
         try:
             if pg_config:
-                race_rows = self._fetch_time_series_race_rows_from_postgres(query, params, pg_config)
+                race_rows = self._fetch_time_series_race_rows_from_postgres(
+                    query, params, pg_config
+                )
             else:
                 import sqlite3
                 from contextlib import closing
@@ -575,20 +958,73 @@ class RealtimeFetcher(BaseFetcher):
         except Exception as e:
             raise FetcherError(f"Database query failed: {e}")
 
+        window_stats: Optional[dict[str, int]] = None
+        if window_filter_requested:
+            reference_now = _validated_window_now()
+            race_rows, canceled_race_keys = _overlay_current_lifecycle_rows(
+                race_rows,
+                reference_now=reference_now,
+                post_time_within_minutes=post_time_within_minutes,
+                post_time_not_past_minutes=post_time_not_past_minutes,
+            )
+            race_rows, window_stats = _filter_race_rows_by_post_time(
+                race_rows,
+                post_time_within_minutes=post_time_within_minutes,
+                post_time_not_past_minutes=post_time_not_past_minutes,
+                reference_now=reference_now,
+            )
+            if canceled_race_keys:
+                # A validated cancellation owns its normalized JVRTOpen key in
+                # whichever source was selected: omit it without opening and
+                # without falling back to the shadowed row. Mixed active and
+                # canceled state for one 12-digit key was rejected above.
+                race_rows = [
+                    row
+                    for row in race_rows
+                    if _race_key_label(tuple(row[:6])) not in canceled_race_keys
+                ]
+            # omitted_canceled_keys counts normalized JVRTOpen keys whose
+            # selected rows all report cancellation, passed validation, and
+            # otherwise fell inside the requested window. It is always
+            # reported (0 when none), and window_kept_keys shrinks by the same
+            # amount so it equals total_keys/opened targets.
+            omitted_canceled_keys = window_stats["window_kept_keys"] - len(race_rows)
+            window_stats["window_kept_keys"] = len(race_rows)
+            window_stats["omitted_canceled_keys"] = omitted_canceled_keys
+            if omitted_canceled_keys:
+                logger.info(
+                    "Omitted canceled races after post-time validation",
+                    omitted_canceled_keys=omitted_canceled_keys,
+                )
+            logger.info("Applied race post-time window", **window_stats)
+            if progress_callback:
+                progress_callback(
+                    {
+                        "status": "window_filter",
+                        "key": None,
+                        "processed_keys": 0,
+                        "total_keys": len(race_rows),
+                        **window_stats,
+                        "success_keys": 0,
+                        "nonempty_keys": 0,
+                        "no_data_keys": 0,
+                        "error_keys": 0,
+                        "total_records": 0,
+                    }
+                )
+
         if not race_rows:
             logger.warning("No races found in database for the specified criteria")
             return
 
         logger.info(f"Found {len(race_rows)} races in database")
 
-        # Initialize JV-Link
-        ret = self.jvlink.jv_init()
-        if ret != JV_RT_SUCCESS:
-            raise FetcherError(f"JV-Link initialization failed: {ret}")
-
-        # Statistics
+        # Statistics. nonempty_keys counts only keys whose complete buffered
+        # response materialized at least one record: success_keys alone is not
+        # evidence of nonempty capture.
         total_keys = len(race_rows)
         success_keys = 0
+        nonempty_keys = 0
         no_data_keys = 0
         error_keys = 0
         total_records = 0
@@ -601,7 +1037,9 @@ class RealtimeFetcher(BaseFetcher):
                 year, monthday, jyo_cd, kaiji, nichiji, race_num = row
 
                 # Build date string: YYYYMMDD
-                date_str = f"{year}{monthday:04d}" if isinstance(monthday, int) else f"{year}{monthday}"
+                date_str = (
+                    f"{year}{monthday:04d}" if isinstance(monthday, int) else f"{year}{monthday}"
+                )
 
                 # Convert values to proper types. Kaiji/Nichiji are selected
                 # from NL_RA for auditability, but JVRTOpen odds time-series
@@ -614,17 +1052,21 @@ class RealtimeFetcher(BaseFetcher):
                     logger.warning(f"Invalid key parameters: {e}")
                     error_keys += 1
                     if progress_callback:
-                        progress_callback({
+                        progress = {
                             "status": "invalid_key",
                             "key": None,
                             "processed_keys": processed_keys,
                             "total_keys": total_keys,
                             "success_keys": success_keys,
+                            "nonempty_keys": nonempty_keys,
                             "no_data_keys": no_data_keys,
                             "error_keys": error_keys,
                             "records_for_key": 0,
                             "total_records": total_records,
-                        })
+                        }
+                        if window_stats:
+                            progress.update(window_stats)
+                        progress_callback(progress)
                     continue
 
                 records_for_key = 0
@@ -659,6 +1101,8 @@ class RealtimeFetcher(BaseFetcher):
                     key_records = list(self._fetch_and_parse())
                     records_for_key = len(key_records)
                     success_keys += 1
+                    if records_for_key:
+                        nonempty_keys += 1
                     key_status = "success"
                     total_records += records_for_key
                     yield from key_records
@@ -674,7 +1118,7 @@ class RealtimeFetcher(BaseFetcher):
                 except Exception as e:
                     error_keys += 1
                     key_status = "exception"
-                    if '-114' in str(e):
+                    if "-114" in str(e):
                         logger.debug("Not subscribed for key", key=key, error=str(e))
                     else:
                         logger.warning("Error fetching key", key=key, error=str(e))
@@ -684,17 +1128,21 @@ class RealtimeFetcher(BaseFetcher):
                     except Exception:
                         pass
                     if progress_callback:
-                        progress_callback({
+                        progress = {
                             "status": key_status,
                             "key": key,
                             "processed_keys": processed_keys,
                             "total_keys": total_keys,
                             "success_keys": success_keys,
+                            "nonempty_keys": nonempty_keys,
                             "no_data_keys": no_data_keys,
                             "error_keys": error_keys,
                             "records_for_key": records_for_key,
                             "total_records": total_records,
-                        })
+                        }
+                        if window_stats:
+                            progress.update(window_stats)
+                        progress_callback(progress)
 
         finally:
             try:
@@ -702,14 +1150,17 @@ class RealtimeFetcher(BaseFetcher):
             except Exception:
                 pass
 
+        summary_context = window_stats or {}
         logger.info(
             "Batch time series fetch completed",
             data_spec=data_spec,
             total_keys=total_keys,
             success_keys=success_keys,
+            nonempty_keys=nonempty_keys,
             no_data_keys=no_data_keys,
             error_keys=error_keys,
             total_records=total_records,
+            **summary_context,
         )
 
     @staticmethod
@@ -762,8 +1213,8 @@ class RealtimeFetcher(BaseFetcher):
         data_spec: str,
         from_date: str,
         to_date: str,
-        jyo_codes: Optional[List[str]] = None,
-        race_nums: Optional[List[int]] = None,
+        jyo_codes: Optional[list[str]] = None,
+        race_nums: Optional[list[int]] = None,
     ) -> Iterator[dict]:
         """Fetch time series data for multiple races in a date range.
 
@@ -882,11 +1333,6 @@ class RealtimeFetcher(BaseFetcher):
             races=len(race_nums),
         )
 
-        # Initialize JV-Link once for the entire batch
-        ret = self.jvlink.jv_init()
-        if ret != JV_RT_SUCCESS:
-            raise FetcherError(f"JV-Link initialization failed: {ret}")
-
         # Statistics
         total_keys = 0
         success_keys = 0
@@ -962,7 +1408,7 @@ class RealtimeFetcher(BaseFetcher):
                         except Exception as e:
                             error_keys += 1
                             # -114: 契約外エラーは警告として処理
-                            if '-114' in str(e):
+                            if "-114" in str(e):
                                 logger.debug("Not subscribed for key", key=key, error=str(e))
                             else:
                                 logger.warning("Error fetching key", key=key, error=str(e))
@@ -1037,15 +1483,11 @@ class RealtimeFetcher(BaseFetcher):
                     "PostgreSQL driver not installed. Install psycopg[binary]."
                 ) from exc
             except Exception as exc:
-                raise FetcherError(
-                    f"Could not check whether {table_name} exists: {exc}"
-                ) from exc
+                raise FetcherError(f"Could not check whether {table_name} exists: {exc}") from exc
         except FetcherError:
             raise
         except Exception as exc:
-            raise FetcherError(
-                f"Could not check whether {table_name} exists: {exc}"
-            ) from exc
+            raise FetcherError(f"Could not check whether {table_name} exists: {exc}") from exc
 
     def __enter__(self):
         """Context manager entry."""

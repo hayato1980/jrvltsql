@@ -255,6 +255,9 @@ def test_invalid_or_inverted_dates_fail_before_any_jvlink_call(bad_from, bad_to)
     jvlink = MagicMock()
     jvlink.jv_open.return_value = (-1, 0, 0, "")
     fetcher = _historical_fetcher(jvlink)
+    # 生成時に一度だけ張る JV-Link セッションは測定対象外。
+    # fetch 側が JVInit を再発行しないことも併せて固定する。
+    jvlink.reset_mock()
 
     with pytest.raises(ValueError):
         list(fetcher.fetch("RACE", bad_from, bad_to, option=4))
@@ -267,6 +270,8 @@ def test_inverted_cache_range_fails_before_cache_lookup_or_jvlink_call():
     cache = MagicMock()
     jvlink = MagicMock()
     fetcher = _historical_fetcher(jvlink)
+    # 生成時の JVInit（セッション確立）は測定対象外。
+    jvlink.reset_mock()
 
     with pytest.raises(ValueError):
         list(fetcher.fetch_with_cache(cache, "RACE", "20260819", "20250820", 4))
@@ -828,3 +833,53 @@ def test_recover_com_buffer_rejects_disagreeing_oversized_prefixes():
 
     with pytest.raises(JVLinkError, match="ambiguous"):
         _recover_com_buffer("¢A", 1, "JVRead")
+
+
+def test_cp1252_table_matches_latin1_for_every_byte():
+    """latin-1 が通る値では、CP1252 表の経路は同じバイト列にしかならない。
+
+    符号位置 0xFF 以下は表の経路もそのまま 1 バイトで写すため。候補を飛ばして
+    よい根拠がこれなので、256 バイトすべてで押さえておく。
+    """
+    from src.jvlink.wrapper import _decode_via_cp1252_table
+
+    value = bytes(range(256)).decode("latin-1")
+
+    assert _decode_via_cp1252_table(value, "JVRead") == value.encode("latin-1")
+
+
+def test_recover_com_buffer_skips_the_per_character_table_when_latin1_fits(monkeypatch):
+    """latin-1 で戻せる値では、1 文字ずつ回す CP1252 表の候補を作らない。"""
+    import src.jvlink.wrapper as wrapper
+    from src.jvlink.wrapper import _recover_com_buffer
+
+    def fail(value, method_name):
+        raise AssertionError("_decode_via_cp1252_table should not be reached")
+
+    monkeypatch.setattr(wrapper, "_decode_via_cp1252_table", fail)
+    raw = b"RA7200212201987120509050109100" + b"\xb4" + b"A" * 1241
+    assert len(raw) == 1272
+
+    assert _recover_com_buffer(raw.decode("latin-1"), len(raw), "JVRead") == raw
+
+
+def test_recover_com_buffer_still_builds_the_table_candidate_when_latin1_fails(
+    monkeypatch,
+):
+    """latin-1 が失敗する値では、従来どおり CP1252 表の候補を作る。"""
+    import src.jvlink.wrapper as wrapper
+    from src.jvlink.wrapper import _decode_via_cp1252_table, _recover_com_buffer
+
+    reached = []
+
+    def spy(value, method_name):
+        reached.append(value)
+        return _decode_via_cp1252_table(value, method_name)
+
+    monkeypatch.setattr(wrapper, "_decode_via_cp1252_table", spy)
+    raw = b"A" * 10 + b"\x91\x92\x93\x94" + b"B" * 10  # CP1252 の ‘ ’ “ ”
+
+    recovered = _recover_com_buffer(raw.decode("cp1252"), len(raw), "JVRead")
+
+    assert recovered == raw
+    assert reached

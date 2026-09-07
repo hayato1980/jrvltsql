@@ -7,7 +7,68 @@
 
 ## [Unreleased]
 
-該当なし。
+### Fixed
+
+- 発走時刻windowの既定1年date rangeでは、まず所有ソースを選んだ後、live
+  windowと日付単位で交差し得るレースだけにDataKubun検証を適用する。日付だけで
+  除外できる過去・未来行の古い不正DataKubunが、当日のdue race取得を中断しない。
+  window候補日内の不正・判定不能statusは従来どおりfail closedする。
+
+## [2.1.2] - 2026-09-05
+
+### 2.1.2
+
+- 発走時刻window指定時の時系列オッズ対象選択で、同一フルキー（Year,
+  MonthDay, JyoCD, Kaiji, Nichiji, RaceNum）のレースをライフサイクル
+  ソース優先で1系列に選ぶ。保存済み`RT_RA`行が存在するキーはまず`RT_RA`
+  が所有し、`NL_RA`は`RT_RA`に無いキーだけに使う（`RT_RA` table不在時は
+  `NL_RA`が全キーを所有）。古い`NL_RA`発走時刻と当日`RT_RA`改定時刻の
+  同居を曖昧性と誤検知してbatch全体を中断し、後続due raceの公式O1/O2
+  捕捉を失う障害（2026-09-05）を修正した。
+- 選択された現行行のDataKubunを公式RA domain（`src/parser/status_domain.py`）
+  で検証し、欠落・空白・domain外は対象レースキーを名指ししてfail closed
+  （何も開かない）。通常保存経路では物理削除されるDataKubun=0が残存して
+  いた場合も、activeとして扱わずfail closedする。検証後、所有ソースを問わず
+  DataKubun=9（中止）の12桁キーは収集対象から除外し、隠れた行へfallback
+  しない。同じ12桁キーがactiveと中止の両状態を持つ場合は行順に依存せず
+  fail closedし、発走時刻が衝突する真の曖昧性も従来どおりfail closedを維持する。
+- window統計に`omitted_canceled_keys`を常時追加し（中止なしでも0を報告）、
+  `window_kept_keys`を中止除外後の実際に開く対象数と一致させた。
+- 下流runtimeが機械parseするCLI進捗を拡張した: `Window:`行に`canceled=`、
+  `Keys:`行に`nonempty=`（実レコードを1行以上返したキー数。ok=成功キーの
+  代用にしない）を追加し、window指定時は対象0件でも終端
+  `Keys: 0/0 ...`サマリを必ず1行出力する。`nonempty_keys`はfetcherの全
+  progress callbackと完了logにも常時含まれる（0でも省略しない）。
+- windowなしの対象選択query・schema・保存形式・provider書き込みは変更なし。
+  windowなし出力の変更はキー処理時のCLI `Keys:`行に`nonempty=`が加わる
+  ことのみ。
+- 既存の通常updaterはRTのDataKubun=0を物理削除するため、消えたRT tombstone
+  と「RT更新なし」をこのread pathだけでは区別できない。残存DK0のfail-closedは
+  本修正に含むが、RT erase後に古いNL行へfallbackしないことは本releaseでは
+  未証明であり、無条件の全DataKubunライフサイクル解決は主張しない。
+
+## [2.1.1] - 2026-09-02
+
+### 2.1.1
+
+- `realtime odds-timeseries`に公式長期時系列spec限定の`--spec`と
+  `--post-time-within-minutes` / `--post-time-not-past-minutes`を公開し、generic
+  `timeseries`へそのまま転送する。未指定時は従来どおり0B41/0B42・発走時刻filter
+  なしとし、0B30〜0B36を含む非対応specは全日取得へfallbackせずnonzeroで拒否する。
+
+## [2.1.0] - 2026-09-02
+
+### 2.1.0
+
+- generic `realtime timeseries`に`--post-time-within-minutes` /
+  `--post-time-not-past-minutes`を追加し、発走前のレースだけを対象に公式
+  時系列オッズ（0B41/0B42）を取得できるようにした。発走時刻は`NL_RA`/`RT_RA`
+  から解決し、欠損・不正・曖昧な発走時刻はfail closedする。
+- 時系列オッズtableのupsertで`CollectedAt`を最初の捕捉時刻として保持する
+  （再取得で上書きしない）。SQLiteとPostgreSQLで同一挙動。
+- 速報oddsのPKをpublication identityへ修正。既存行の集約はDELETEを伴うため
+  起動時の暗黙実行をやめ、operator専用コマンド（既定dry-run、`--apply`で適用）
+  に分離した。
 
 ## [2.0.0] - 2026-08-27
 
@@ -585,7 +646,10 @@
 - quickstart.py 対話形式セットアップウィザード
 - CLI コマンド（fetch, status, monitor, init）
 
-[Unreleased]: https://github.com/miyamamoto/jrvltsql/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/miyamamoto/jrvltsql/compare/v2.1.2...HEAD
+[2.1.2]: https://github.com/miyamamoto/jrvltsql/compare/v2.1.1...v2.1.2
+[2.1.1]: https://github.com/miyamamoto/jrvltsql/compare/v2.1.0...v2.1.1
+[2.1.0]: https://github.com/miyamamoto/jrvltsql/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/miyamamoto/jrvltsql/compare/v1.6.10...v2.0.0
 [1.6.10]: https://github.com/miyamamoto/jrvltsql/compare/v1.6.9...v1.6.10
 [1.6.9]: https://github.com/miyamamoto/jrvltsql/compare/v1.6.8...v1.6.9

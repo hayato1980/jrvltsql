@@ -584,6 +584,10 @@ _AV_LOSSLESS_TEXT_WIDTHS = {
 }
 _HR_STORAGE_TABLES = frozenset({"NL_HR", "RT_HR", "HARAI"})
 _HR_KEY_COLUMNS = ("Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum")
+_HR_RESERVED_FLAG_FIELDS = frozenset({"FuseirituFlag6", "TokubaraiFlag6", "HenkanFlag6"})
+_HR_LOSSLESS_TEXT_WIDTHS = {
+    table_name: dict.fromkeys(_HR_RESERVED_FLAG_FIELDS, 1) for table_name in _HR_STORAGE_TABLES
+}
 _HS_STORAGE_TABLES = frozenset({"NL_HS", "SALE"})
 _HS_KEY_COLUMNS = ("KettoNum", "SaleCode", "FromDate")
 _HS_LOSSLESS_TEXT_WIDTHS = {
@@ -625,7 +629,7 @@ _HC_LOSSLESS_TEXT_WIDTHS = {
 }
 _HN_STORAGE_TABLES = frozenset({"NL_HN", "HANSYOKU"})
 _HN_KEY_COLUMNS = ("HansyokuNum",)
-_HN_BLANK_TEXT_FIELDS = frozenset({"BameiKana", "BameiEng", "SanchiName"})
+_HN_BLANK_TEXT_FIELDS = frozenset({"reserved", "DelKubun", "BameiKana", "BameiEng", "SanchiName"})
 _HN_LOSSLESS_TEXT_WIDTHS = {
     "NL_HN": {
         "RecordSpec": 2,
@@ -1053,6 +1057,11 @@ _WF_STANDARD_CHILD_TABLE = "JYUSYOSIKI"
 _WF_STANDARD_STORAGE_TABLES = frozenset({_WF_STANDARD_HEAD_TABLE})
 _WF_STORAGE_TABLES = _WF_NATIVE_STORAGE_TABLES | _WF_STANDARD_STORAGE_TABLES
 _WF_KEY_COLUMNS = ("Year", "MonthDay")
+_WF_BLANK_TEXT_FIELDS = {
+    "NL_WF": frozenset({"Yobi1", "Yobi2"}),
+    "RT_WF": frozenset({"Yobi1", "Yobi2"}),
+    "JYUSYOSIKI_HEAD": frozenset({"reserved1", "reserved2"}),
+}
 _WF_LEGACY_STANDARD_TABLE = "WIN5"
 _WF_RACE_SPLIT = (("JyoCD", 0, 2), ("Kaiji", 2, 4), ("Nichiji", 4, 6), ("RaceNum", 6, 8))
 # JYUSYOSIKI (the WF child) is never a resolved standard owner name; preflight
@@ -1747,6 +1756,7 @@ def verify_hr_storage_schema(
         schema_sql,
         allow_missing_columns=allow_missing_columns,
         storage_label="HR",
+        lossless_text_widths=_HR_LOSSLESS_TEXT_WIDTHS[table_name],
     )
     _verify_hr_key_storage_types(database, table_name)
     _verify_hr_key_not_null_constraints(database, table_name)
@@ -4479,6 +4489,13 @@ def validate_wf_record(record: dict, table_name: str) -> bool:
         ]
         if conflicts:
             raise SchemaMigrationError(f"conflicting WF alias values: {conflicts}")
+        missing_reserved = [
+            name for name in WFParser.RESERVED_SPAN_WIDTHS if value_for(name) is None
+        ]
+        if missing_reserved:
+            raise SchemaMigrationError(
+                f"WF record must preserve reserved spans: {missing_reserved}"
+            )
         body_names = (
             "Yobi1",
             *WFParser.RACE_INFO_FIELDS,
@@ -7783,6 +7800,19 @@ def convert_record_types(record: dict, table_name: str) -> dict:
     if not column_types:
         return record
 
+    # テーブル側の判定はレコード内で不変なので、フィールドのループへ入る前に
+    # 1 回だけ引く。RACE の実走はフィールドを約 3,600 万回回すため、ここを
+    # ループ内に置くと同じ判定が数億回走る。
+    is_cs_record = record.get("RecordSpec") == "CS"
+    is_hr = table_name in _HR_STORAGE_TABLES
+    is_hn = table_name in _HN_STORAGE_TABLES
+    is_odds = table_name in _ODDS_STORAGE_TABLES
+    is_h6 = table_name in _H6_STORAGE_TABLES
+    is_h1 = table_name in _H1_STORAGE_TABLES
+    is_um = table_name in _UM_ERASE_STORAGE_TABLES
+    is_sk = table_name in _SK_STORAGE_TABLES
+    wf_blank_text_fields = _WF_BLANK_TEXT_FIELDS.get(table_name, frozenset())
+
     converted = {}
 
     for field_name, value in record.items():
@@ -7792,8 +7822,8 @@ def convert_record_types(record: dict, table_name: str) -> dict:
         col_type = column_types[field_name]
 
         if (
-            field_name == "CourseEx"
-            and record.get("RecordSpec") == "CS"
+            is_cs_record
+            and field_name == "CourseEx"
             and isinstance(value, str)
             and not value.strip()
         ):
@@ -7801,7 +7831,7 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _HN_STORAGE_TABLES
+            is_hn
             and field_name in _HN_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()
@@ -7813,7 +7843,25 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _ODDS_STORAGE_TABLES
+            is_hr
+            and field_name in _HR_RESERVED_FLAG_FIELDS
+            and isinstance(value, str)
+            and not value.strip()
+        ):
+            # The sixth entry in each official HR flag array is a one-byte
+            # reserved span. Preserve a validated blank instead of turning it
+            # into SQL NULL; nonblank bytes stay text via the storage schema.
+            converted[field_name] = ""
+            continue
+
+        if field_name in wf_blank_text_fields and isinstance(value, str) and not value.strip():
+            # WF's two official reserved spans are lossless transport fields.
+            # Empty provider bytes remain an empty value, not an absent value.
+            converted[field_name] = ""
+            continue
+
+        if (
+            is_odds
             and field_name in _ODDS_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()
@@ -7824,7 +7872,7 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _H6_STORAGE_TABLES
+            is_h6
             and field_name in _H6_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()
@@ -7835,7 +7883,7 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _H1_STORAGE_TABLES
+            is_h1
             and field_name in _H1_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()
@@ -7846,7 +7894,7 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _UM_ERASE_STORAGE_TABLES
+            is_um
             and field_name in _UM_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()
@@ -7858,7 +7906,7 @@ def convert_record_types(record: dict, table_name: str) -> dict:
             continue
 
         if (
-            table_name in _SK_STORAGE_TABLES
+            is_sk
             and field_name in _SK_BLANK_TEXT_FIELDS
             and isinstance(value, str)
             and not value.strip()

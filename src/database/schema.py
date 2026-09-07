@@ -509,7 +509,7 @@ SCHEMAS = {
             FuseirituFlag3 INTEGER,
             FuseirituFlag4 INTEGER,
             FuseirituFlag5 INTEGER,
-            FuseirituFlag6 INTEGER,
+            FuseirituFlag6 TEXT,
             FuseirituFlag7 INTEGER,
             FuseirituFlag8 INTEGER,
             FuseirituFlag9 INTEGER,
@@ -518,7 +518,7 @@ SCHEMAS = {
             TokubaraiFlag3 INTEGER,
             TokubaraiFlag4 INTEGER,
             TokubaraiFlag5 INTEGER,
-            TokubaraiFlag6 INTEGER,
+            TokubaraiFlag6 TEXT,
             TokubaraiFlag7 INTEGER,
             TokubaraiFlag8 INTEGER,
             TokubaraiFlag9 INTEGER,
@@ -527,7 +527,7 @@ SCHEMAS = {
             HenkanFlag3 INTEGER,
             HenkanFlag4 INTEGER,
             HenkanFlag5 INTEGER,
-            HenkanFlag6 INTEGER,
+            HenkanFlag6 TEXT,
             HenkanFlag7 INTEGER,
             HenkanFlag8 INTEGER,
             HenkanFlag9 INTEGER,
@@ -1754,7 +1754,7 @@ SCHEMAS = {
             FuseirituFlag3 INTEGER,
             FuseirituFlag4 INTEGER,
             FuseirituFlag5 INTEGER,
-            FuseirituFlag6 INTEGER,
+            FuseirituFlag6 TEXT,
             FuseirituFlag7 INTEGER,
             FuseirituFlag8 INTEGER,
             FuseirituFlag9 INTEGER,
@@ -1763,7 +1763,7 @@ SCHEMAS = {
             TokubaraiFlag3 INTEGER,
             TokubaraiFlag4 INTEGER,
             TokubaraiFlag5 INTEGER,
-            TokubaraiFlag6 INTEGER,
+            TokubaraiFlag6 TEXT,
             TokubaraiFlag7 INTEGER,
             TokubaraiFlag8 INTEGER,
             TokubaraiFlag9 INTEGER,
@@ -1772,7 +1772,7 @@ SCHEMAS = {
             HenkanFlag3 INTEGER,
             HenkanFlag4 INTEGER,
             HenkanFlag5 INTEGER,
-            HenkanFlag6 INTEGER,
+            HenkanFlag6 TEXT,
             HenkanFlag7 INTEGER,
             HenkanFlag8 INTEGER,
             HenkanFlag9 INTEGER,
@@ -2727,10 +2727,7 @@ def _build_sokuho_timeseries_schema(source_table: str, target_table: str) -> str
         "RecordSpec TEXT,\n            SourceSpec TEXT,\n",
         1,
     )
-    return schema_sql.replace(
-        "HassoTime)",
-        "HassoTime, SourceSpec, CollectedAt)",
-    )
+    return schema_sql.replace("HassoTime)", "HassoTime, SourceSpec)")
 
 
 for _source_table, _target_table in (

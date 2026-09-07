@@ -120,16 +120,25 @@ def _recover_com_buffer(value, expected_size: int, method_name: str) -> bytes:
         # これで選ぶ。長さの合った候補だけを採る。
         candidates: list[bytes] = []
         failures: list[str] = []
-        for build in (
-            lambda: value.encode("latin-1"),
-            lambda: value.encode("cp932"),
-            lambda: _decode_via_cp1252_table(value, method_name),
-        ):
+
+        def build_candidate(build) -> bool:
+            """候補を 1 つ作る。作れたら True、作れなければ False。"""
             try:
                 candidates.append(build())
             except UnicodeEncodeError as exc:
                 bad = exc.object[exc.start]
                 failures.append(f"U+{ord(bad):04X}")
+                return False
+            return True
+
+        latin1_built = build_candidate(lambda: value.encode("latin-1"))
+        build_candidate(lambda: value.encode("cp932"))
+        # 表の経路は 1 文字ずつ Python で回るので高い（実走で実時間の 3.8%）。
+        # latin-1 が通った値は符号位置がすべて 0xFF 以下で、表の経路もその範囲を
+        # 1 文字 1 バイトで写すだけなので、同じバイト列にしかならない。候補は集合
+        # として突き合わせるため、作らずに飛ばしても選択も曖昧さの判定も変わらない。
+        if not latin1_built:
+            build_candidate(lambda: _decode_via_cp1252_table(value, method_name))
 
         # 長さがちょうど合うものを最優先する。「以上」だけで選ぶと、CP1252 で
         # marshaling されたバッファに cp932 を当てた結果（1 文字 2 バイトに
@@ -240,6 +249,9 @@ class JVLinkWrapper:
         self._is_open = False
         self._needs_close = False
         self._com_initialized = False
+        # JVInit is application-level initialization, not per-JVOpen setup.
+        # Keep the established session so repeated fetches reuse it.
+        self._initialized = False
 
         try:
             import sys
@@ -263,9 +275,16 @@ class JVLinkWrapper:
             raise JVLinkError(f"Failed to create JV-Link COM object: {e}")
 
     def jv_init(self) -> int:
-        """Initialize JV-Link.
+        """Initialize JV-Link once for this JV-Link session.
 
         Must be called before any other JV-Link operations.
+
+        The official spec treats JVInit as application initialization: it is
+        not re-issued per JVOpen. Repeated calls therefore reuse the session
+        established by the first successful JVInit instead of re-entering COM,
+        so one process holds one JV-Link session no matter how many JVOpen /
+        JVClose pairs run inside it. ``cleanup()`` and ``reinitialize_com()``
+        drop the session, and the next call initializes again.
 
         Note:
             Service key must be configured in JRA-VAN DataLab application
@@ -283,9 +302,19 @@ class JVLinkWrapper:
             >>> result = wrapper.jv_init()
             >>> assert result == 0
         """
+        if getattr(self, "_initialized", False):
+            logger.debug("JV-Link already initialized; reusing session", sid=self.sid)
+            return JV_RT_SUCCESS
+
         try:
+            # cleanup() deliberately releases the COM object.  Reusing the
+            # wrapper afterwards starts a new explicit session, just as the
+            # bridge transport starts a new process after its cleanup().
+            if self._jvlink is None:
+                self.reinitialize_com()
             result = self._jvlink.JVInit(self.sid)
             if result == JV_RT_SUCCESS:
+                self._initialized = True
                 logger.info("JV-Link initialized successfully", sid=self.sid)
             else:
                 logger.error("JV-Link initialization failed", error_code=result, sid=self.sid)
@@ -937,6 +966,8 @@ class JVLinkWrapper:
 
             self._is_open = False
             self._needs_close = False
+            # The recreated COM object carries no JV-Link session.
+            self._initialized = False
 
             logger.info("COM component reinitialized successfully", sid=self.sid)
 
@@ -978,6 +1009,10 @@ class JVLinkWrapper:
                 self.jv_close()
             except Exception:
                 pass
+
+        # Dropping the COM object ends the JV-Link session, so a later
+        # jv_init() must reach JVInit again instead of reusing the flag.
+        self._initialized = False
 
         # Release COM object reference BEFORE CoUninitialize
         # This prevents "Win32 exception occurred releasing IUnknown" warnings
