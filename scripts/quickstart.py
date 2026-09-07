@@ -302,6 +302,17 @@ def _get_startup_folder() -> Optional[Path]:
         return None
 
 
+# OS起動時に自動実行する background_updater.py へ渡す引数。
+# 既定値に暗黙に追従させないため、値をここに明示する。
+# background_updater.py の DEFAULT_* 定数と一致していることを
+# tests/test_service_exposure_contract.py が検査する。
+AUTO_START_SERVICE_ARGS = (
+    "--api-bind", "127.0.0.1",
+    "--api-port", "8765",
+    "--interval", "60",
+)
+
+
 def _get_startup_batch_path() -> Optional[Path]:
     """スタートアップに配置するバッチファイルのパスを取得"""
     startup_folder = _get_startup_folder()
@@ -331,12 +342,21 @@ def _enable_auto_start() -> bool:
         python_exe = sys.executable
         script_path = project_root / "scripts" / "background_updater.py"
 
+        # 引数は明示的に書き出す。既定値に頼ると、将来 background_updater.py の
+        # 既定が変わったときに、利用者が意図していない設定で OS 起動のたびに
+        # 立ち上がることになる。値は AUTO_START_SERVICE_ARGS を正本とし、
+        # tests/test_service_exposure_contract.py が background_updater.py の
+        # 定数と一致していることを検査する。
+        service_args = " ".join(f'"{arg}"' if " " in arg else arg
+                                for arg in AUTO_START_SERVICE_ARGS)
+
         batch_content = f'''@echo off
 REM JLTSQL バックグラウンド更新サービス自動起動
 REM このファイルはJLTSQLセットアップにより作成されました
+REM 引数は明示的に指定しています（既定値の変更に暗黙に追従させないため）
 
 cd /d "{project_root}"
-start "" /MIN "{python_exe}" "{script_path}"
+start "" /MIN "{python_exe}" "{script_path}" {service_args}
 '''
         batch_path.write_text(batch_content, encoding='cp932')
         return True
@@ -3524,7 +3544,8 @@ def main():
     parser.add_argument("--pg-user", type=str, default="postgres",
                         help="PostgreSQLユーザー名（デフォルト: postgres）")
     parser.add_argument("--pg-password", type=str, default=None,
-                        help="PostgreSQLパスワード（デフォルト: PGPASSWORD環境変数またはプロンプト）")
+                        help="[非推奨] PostgreSQLパスワード。コマンドラインに平文で残るため、"
+                             "PGPASSWORD環境変数を使ってください")
     parser.add_argument("--from-date", type=str, default=None,
                         help="取得開始日 (YYYYMMDD形式、デフォルト: 19860101)")
     parser.add_argument("--to-date", type=str, default=None,
@@ -3610,14 +3631,23 @@ def main():
             settings['pg_database'] = args.pg_database
             settings['pg_user'] = args.pg_user
 
-            # パスワードは引数 > 環境変数 > デフォルト(postgres)の優先順位
-            if args.pg_password:
-                settings['pg_password'] = args.pg_password
-            elif 'PGPASSWORD' in os.environ:
+            # パスワードは PGPASSWORD 環境変数から受け取る。--pg-password はプロセスの
+            # コマンドラインに残り、同一セッションの他プロセス（tasklist /v、
+            # Win32_Process.CommandLine、Sysmon event ID 1）から読めるため非推奨。
+            # daily_sync.bat が既に採っている扱いに揃える。
+            if 'PGPASSWORD' in os.environ:
                 settings['pg_password'] = os.environ['PGPASSWORD']
+                if args.pg_password:
+                    print("[WARN] --pg-password は非推奨です。PGPASSWORD 環境変数の値を使用します。")
+            elif args.pg_password:
+                print("[WARN] --pg-password は非推奨です。パスワードはプロセスのコマンドラインに残り、")
+                print("       同一セッションの他プロセスから読めます。PGPASSWORD 環境変数を使ってください。")
+                settings['pg_password'] = args.pg_password
             else:
-                # デフォルトパスワード
-                settings['pg_password'] = 'postgres'
+                # 既定値 'postgres' で黙って CREATE DATABASE まで進むのをやめる。
+                print("[ERROR] PostgreSQL のパスワードが指定されていません。")
+                print("        PGPASSWORD 環境変数を設定してから再実行してください。")
+                sys.exit(1)
 
             # CLIモードでもデータベース自動作成
             print(f"PostgreSQLデータベース '{args.pg_database}' を確認中...")
