@@ -176,8 +176,7 @@ def test_existing_seven_key_jravan_table_is_rejected_without_mutation(tmp_path) 
     from src.importer.importer import DataImporter
 
     db = SQLiteDatabase({"path": str(tmp_path / "legacy-jravan.db")})
-    importer_class = DataImporter
-    importer = importer_class(db, use_jravan_schema=True)
+    importer = DataImporter(db, use_jravan_schema=True)
     with db:
         db.execute(
             "CREATE TABLE UMA_RACE (Year INTEGER, MonthDay INTEGER, JyoCD TEXT, "
@@ -206,8 +205,7 @@ def test_jravan_importer_auto_commit_false_keeps_migration_and_row_in_caller_tra
     from src.importer.importer import DataImporter
 
     db = SQLiteDatabase({"path": str(tmp_path / "transaction.db")})
-    importer_class = DataImporter
-    importer = importer_class(db, batch_size=1, use_jravan_schema=True)
+    importer = DataImporter(db, batch_size=1, use_jravan_schema=True)
     with db:
         db.execute(
             "CREATE TABLE UMA_RACE (Year INTEGER NOT NULL, MonthDay INTEGER NOT NULL, "
@@ -448,9 +446,8 @@ def test_jravan_importers_reject_malformed_semantic_primary_key(tmp_path) -> Non
     db = SQLiteDatabase({"path": str(tmp_path / "jravan.db")})
     with db:
         db.execute(JRAVAN_SCHEMAS["UMA_RACE"])
-        importer_class = DataImporter
         with pytest.raises(SchemaMigrationError):
-            importer_class(db, use_jravan_schema=True).import_records(iter([record]))
+            DataImporter(db, use_jravan_schema=True).import_records(iter([record]))
         count = db.fetch_one("SELECT COUNT(*) AS count FROM UMA_RACE")
 
     assert count == {"count": 0}

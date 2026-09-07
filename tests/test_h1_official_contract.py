@@ -536,7 +536,7 @@ def test_h1_importer_paths_reject_each_unsafe_contract_before_dml(
 
 @pytest.mark.parametrize("defect", DEFECTS)
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-def test_h1_single_record_path_rejects_each_unsafe_contract_before_dml(
+def test_h1_one_record_rejects_each_unsafe_contract_before_dml(
     tmp_path: Path,
     defect: str,
     auto_commit: bool,
@@ -547,7 +547,7 @@ def test_h1_single_record_path_rejects_each_unsafe_contract_before_dml(
         database.commit()
         importer = DataImporter(database)
         with pytest.raises(SchemaMigrationError):
-            import_one(importer, h1_row(), auto_commit=auto_commit)
+            importer.import_records(iter([h1_row()]), auto_commit=auto_commit)
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_H1") == {"count": 0}
 
 

@@ -6,8 +6,8 @@ PostgreSQL、SQLiteで全スキーマを対話的に診断します。
 pytest/release gateではありません。
 """
 
-import sys
 import os
+import sys
 from pathlib import Path
 
 # Windowsコンソールでのエンコーディング問題を回避
@@ -18,12 +18,12 @@ if sys.platform == 'win32':
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.parser.factory import ParserFactory, ALL_RECORD_TYPES
-from src.database.sqlite_handler import SQLiteDatabase
 from src.database.postgresql_handler import PostgreSQLDatabase
-from src.database.schema import SchemaManager, SCHEMAS
+from src.database.schema import SCHEMAS, SchemaManager
+from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
 from src.jvlink.wrapper import JVLinkWrapper
+from src.parser.factory import ParserFactory
 
 
 class DatabaseTester:
@@ -84,7 +84,7 @@ class DatabaseTester:
                 nl_tables = sum(1 for k, v in results.items() if k.startswith('NL_') and v)
                 rt_tables = sum(1 for k, v in results.items() if k.startswith('RT_') and v)
 
-                print(f"\nテーブル統計:")
+                print("\nテーブル統計:")
                 print(f"  NL_* (蓄積系): {nl_tables}/38")
                 print(f"  RT_* (速報系): {rt_tables}/21")
 
@@ -146,7 +146,7 @@ class DatabaseTester:
                     return False
 
                 # レコード読み込みとインポート
-                records = []
+                imported = 0
                 record_types = set()
 
                 for i in range(test_data_count):
@@ -162,12 +162,18 @@ class DatabaseTester:
                         if rec_type:
                             record_types.add(rec_type)
 
-                        records.append(record)
+                        # インポート。診断ツールなので1件の不良で全体を止めない
+                        # （import_records は import_single_record と違って送出する）
+                        failed_before = importer.get_statistics()['records_failed']
+                        try:
+                            importer.import_records(iter([record]))
+                        except Exception as error:
+                            print(f"  スキップ ({rec_type}): {error}")
+                            continue
+                        if importer.get_statistics()['records_failed'] == failed_before:
+                            imported += 1
 
                 jv.jv_close()
-
-                # インポート
-                imported = importer.import_records(iter(records))['records_imported']
 
                 self.results['data_imported'] = imported
 

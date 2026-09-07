@@ -396,7 +396,7 @@ def test_tk_importer_revalidates_private_snapshot_before_any_mutation(
     assert child_count == 2
 
 
-def test_tk_single_record_path_writes_both_tables_atomically(tmp_path) -> None:
+def test_tk_one_record_writes_both_tables_atomically(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "single.db")})
     parsed = TKParser().parse(build_tk_record(horse_count=2)[0])
     assert parsed is not None

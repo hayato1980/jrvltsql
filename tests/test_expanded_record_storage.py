@@ -403,10 +403,9 @@ def test_sqlite_realtime_batch_retains_cancellation_then_applies_zero_erase(sqli
 
 def _assert_historical_importer_retains_cancellation_then_applies_zero_erase(
     db,
-    importer_class,
 ):
     _create_tables(db, ["NL_RA", "NL_O1"])
-    importer = importer_class(db, batch_size=100)
+    importer = DataImporter(db, batch_size=100)
     race_key = {
         "RecordSpec": "RA",
         "MakeDate": "20260419",
@@ -455,7 +454,6 @@ def test_sqlite_historical_importers_retain_cancellation_then_apply_zero_erase(
 ):
     _assert_historical_importer_retains_cancellation_then_applies_zero_erase(
         sqlite_db,
-        DataImporter,
     )
 
 
@@ -470,16 +468,14 @@ def test_postgresql_historical_importers_retain_cancellation_then_apply_zero_era
 ):
     _assert_historical_importer_retains_cancellation_then_applies_zero_erase(
         postgresql_db,
-        DataImporter,
     )
 
 
 def _assert_standard_race_retains_legacy_cancellation_then_applies_current_erase(
     db,
-    importer_class,
 ):
     _create_jravan_tables(db, ["RACE"])
-    importer = importer_class(db, use_jravan_schema=True)
+    importer = DataImporter(db, use_jravan_schema=True)
     race_key = {
         "RecordSpec": "RA",
         "MakeDate": "20260419",
@@ -505,25 +501,23 @@ def _assert_standard_race_retains_legacy_cancellation_then_applies_current_erase
 def test_sqlite_standard_race_cancellation_and_erase(sqlite_db):
     _assert_standard_race_retains_legacy_cancellation_then_applies_current_erase(
         sqlite_db,
-        DataImporter,
     )
 
 
 def test_postgresql_standard_race_cancellation_and_erase(postgresql_db):
     _assert_standard_race_retains_legacy_cancellation_then_applies_current_erase(
         postgresql_db,
-        DataImporter,
     )
 
 
-def _assert_standard_o1_preserves_header_and_split_children(db, importer_class):
+def _assert_standard_o1_preserves_header_and_split_children(db):
     _create_jravan_tables(
         db,
         ["ODDS_TANPUKUWAKU_HEAD", "ODDS_TANPUKU", "ODDS_WAKU"],
     )
     # The horse and bracket portions cross a flush boundary, so a later
     # partial header must not erase vote totals from the earlier portion.
-    importer = importer_class(db, use_jravan_schema=True, batch_size=2)
+    importer = DataImporter(db, use_jravan_schema=True, batch_size=2)
     cancelled = _flatten(O1Parser().parse(_make_o1_record(data_kubun="9")))
 
     stats = importer.import_records(iter(cancelled))
@@ -560,7 +554,7 @@ def _assert_standard_o1_preserves_header_and_split_children(db, importer_class):
 def test_sqlite_standard_o1_preserves_header_and_split_children(
     sqlite_db,
 ):
-    _assert_standard_o1_preserves_header_and_split_children(sqlite_db, DataImporter)
+    _assert_standard_o1_preserves_header_and_split_children(sqlite_db)
 
 
 def test_postgresql_standard_o1_preserves_header_and_split_children(
@@ -568,7 +562,6 @@ def test_postgresql_standard_o1_preserves_header_and_split_children(
 ):
     _assert_standard_o1_preserves_header_and_split_children(
         postgresql_db,
-        DataImporter,
     )
 
 
@@ -725,7 +718,7 @@ def test_postgresql_standard_odds_duplicate_existing_keys_fail_closed(postgresql
 
 
 def _assert_standard_odds_replaces_snapshot_and_reuses_verification(
-    db, importer_class, monkeypatch
+    db,  monkeypatch
 ):
     _create_jravan_tables(db, ["ODDS_UMAREN_HEAD", "ODDS_UMAREN"])
     verification_calls = 0
@@ -760,7 +753,7 @@ def _assert_standard_odds_replaces_snapshot_and_reuses_verification(
         {**base, "HassoTime": "04191550", "Kumi": "0102", "_raw": b"second"},
     ]
 
-    stats = importer_class(
+    stats = DataImporter(
         db,
         use_jravan_schema=True,
         batch_size=1,
@@ -776,7 +769,7 @@ def _assert_standard_odds_replaces_snapshot_and_reuses_verification(
 
 def test_sqlite_standard_odds_replaces_snapshot_and_reuses_verification(sqlite_db, monkeypatch):
     _assert_standard_odds_replaces_snapshot_and_reuses_verification(
-        sqlite_db, DataImporter, monkeypatch
+        sqlite_db,  monkeypatch
     )
 
 
@@ -784,11 +777,11 @@ def test_postgresql_standard_odds_replaces_snapshot_and_reuses_verification(
     postgresql_db, monkeypatch
 ):
     _assert_standard_odds_replaces_snapshot_and_reuses_verification(
-        postgresql_db, DataImporter, monkeypatch
+        postgresql_db,  monkeypatch
     )
 
 
-def _assert_standard_odds_migrates_existing_child_columns(db, importer_class):
+def _assert_standard_odds_migrates_existing_child_columns(db):
     _create_jravan_tables(db, ["ODDS_UMAREN_HEAD"])
     db.execute(
         "CREATE TABLE ODDS_UMAREN ("
@@ -818,18 +811,18 @@ def _assert_standard_odds_migrates_existing_child_columns(db, importer_class):
         "Ninki": "001",
     }
 
-    stats = importer_class(db, use_jravan_schema=True).import_records(iter([record]))
+    stats = DataImporter(db, use_jravan_schema=True).import_records(iter([record]))
 
     assert stats["records_failed"] == 0
     assert db.fetch_one("SELECT Ninki AS ninki FROM ODDS_UMAREN") == {"ninki": "001"}
 
 
 def test_sqlite_standard_odds_migrates_existing_child_columns(sqlite_db):
-    _assert_standard_odds_migrates_existing_child_columns(sqlite_db, DataImporter)
+    _assert_standard_odds_migrates_existing_child_columns(sqlite_db)
 
 
 def test_postgresql_standard_odds_migrates_existing_child_columns(postgresql_db):
-    _assert_standard_odds_migrates_existing_child_columns(postgresql_db, DataImporter)
+    _assert_standard_odds_migrates_existing_child_columns(postgresql_db)
 
 
 def test_sqlite_standard_o2_empty_snapshot_preserves_total_and_clears_children(
@@ -925,9 +918,9 @@ _STANDARD_H1_TABLES = (
 _STANDARD_H6_TABLES = ("HYOSU2", "HYOSU_SANRENTAN")
 
 
-def _assert_standard_h1_replaces_complete_snapshot(db, importer_class):
+def _assert_standard_h1_replaces_complete_snapshot(db):
     _create_jravan_tables(db, _STANDARD_H1_TABLES)
-    importer = importer_class(db, use_jravan_schema=True, batch_size=1)
+    importer = DataImporter(db, use_jravan_schema=True, batch_size=1)
     populated = _flatten(H1Parser().parse(_make_h1_vote_record()))
 
     stats = importer.import_records(iter(populated))
@@ -993,9 +986,9 @@ def _assert_standard_h1_replaces_complete_snapshot(db, importer_class):
         assert db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {table_name}")["cnt"] == 0
 
 
-def _assert_standard_h6_replaces_complete_snapshot(db, importer_class):
+def _assert_standard_h6_replaces_complete_snapshot(db):
     _create_jravan_tables(db, _STANDARD_H6_TABLES)
-    importer = importer_class(db, use_jravan_schema=True, batch_size=1)
+    importer = DataImporter(db, use_jravan_schema=True, batch_size=1)
     populated = _flatten(H6Parser().parse(_make_h6_vote_record()))
 
     stats = importer.import_records(iter(populated))
@@ -1049,19 +1042,19 @@ def _assert_standard_h6_replaces_complete_snapshot(db, importer_class):
 
 
 def test_sqlite_standard_h1_replaces_complete_snapshot(sqlite_db):
-    _assert_standard_h1_replaces_complete_snapshot(sqlite_db, DataImporter)
+    _assert_standard_h1_replaces_complete_snapshot(sqlite_db)
 
 
 def test_postgresql_standard_h1_replaces_complete_snapshot(postgresql_db):
-    _assert_standard_h1_replaces_complete_snapshot(postgresql_db, DataImporter)
+    _assert_standard_h1_replaces_complete_snapshot(postgresql_db)
 
 
 def test_sqlite_standard_h6_replaces_complete_snapshot(sqlite_db):
-    _assert_standard_h6_replaces_complete_snapshot(sqlite_db, DataImporter)
+    _assert_standard_h6_replaces_complete_snapshot(sqlite_db)
 
 
 def test_postgresql_standard_h6_replaces_complete_snapshot(postgresql_db):
-    _assert_standard_h6_replaces_complete_snapshot(postgresql_db, DataImporter)
+    _assert_standard_h6_replaces_complete_snapshot(postgresql_db)
 
 
 def test_h6_empty_full_record_retains_physical_totals_on_header():
@@ -1167,7 +1160,7 @@ def test_sqlite_standard_vote_verification_is_reused(sqlite_db, monkeypatch):
     assert verification_calls == 1
 
 
-def _assert_standard_h6_rejects_a_drifted_child_table(db, importer_class):
+def _assert_standard_h6_rejects_a_drifted_child_table(db):
     """A drifted H6 child table fails closed instead of being auto-migrated.
 
     The official 3連単 snapshot needs the 人気順 column and a NOT NULL race key to
@@ -1186,17 +1179,17 @@ def _assert_standard_h6_rejects_a_drifted_child_table(db, importer_class):
     rows = _flatten(H6Parser().parse(_make_h6_vote_record()))
 
     with pytest.raises(SchemaMigrationError):
-        importer_class(db, use_jravan_schema=True).import_records(iter(rows))
+        DataImporter(db, use_jravan_schema=True).import_records(iter(rows))
 
     assert db.fetch_one("SELECT COUNT(*) AS cnt FROM HYOSU_SANRENTAN")["cnt"] == 0
 
 
 def test_sqlite_standard_h6_rejects_a_drifted_child_table(sqlite_db):
-    _assert_standard_h6_rejects_a_drifted_child_table(sqlite_db, DataImporter)
+    _assert_standard_h6_rejects_a_drifted_child_table(sqlite_db)
 
 
 def test_postgresql_standard_h6_rejects_a_drifted_child_table(postgresql_db):
-    _assert_standard_h6_rejects_a_drifted_child_table(postgresql_db, DataImporter)
+    _assert_standard_h6_rejects_a_drifted_child_table(postgresql_db)
 
 
 def test_sqlite_standard_h1_duplicate_header_keys_fail_closed(sqlite_db):

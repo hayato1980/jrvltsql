@@ -495,7 +495,7 @@ def test_hc_single_record_uses_the_same_validator_and_exact_delete(
         invalid = parsed_record()
         invalid["ChokyoTime"] = "1160"
         with pytest.raises(SchemaMigrationError):
-            import_one(importer, invalid, auto_commit=auto_commit)
+            importer.import_records(iter([invalid]), auto_commit=auto_commit)
         delete = parsed_record(data_kubun="0")
         delete["HaronTime4"] = "not interpreted"
         assert import_one(importer, delete, auto_commit=auto_commit)

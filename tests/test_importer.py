@@ -40,7 +40,7 @@ class TestDataImporter:
         assert importer._records_imported == 0
         assert importer._records_failed == 0
 
-    def test_import_single_record(self, db, importer):
+    def test_import_one_record(self, db, importer):
         """Test importing single record."""
         # Setup database
         with db:

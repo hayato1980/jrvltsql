@@ -96,7 +96,7 @@ class TestInvalidDataHandling(unittest.TestCase):
         }
 
         with self.assertRaises(SchemaMigrationError):
-            import_one(self.importer, wrong_record)
+            self.importer.import_records(iter([wrong_record]))
 
     def test_duplicate_key_violation(self):
         """Test handling of duplicate key constraint violations."""

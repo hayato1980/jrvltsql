@@ -211,15 +211,15 @@ def test_tc_native_standard_and_realtime_schemas_encode_the_official_identity() 
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "table_name", "standard"),
+    ("table_name", "standard"),
     [
-        (DataImporter, "NL_TC", False),
-        (DataImporter, "HASSOU_JIKOKU_CHANGE", True),
+        ("NL_TC", False),
+        ("HASSOU_JIKOKU_CHANGE", True),
     ],
 )
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_tc_provider_revision_replaces_one_official_identity(
-    tmp_path, importer_class, table_name: str, standard: bool, auto_commit: bool
+    tmp_path, table_name: str, standard: bool, auto_commit: bool
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"ordered-{table_name}.db")})
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -228,7 +228,7 @@ def test_tc_provider_revision_replaces_one_official_identity(
     with database:
         database.execute(schema)
         database.commit()
-        result = importer_class(database, batch_size=1, use_jravan_schema=standard).import_records(
+        result = DataImporter(database, batch_size=1, use_jravan_schema=standard).import_records(
             iter([first, revised]), auto_commit=auto_commit
         )
         rows = database.fetch_all(f"SELECT HappyoTime, AtoJi, AtoFun FROM {table_name}")
@@ -443,7 +443,7 @@ def test_tc_single_record_uses_the_same_fail_closed_validator(
         invalid = parsed_tc()
         invalid["AtoFun"] = "60"
         with pytest.raises(SchemaMigrationError):
-            import_one(importer, invalid, auto_commit=auto_commit)
+            importer.import_records(iter([invalid]), auto_commit=auto_commit)
         expected = 1 if auto_commit else 0
         assert database.fetch_one(f"SELECT COUNT(*) AS n FROM {table_name}") == {"n": expected}
 

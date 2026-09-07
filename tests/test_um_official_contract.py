@@ -394,7 +394,7 @@ def test_um_importer_paths_reject_each_unsafe_contract_before_dml(
 
 @pytest.mark.parametrize("defect", DEFECTS)
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-def test_um_single_record_path_rejects_each_unsafe_contract_before_dml(
+def test_um_one_record_rejects_each_unsafe_contract_before_dml(
     tmp_path: Path,
     auto_commit: bool,
     defect: str,
@@ -406,9 +406,9 @@ def test_um_single_record_path_rejects_each_unsafe_contract_before_dml(
         before = database.fetch_all('PRAGMA table_xinfo("NL_UM")')
         importer = DataImporter(database)
         with pytest.raises(SchemaMigrationError):
-            import_one(importer, um_record(), auto_commit=auto_commit)
+            importer.import_records(iter([um_record()]), auto_commit=auto_commit)
         with pytest.raises(SchemaMigrationError):
-            import_one(importer, um_erase(), auto_commit=auto_commit)
+            importer.import_records(iter([um_erase()]), auto_commit=auto_commit)
         assert database.fetch_all('PRAGMA table_xinfo("NL_UM")') == before
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_UM") == {"count": 0}
 

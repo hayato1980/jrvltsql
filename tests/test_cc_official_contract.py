@@ -448,7 +448,7 @@ def test_cc_single_record_uses_the_same_fail_closed_contract(
         invalid = parsed_cc()
         invalid["JiyuCD"] = "9"
         with pytest.raises(SchemaMigrationError):
-            import_one(importer, invalid, auto_commit=auto_commit)
+            importer.import_records(iter([invalid]), auto_commit=auto_commit)
         expected = 1 if auto_commit else 0
         assert database.fetch_one(f"SELECT COUNT(*) AS n FROM {table_name}") == {"n": expected}
 

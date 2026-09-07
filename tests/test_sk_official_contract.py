@@ -378,7 +378,7 @@ def test_sk_importer_paths_reject_each_unsafe_contract_before_dml(
     ),
 )
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-def test_sk_single_record_path_rejects_each_unsafe_contract_before_dml(
+def test_sk_one_record_rejects_each_unsafe_contract_before_dml(
     tmp_path: Path,
     auto_commit: bool,
     defect: str,
@@ -392,9 +392,9 @@ def test_sk_single_record_path_rejects_each_unsafe_contract_before_dml(
         before = database.fetch_all('PRAGMA table_xinfo("NL_SK")')
         importer = DataImporter(database)
         with pytest.raises(SchemaMigrationError):
-            import_one(importer, sk_record(), auto_commit=auto_commit)
+            importer.import_records(iter([sk_record()]), auto_commit=auto_commit)
         with pytest.raises(SchemaMigrationError):
-            import_one(importer, sk_erase(), auto_commit=auto_commit)
+            importer.import_records(iter([sk_erase()]), auto_commit=auto_commit)
         assert database.fetch_all('PRAGMA table_xinfo("NL_SK")') == before
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_SK") == {"count": 0}
 

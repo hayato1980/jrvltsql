@@ -383,7 +383,7 @@ def _create_ck_tables(database: SQLiteDatabase) -> None:
 
 
 def test_ck_importers_store_update_delete_in_provider_order_and_reconnect(tmp_path) -> None:
-    path = tmp_path / f"{DataImporter.__name__}.db"
+    path = tmp_path / "DataImporter.db"
     initial = CKParser().parse(build_record()[0])
     updated_record = build_record(
         data_kubun="2",
@@ -451,7 +451,7 @@ def test_ck_parent_migration_marks_legacy_rows_incomplete_until_reimport(tmp_pat
         }
 
 
-def test_ck_single_record_api_uses_the_same_coupled_contract(tmp_path) -> None:
+def test_ck_one_record_uses_the_coupled_contract(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "single.db")})
     parsed = CKParser().parse(build_record()[0])
     deletion = CKParser().parse(build_record(data_kubun="0")[0])

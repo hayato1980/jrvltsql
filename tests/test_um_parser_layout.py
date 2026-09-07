@@ -362,14 +362,10 @@ UNSAFE_UNIQUE_STANDARD_UMA_SCHEMA = JRAVAN_SCHEMAS["UMA"].replace(
 )
 
 
-def _import_um_records(database, records, auto_commit, *, standard):
-    return DataImporter(database, use_jravan_schema=standard).import_records(
+def _import_standard_um_records(database, records, auto_commit):
+    return DataImporter(database, use_jravan_schema=True).import_records(
         iter(records), auto_commit=auto_commit
     )
-
-
-def _import_standard_um_records(database, records, auto_commit):
-    return _import_um_records(database, records, auto_commit, standard=True)
 
 
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
@@ -474,7 +470,9 @@ def _defective_native_um_schema(defect):
 
 
 def _import_native_um_records(database, records, auto_commit):
-    return _import_um_records(database, records, auto_commit, standard=False)
+    return DataImporter(database, use_jravan_schema=False).import_records(
+        iter(records), auto_commit=auto_commit
+    )
 
 
 def test_um_native_storage_keeps_distinct_keys_and_updates_exact_key(tmp_path):
@@ -589,7 +587,7 @@ def test_um_native_missing_table_is_rejected_before_mutation(tmp_path):
 
 
 def test_um_native_missing_table_is_not_cached_as_verified(tmp_path):
-    database = SQLiteDatabase({"path": str(tmp_path / f"native-cache-{DataImporter.__name__}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / "native-cache-DataImporter.db")})
     with database:
         importer = DataImporter(database)
         with pytest.raises(SchemaMigrationError, match="Required table does not exist: NL_UM"):
@@ -839,7 +837,7 @@ def test_um_native_mixed_dual_rejects_unsafe_target_before_either_mutates(
 
 
 def test_um_standard_wrong_key_is_rejected_before_any_mutation(tmp_path):
-    database = SQLiteDatabase({"path": str(tmp_path / f"legacy-{DataImporter.__name__}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / "legacy-DataImporter.db")})
     with database:
         database.execute(OBSOLETE_STANDARD_UMA_SCHEMA)
         database.execute(

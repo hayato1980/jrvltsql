@@ -504,7 +504,7 @@ def test_jg_legacy_weight_change_only_storage_is_refused_without_row_loss(
         for auto_commit in (True, False)
     ],
 )
-def test_jg_data_importer_single_record_uses_the_same_exact_delete_contract(
+def test_jg_data_importer_one_record_uses_the_exact_delete_contract(
     tmp_path,
     table_name: str,
     standard: bool,
@@ -519,7 +519,7 @@ def test_jg_data_importer_single_record_uses_the_same_exact_delete_contract(
         missing_status = parsed_record()
         missing_status.pop("DataKubun")
         with pytest.raises(SchemaMigrationError, match="DataKubun.*required"):
-            import_one(importer, missing_status, auto_commit=auto_commit)
+            importer.import_records(iter([missing_status]), auto_commit=auto_commit)
         assert (
             import_one(
                 importer,
@@ -609,16 +609,14 @@ def test_jg_postgresql_native_and_standard_revote_update_delete(postgresql_db) -
         before_key = postgresql_db.fetch_one(primary_key_query, (table_name.lower(),))
         before_rows = postgresql_db.fetch_all(f"SELECT * FROM {table_name}")
 
-        for importer_class, auto_commit in ((DataImporter, True),):
-            with pytest.raises(SchemaMigrationError, match="primary key"):
-                importer_class(postgresql_db, use_jravan_schema=standard).import_records(
-                    iter([parsed_record()]),
-                    auto_commit=auto_commit,
-                )
-            assert postgresql_db.fetch_one(primary_key_query, (table_name.lower(),)) == before_key
-            assert postgresql_db.fetch_all(f"SELECT * FROM {table_name}") == before_rows
-            postgresql_db.rollback()
-
+        with pytest.raises(SchemaMigrationError, match="primary key"):
+            DataImporter(postgresql_db, use_jravan_schema=standard).import_records(
+                iter([parsed_record()]),
+                auto_commit=True,
+            )
+        assert postgresql_db.fetch_one(primary_key_query, (table_name.lower(),)) == before_key
+        assert postgresql_db.fetch_all(f"SELECT * FROM {table_name}") == before_rows
+        postgresql_db.rollback()
         postgresql_db.execute(f"DROP TABLE {table_name}")
         postgresql_db.commit()
 

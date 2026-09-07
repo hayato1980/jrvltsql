@@ -534,15 +534,14 @@ def test_bt_postgresql_roundtrip_delete_and_narrow_schema_rejection(postgresql_d
         postgresql_db.commit()
         before_columns = postgresql_db.fetch_all(column_query, (table_name.lower(),))
 
-        for importer_class, auto_commit in ((DataImporter, True),):
-            with pytest.raises(SchemaMigrationError, match="column capacities"):
-                importer_class(postgresql_db, use_jravan_schema=True).import_records(
-                    iter(()),
-                    auto_commit=auto_commit,
-                )
-            after_columns = postgresql_db.fetch_all(column_query, (table_name.lower(),))
-            assert after_columns == before_columns
-            postgresql_db.rollback()
+        with pytest.raises(SchemaMigrationError, match="column capacities"):
+            DataImporter(postgresql_db, use_jravan_schema=True).import_records(
+                iter(()),
+                auto_commit=True,
+            )
+        after_columns = postgresql_db.fetch_all(column_query, (table_name.lower(),))
+        assert after_columns == before_columns
+        postgresql_db.rollback()
 
         postgresql_db.execute(f"DROP TABLE {table_name}")
         postgresql_db.commit()

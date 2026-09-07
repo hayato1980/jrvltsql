@@ -30,7 +30,6 @@ from src.realtime.updater import RealtimeUpdater
 from tests.importer_support import import_one
 from tests.test_o1_o6_official_contract import (
     ALL_RECORD_TYPES,
-    IMPORTERS,
     LAYOUTS,
     NATIVE_TABLES,
     STANDARD_TABLES,
@@ -101,23 +100,22 @@ def _marker_rows(record_type: str, marker: str) -> list[dict]:
 
 @pytest.mark.parametrize("record_type", RECORD_TYPES)
 @pytest.mark.parametrize("marker", ("-", "*"))
-@pytest.mark.parametrize("importer_class", IMPORTERS)
 def test_native_storage_keeps_the_official_cancellation_markers(
     tmp_path: Path,
     record_type: str,
     marker: str,
-    importer_class: type,
+
 ) -> None:
     """発売前後の取消記号は native ストレージでも1文字も失わない。"""
 
     table_name = _native_table(record_type)
     rows = _marker_rows(record_type, marker)
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"{table_name}-{marker}-{importer_class.__name__}.db")}
+        {"path": str(tmp_path / f"{table_name}-{marker}-{DataImporter.__name__}.db")}
     )
     with database:
         _create(database, (table_name,))
-        stats = importer_class(database, batch_size=10).import_records(iter(rows))
+        stats = DataImporter(database, batch_size=10).import_records(iter(rows))
         assert stats["records_failed"] == 0
         for field_name, width in NATIVE_MARKER_FIELDS[record_type]:
             stored = {
@@ -353,11 +351,10 @@ def test_missing_storage_fails_closed(tmp_path: Path, record_type: str) -> None:
 
 
 @pytest.mark.parametrize("record_type", RECORD_TYPES)
-@pytest.mark.parametrize("importer_class", IMPORTERS)
 def test_importer_paths_reject_an_unsafe_contract_before_dml(
     tmp_path: Path,
     record_type: str,
-    importer_class: type,
+
 ) -> None:
     table_name = _native_table(record_type)
     columns = [
@@ -365,7 +362,7 @@ def test_importer_paths_reject_an_unsafe_contract_before_dml(
         for column in _native_columns(record_type, table_name)
     ]
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"dml-{record_type}-{importer_class.__name__}.db")}
+        {"path": str(tmp_path / f"dml-{record_type}-{DataImporter.__name__}.db")}
     )
     with database:
         database.execute(
@@ -373,14 +370,14 @@ def test_importer_paths_reject_an_unsafe_contract_before_dml(
             f"({', '.join(columns)}, PRIMARY KEY ({_key_columns(record_type)}))"
         )
         database.commit()
-        importer = importer_class(database, batch_size=10)
+        importer = DataImporter(database, batch_size=10)
         with pytest.raises(SchemaMigrationError):
             importer.import_records(iter(_rows(record_type)))
         assert database.fetch_one(f"SELECT COUNT(*) AS cnt FROM {table_name}")["cnt"] == 0
 
 
 @pytest.mark.parametrize("record_type", RECORD_TYPES)
-def test_single_record_path_rejects_an_unsafe_contract_before_dml(
+def test_one_record_at_a_time_rejects_an_unsafe_contract_before_dml(
     tmp_path: Path,
     record_type: str,
 ) -> None:
@@ -398,7 +395,7 @@ def test_single_record_path_rejects_an_unsafe_contract_before_dml(
         database.commit()
         importer = DataImporter(database, batch_size=1)
         with pytest.raises(SchemaMigrationError):
-            import_one(importer, _o_record(record_type))
+            importer.import_records(iter([_o_record(record_type)]))
         assert database.fetch_one(f"SELECT COUNT(*) AS cnt FROM {table_name}")["cnt"] == 0
 
 

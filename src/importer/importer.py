@@ -865,146 +865,146 @@ _UM_BLANK_TEXT_FIELDS = frozenset(
     }
 )
 _UM_NATIVE_LOSSLESS_TEXT_WIDTHS = {
-    "RecordSpec": 2,
-    "DataKubun": 1,
-    "KettoNum": 10,
-    "DelKubun": 1,
-    "RegDate": 8,
-    "DelDate": 8,
-    "Bamei": 36,
-    "BameiKana": 36,
-    "BameiEng": 60,
-    "ZaikyuFlag": 1,
-    "Reserved": 19,
-    "UmaKigoCD": 2,
-    "SexCD": 1,
-    "HinsyuCD": 1,
-    "KeiroCD": 2,
-    "TozaiCD": 1,
-    "ChokyosiCode": 5,
-    "ChokyosiRyakusyo": 8,
-    "Syotai": 20,
-    "BreederCode": 8,
-    "BreederName": 72,
-    "SanchiName": 20,
-    "BanusiCode": 6,
-    "BanusiName": 64,
-    "TorokuRaceSu": 3,
-    "MakeDate": 8,
-    "Ketto3InfoHansyokuNum1": 10,
-    "Ketto3InfoBamei1": 36,
-    "Ketto3InfoHansyokuNum2": 10,
-    "Ketto3InfoBamei2": 36,
-    "Ketto3InfoHansyokuNum3": 10,
-    "Ketto3InfoBamei3": 36,
-    "Ketto3InfoHansyokuNum4": 10,
-    "Ketto3InfoBamei4": 36,
-    "Ketto3InfoHansyokuNum5": 10,
-    "Ketto3InfoBamei5": 36,
-    "Ketto3InfoHansyokuNum6": 10,
-    "Ketto3InfoBamei6": 36,
-    "Ketto3InfoHansyokuNum7": 10,
-    "Ketto3InfoBamei7": 36,
-    "Ketto3InfoHansyokuNum8": 10,
-    "Ketto3InfoBamei8": 36,
-    "Ketto3InfoHansyokuNum9": 10,
-    "Ketto3InfoBamei9": 36,
-    "Ketto3InfoHansyokuNum10": 10,
-    "Ketto3InfoBamei10": 36,
-    "Ketto3InfoHansyokuNum11": 10,
-    "Ketto3InfoBamei11": 36,
-    "Ketto3InfoHansyokuNum12": 10,
-    "Ketto3InfoBamei12": 36,
-    "Ketto3InfoHansyokuNum13": 10,
-    "Ketto3InfoBamei13": 36,
-    "Ketto3InfoHansyokuNum14": 10,
-    "Ketto3InfoBamei14": 36,
-    "SogoChaku": 18,
-    "ChuoGokeiChaku": 18,
-    "SibaChokuChaku": 18,
-    "SibaMigiChaku": 18,
-    "SibaHidariChaku": 18,
-    "DirtChokuChaku": 18,
-    "DirtMigiChaku": 18,
-    "DirtHidariChaku": 18,
-    "SyogaiChaku": 18,
-    "SibaRyoChaku": 18,
-    "SibaYayaomoChaku": 18,
-    "SibaOmoChaku": 18,
-    "SibaFuryoChaku": 18,
-    "DirtRyoChaku": 18,
-    "DirtYayaomoChaku": 18,
-    "DirtOmoChaku": 18,
-    "DirtFuryoChaku": 18,
-    "SyogaiRyoChaku": 18,
-    "SyogaiYayaomoChaku": 18,
-    "SyogaiOmoChaku": 18,
-    "SyogaiFuryoChaku": 18,
-    "SibaShortChaku": 18,
-    "SibaMiddleChaku": 18,
-    "SibaLongChaku": 18,
-    "DirtShortChaku": 18,
-    "DirtMiddleChaku": 18,
-    "DirtLongChaku": 18,
+        "RecordSpec": 2,
+        "DataKubun": 1,
+        "KettoNum": 10,
+        "DelKubun": 1,
+        "RegDate": 8,
+        "DelDate": 8,
+        "Bamei": 36,
+        "BameiKana": 36,
+        "BameiEng": 60,
+        "ZaikyuFlag": 1,
+        "Reserved": 19,
+        "UmaKigoCD": 2,
+        "SexCD": 1,
+        "HinsyuCD": 1,
+        "KeiroCD": 2,
+        "TozaiCD": 1,
+        "ChokyosiCode": 5,
+        "ChokyosiRyakusyo": 8,
+        "Syotai": 20,
+        "BreederCode": 8,
+        "BreederName": 72,
+        "SanchiName": 20,
+        "BanusiCode": 6,
+        "BanusiName": 64,
+        "TorokuRaceSu": 3,
+        "MakeDate": 8,
+        "Ketto3InfoHansyokuNum1": 10,
+        "Ketto3InfoBamei1": 36,
+        "Ketto3InfoHansyokuNum2": 10,
+        "Ketto3InfoBamei2": 36,
+        "Ketto3InfoHansyokuNum3": 10,
+        "Ketto3InfoBamei3": 36,
+        "Ketto3InfoHansyokuNum4": 10,
+        "Ketto3InfoBamei4": 36,
+        "Ketto3InfoHansyokuNum5": 10,
+        "Ketto3InfoBamei5": 36,
+        "Ketto3InfoHansyokuNum6": 10,
+        "Ketto3InfoBamei6": 36,
+        "Ketto3InfoHansyokuNum7": 10,
+        "Ketto3InfoBamei7": 36,
+        "Ketto3InfoHansyokuNum8": 10,
+        "Ketto3InfoBamei8": 36,
+        "Ketto3InfoHansyokuNum9": 10,
+        "Ketto3InfoBamei9": 36,
+        "Ketto3InfoHansyokuNum10": 10,
+        "Ketto3InfoBamei10": 36,
+        "Ketto3InfoHansyokuNum11": 10,
+        "Ketto3InfoBamei11": 36,
+        "Ketto3InfoHansyokuNum12": 10,
+        "Ketto3InfoBamei12": 36,
+        "Ketto3InfoHansyokuNum13": 10,
+        "Ketto3InfoBamei13": 36,
+        "Ketto3InfoHansyokuNum14": 10,
+        "Ketto3InfoBamei14": 36,
+        "SogoChaku": 18,
+        "ChuoGokeiChaku": 18,
+        "SibaChokuChaku": 18,
+        "SibaMigiChaku": 18,
+        "SibaHidariChaku": 18,
+        "DirtChokuChaku": 18,
+        "DirtMigiChaku": 18,
+        "DirtHidariChaku": 18,
+        "SyogaiChaku": 18,
+        "SibaRyoChaku": 18,
+        "SibaYayaomoChaku": 18,
+        "SibaOmoChaku": 18,
+        "SibaFuryoChaku": 18,
+        "DirtRyoChaku": 18,
+        "DirtYayaomoChaku": 18,
+        "DirtOmoChaku": 18,
+        "DirtFuryoChaku": 18,
+        "SyogaiRyoChaku": 18,
+        "SyogaiYayaomoChaku": 18,
+        "SyogaiOmoChaku": 18,
+        "SyogaiFuryoChaku": 18,
+        "SibaShortChaku": 18,
+        "SibaMiddleChaku": 18,
+        "SibaLongChaku": 18,
+        "DirtShortChaku": 18,
+        "DirtMiddleChaku": 18,
+        "DirtLongChaku": 18,
     "KyakusituKeiko": 12,
     "Reserved_1608": 2,
 }
 # 標準名 UMA は着回数と脚質傾向を 3 桁ずつの列へ展開し、``MakeDate`` を DATE
 # 型で持つため、無損失幅の対象はこの二つを除いた共通項目になる。
 _UM_STANDARD_LOSSLESS_TEXT_WIDTHS = {
-    "RecordSpec": 2,
-    "DataKubun": 1,
-    "KettoNum": 10,
-    "DelKubun": 1,
-    "RegDate": 8,
-    "DelDate": 8,
-    "Bamei": 36,
-    "BameiKana": 36,
-    "BameiEng": 60,
-    "ZaikyuFlag": 1,
-    "Reserved": 19,
-    "UmaKigoCD": 2,
-    "SexCD": 1,
-    "HinsyuCD": 1,
-    "KeiroCD": 2,
-    "TozaiCD": 1,
-    "ChokyosiCode": 5,
-    "ChokyosiRyakusyo": 8,
-    "Syotai": 20,
-    "BreederCode": 8,
-    "BreederName": 72,
-    "SanchiName": 20,
-    "BanusiCode": 6,
-    "BanusiName": 64,
-    "TorokuRaceSu": 3,
-    "Ketto3InfoHansyokuNum1": 10,
-    "Ketto3InfoBamei1": 36,
-    "Ketto3InfoHansyokuNum2": 10,
-    "Ketto3InfoBamei2": 36,
-    "Ketto3InfoHansyokuNum3": 10,
-    "Ketto3InfoBamei3": 36,
-    "Ketto3InfoHansyokuNum4": 10,
-    "Ketto3InfoBamei4": 36,
-    "Ketto3InfoHansyokuNum5": 10,
-    "Ketto3InfoBamei5": 36,
-    "Ketto3InfoHansyokuNum6": 10,
-    "Ketto3InfoBamei6": 36,
-    "Ketto3InfoHansyokuNum7": 10,
-    "Ketto3InfoBamei7": 36,
-    "Ketto3InfoHansyokuNum8": 10,
-    "Ketto3InfoBamei8": 36,
-    "Ketto3InfoHansyokuNum9": 10,
-    "Ketto3InfoBamei9": 36,
-    "Ketto3InfoHansyokuNum10": 10,
-    "Ketto3InfoBamei10": 36,
-    "Ketto3InfoHansyokuNum11": 10,
-    "Ketto3InfoBamei11": 36,
-    "Ketto3InfoHansyokuNum12": 10,
-    "Ketto3InfoBamei12": 36,
-    "Ketto3InfoHansyokuNum13": 10,
-    "Ketto3InfoBamei13": 36,
-    "Ketto3InfoHansyokuNum14": 10,
-    "Ketto3InfoBamei14": 36,
+        "RecordSpec": 2,
+        "DataKubun": 1,
+        "KettoNum": 10,
+        "DelKubun": 1,
+        "RegDate": 8,
+        "DelDate": 8,
+        "Bamei": 36,
+        "BameiKana": 36,
+        "BameiEng": 60,
+        "ZaikyuFlag": 1,
+        "Reserved": 19,
+        "UmaKigoCD": 2,
+        "SexCD": 1,
+        "HinsyuCD": 1,
+        "KeiroCD": 2,
+        "TozaiCD": 1,
+        "ChokyosiCode": 5,
+        "ChokyosiRyakusyo": 8,
+        "Syotai": 20,
+        "BreederCode": 8,
+        "BreederName": 72,
+        "SanchiName": 20,
+        "BanusiCode": 6,
+        "BanusiName": 64,
+        "TorokuRaceSu": 3,
+        "Ketto3InfoHansyokuNum1": 10,
+        "Ketto3InfoBamei1": 36,
+        "Ketto3InfoHansyokuNum2": 10,
+        "Ketto3InfoBamei2": 36,
+        "Ketto3InfoHansyokuNum3": 10,
+        "Ketto3InfoBamei3": 36,
+        "Ketto3InfoHansyokuNum4": 10,
+        "Ketto3InfoBamei4": 36,
+        "Ketto3InfoHansyokuNum5": 10,
+        "Ketto3InfoBamei5": 36,
+        "Ketto3InfoHansyokuNum6": 10,
+        "Ketto3InfoBamei6": 36,
+        "Ketto3InfoHansyokuNum7": 10,
+        "Ketto3InfoBamei7": 36,
+        "Ketto3InfoHansyokuNum8": 10,
+        "Ketto3InfoBamei8": 36,
+        "Ketto3InfoHansyokuNum9": 10,
+        "Ketto3InfoBamei9": 36,
+        "Ketto3InfoHansyokuNum10": 10,
+        "Ketto3InfoBamei10": 36,
+        "Ketto3InfoHansyokuNum11": 10,
+        "Ketto3InfoBamei11": 36,
+        "Ketto3InfoHansyokuNum12": 10,
+        "Ketto3InfoBamei12": 36,
+        "Ketto3InfoHansyokuNum13": 10,
+        "Ketto3InfoBamei13": 36,
+        "Ketto3InfoHansyokuNum14": 10,
+        "Ketto3InfoBamei14": 36,
 }
 _UM_LOSSLESS_TEXT_WIDTHS = {
     "NL_UM": _UM_NATIVE_LOSSLESS_TEXT_WIDTHS,
@@ -1354,7 +1354,9 @@ def _verify_strict_storage_column_contract(
             continue
         actual_row = actual[column]
         actual_type = str(actual_row.get("type") or "")
-        actual_not_null = bool(actual_row.get("not_null", actual_row.get("notnull", 0)))
+        actual_not_null = bool(
+            actual_row.get("not_null", actual_row.get("notnull", 0))
+        )
         generated = str(actual_row.get("generated") or "")
         identity = str(actual_row.get("identity") or "")
         hidden = int(actual_row.get("hidden") or 0)
@@ -1590,7 +1592,8 @@ def _verify_av_key_not_null_constraints(database: BaseDatabase, table_name: str)
             (table_name,),
         )
         not_null = {
-            str(row.get("column_name") or "").lower(): bool(row.get("not_null")) for row in rows
+            str(row.get("column_name") or "").lower(): bool(row.get("not_null"))
+            for row in rows
         }
     else:
         raise SchemaMigrationError(
@@ -1852,7 +1855,9 @@ def _verify_hs_current_layout_rows(
             f"HS storage {table_name} is missing required current columns "
             f"{unapproved_missing}; backup, rebuild, and reimport"
         )
-    row_count = int(database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"])
+    row_count = int(
+        database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"]
+    )
     if row_count and missing:
         raise SchemaMigrationError(
             f"HS storage {table_name} has existing rows without the complete current "
@@ -1941,7 +1946,8 @@ def _verify_hs_layout_marker_constraint(
                 )
             return
         normalized = {
-            re.sub(r'[\s"()]+', "", str(row.get("definition") or "").lower()) for row in rows
+            re.sub(r'[\s"()]+', "", str(row.get("definition") or "").lower())
+            for row in rows
         }
         accepted = {
             "checkcurrentlayoutversion=200",
@@ -1954,7 +1960,9 @@ def _verify_hs_layout_marker_constraint(
                 "CurrentLayoutVersion = 200 CHECK"
             )
         return
-    raise SchemaMigrationError(f"HS layout marker cannot be verified for database type {db_type!r}")
+    raise SchemaMigrationError(
+        f"HS layout marker cannot be verified for database type {db_type!r}"
+    )
 
 
 def _verify_hs_no_unapproved_constraints(
@@ -1988,10 +1996,13 @@ def _verify_hs_no_unapproved_constraints(
         )
         if unexpected:
             raise SchemaMigrationError(
-                f"HS storage {table_name} has unsupported additional constraints: " f"{unexpected}"
+                f"HS storage {table_name} has unsupported additional constraints: "
+                f"{unexpected}"
             )
         return
-    raise SchemaMigrationError(f"HS constraints cannot be verified for database type {db_type!r}")
+    raise SchemaMigrationError(
+        f"HS constraints cannot be verified for database type {db_type!r}"
+    )
 
 
 def _snapshot_validation_transactions(
@@ -2142,7 +2153,9 @@ def _verify_hc_no_unapproved_constraints(
         )
         definition = str((row or {}).get("sql") or "")
         if re.search(r"\bCHECK\s*\(", definition, flags=re.IGNORECASE):
-            raise SchemaMigrationError(f"HC storage {table_name} has unsupported CHECK constraints")
+            raise SchemaMigrationError(
+                f"HC storage {table_name} has unsupported CHECK constraints"
+            )
         return
     if db_type == "postgresql":
         unexpected = database.fetch_all(
@@ -2153,10 +2166,13 @@ def _verify_hc_no_unapproved_constraints(
         )
         if unexpected:
             raise SchemaMigrationError(
-                f"HC storage {table_name} has unsupported additional constraints: " f"{unexpected}"
+                f"HC storage {table_name} has unsupported additional constraints: "
+                f"{unexpected}"
             )
         return
-    raise SchemaMigrationError(f"HC constraints cannot be verified for database type {db_type!r}")
+    raise SchemaMigrationError(
+        f"HC constraints cannot be verified for database type {db_type!r}"
+    )
 
 
 def verify_hc_storage_schema(database: BaseDatabase, table_name: str) -> bool:
@@ -2517,7 +2533,9 @@ def _verify_tc_no_unapproved_constraints(
             _sqlite_schema_code(definition),
             flags=re.IGNORECASE,
         ):
-            raise SchemaMigrationError(f"TC storage {table_name} has unsupported CHECK constraints")
+            raise SchemaMigrationError(
+                f"TC storage {table_name} has unsupported CHECK constraints"
+            )
         return
     if db_type == "postgresql":
         unexpected = database.fetch_all(
@@ -2528,10 +2546,13 @@ def _verify_tc_no_unapproved_constraints(
         )
         if unexpected:
             raise SchemaMigrationError(
-                f"TC storage {table_name} has unsupported additional constraints: " f"{unexpected}"
+                f"TC storage {table_name} has unsupported additional constraints: "
+                f"{unexpected}"
             )
         return
-    raise SchemaMigrationError(f"TC constraints cannot be verified for database type {db_type!r}")
+    raise SchemaMigrationError(
+        f"TC constraints cannot be verified for database type {db_type!r}"
+    )
 
 
 def verify_tc_storage_schema(database: BaseDatabase, table_name: str) -> bool:
@@ -2620,7 +2641,9 @@ def _verify_cc_no_unapproved_constraints(
             _sqlite_schema_code(definition),
             flags=re.IGNORECASE,
         ):
-            raise SchemaMigrationError(f"CC storage {table_name} has unsupported CHECK constraints")
+            raise SchemaMigrationError(
+                f"CC storage {table_name} has unsupported CHECK constraints"
+            )
         return
     if db_type == "postgresql":
         unexpected = database.fetch_all(
@@ -2631,10 +2654,13 @@ def _verify_cc_no_unapproved_constraints(
         )
         if unexpected:
             raise SchemaMigrationError(
-                f"CC storage {table_name} has unsupported additional constraints: " f"{unexpected}"
+                f"CC storage {table_name} has unsupported additional constraints: "
+                f"{unexpected}"
             )
         return
-    raise SchemaMigrationError(f"CC constraints cannot be verified for database type {db_type!r}")
+    raise SchemaMigrationError(
+        f"CC constraints cannot be verified for database type {db_type!r}"
+    )
 
 
 def verify_cc_storage_schema(database: BaseDatabase, table_name: str) -> bool:
@@ -3443,7 +3469,9 @@ def _verify_odds_no_unapproved_constraints(
                 f"odds storage {table_name} has unsupported CHECK/FOREIGN KEY constraints"
             )
         return
-    raise SchemaMigrationError(f"odds constraints cannot be verified for database type {db_type!r}")
+    raise SchemaMigrationError(
+        f"odds constraints cannot be verified for database type {db_type!r}"
+    )
 
 
 def _odds_official_key_columns(table_name: str) -> tuple:
@@ -3527,7 +3555,9 @@ def _verify_odds_standard_replacement_key(
                 f"indexes: {sorted(unexpected)}"
             )
         return
-    raise SchemaMigrationError(f"odds constraints cannot be verified for database type {db_type!r}")
+    raise SchemaMigrationError(
+        f"odds constraints cannot be verified for database type {db_type!r}"
+    )
 
 
 def _odds_native_snapshot_rows(record: dict, table_name: str) -> list[dict] | None:
@@ -6288,7 +6318,9 @@ def _delete_official_record(database: BaseDatabase, record: dict, table_name: st
     converted = convert_record_types(key_record, table_name)
     # Some legacy standard schemas omit type metadata for an otherwise valid
     # race key. Preserve the raw key only for those columns.
-    key_values = {column: converted.get(column, key_record.get(column)) for column in key_columns}
+    key_values = {
+        column: converted.get(column, key_record.get(column)) for column in key_columns
+    }
     missing = [column for column, value in key_values.items() if value in (None, "")]
     if missing:
         raise ValueError(f"{record_type} record erase has incomplete key: {missing}")
@@ -9001,6 +9033,7 @@ class DataImporter:
 
             self._records_imported += success_count
             self._records_failed += fail_count
+
 
     def get_statistics(self) -> Dict[str, int]:
         """Get import statistics.

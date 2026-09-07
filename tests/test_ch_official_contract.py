@@ -312,7 +312,7 @@ def test_ch_importers_store_header_and_three_complete_result_rows_idempotently(
         pytest.param("CHOKYO", "CHOKYO_SEISEKI", True, id="standard"),
     ],
 )
-def test_ch_single_record_api_stores_one_header_and_three_results(
+def test_ch_one_record_stores_one_header_and_three_results(
     tmp_path, main_table: str, result_table: str, use_standard: bool
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"single-{main_table}.db")})
@@ -478,7 +478,7 @@ def test_ch_rollback_failure_never_enters_parent_only_fallback(tmp_path) -> None
 
 def test_ch_batch_verifies_result_schema_once(tmp_path) -> None:
     """Catalog verification is a batch contract, not a per-record operation."""
-    database = SQLiteDatabase({"path": str(tmp_path / f"metadata-{DataImporter.__name__}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / "metadata-DataImporter.db")})
     parsed = CHParser().parse(build_record()[0])
     assert parsed is not None
 

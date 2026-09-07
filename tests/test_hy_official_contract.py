@@ -339,11 +339,10 @@ def test_hy_postgresql_native_and_standard_upsert(postgresql_db) -> None:
     postgresql_db.execute(JRAVAN_SCHEMAS["BAMEIORIGIN"])
     postgresql_db.commit()
 
-    updates = ((DataImporter, "PostgreSQL馬名1", "PostgreSQL由来1"),)
-    for importer_class, bamei, origin in updates:
+    for bamei, origin in (("PostgreSQL馬名1", "PostgreSQL由来1"),):
         record = HYParser().parse(build_record(bamei=bamei, origin=origin))
-        native = importer_class(postgresql_db).import_records(iter([record]))
-        standard = importer_class(postgresql_db, use_jravan_schema=True).import_records(
+        native = DataImporter(postgresql_db).import_records(iter([record]))
+        standard = DataImporter(postgresql_db, use_jravan_schema=True).import_records(
             iter([record])
         )
         assert native["records_imported"] == 1

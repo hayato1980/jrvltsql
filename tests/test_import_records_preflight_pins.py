@@ -1,13 +1,15 @@
-"""Pin the strict-storage preflight on the single-record import path.
+"""Pin the strict-storage preflight that runs before any DML.
 
 Every official-contract family verifies its native storage schema before any DML,
-and the per-family modules prove the verifier rejects each unsafe schema. What was
-not pinned is that ``DataImporter.import_single_record`` still performs that
-preflight: deleting the guard block inside that method left
+and the per-family modules prove the verifier rejects each unsafe schema. What
+they do not pin is that the import entry point itself still performs that
+preflight: when this module was written against ``import_single_record``,
+deleting the guard block inside that method left
 ``tests/test_<family>_official_contract.py`` fully green for 14 of the 16 families
-that have one. This module is that pin, using one defect that is unsafe for every
-family - an extra UNIQUE constraint, which silently turns an official replacement
-into an erase of a different key.
+that have one. ``import_single_record`` is gone and ``import_records`` is now the
+only entry point, so this module pins the preflight there, using one defect that
+is unsafe for every family - an extra UNIQUE constraint, which silently turns an
+official replacement into an erase of a different key.
 """
 
 from collections.abc import Callable
@@ -19,7 +21,6 @@ from src.database.schema import SCHEMAS
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
 from src.parser.rc_parser import RCParser
-from tests.importer_support import import_one
 from tests.test_av_official_contract import parsed_av
 from tests.test_cc_official_contract import parsed_cc
 from tests.test_cs_official_contract import parsed_record as parsed_cs
@@ -79,7 +80,7 @@ def _drifted_schema(table_name: str) -> str:
     FAMILIES,
     ids=[table_name for table_name, _ in FAMILIES],
 )
-def test_single_record_path_rejects_a_drifted_native_schema_before_dml(
+def test_one_record_at_a_time_rejects_a_drifted_native_schema_before_dml(
     tmp_path,
     table_name: str,
     build_record: Callable[[], dict],
@@ -92,7 +93,7 @@ def test_single_record_path_rejects_a_drifted_native_schema_before_dml(
         before_indexes = database.fetch_all(f'PRAGMA index_list("{table_name}")')
         importer = DataImporter(database)
         with pytest.raises(SchemaMigrationError, match="UNIQUE"):
-            import_one(importer, build_record(), auto_commit=auto_commit)
+            importer.import_records(iter([build_record()]), auto_commit=auto_commit)
         assert database.fetch_all(f'PRAGMA index_list("{table_name}")') == before_indexes
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {"count": 0}
         assert importer.get_statistics()["records_imported"] == 0

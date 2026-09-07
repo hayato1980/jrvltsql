@@ -1431,7 +1431,7 @@ def test_wf_single_record_import_covers_native_and_standard_storage(tmp_path) ->
         invalid = parsed_record()
         invalid["CarryOverStart"] = "9Q8"
         with pytest.raises(SchemaMigrationError):
-            import_one(native, invalid)
+            native.import_records(iter([invalid]))
         assert database.fetch_one("SELECT CarryOverStart FROM NL_WF") == {"CarryOverStart": 1000}
         assert import_one(native, parsed_record(data_kubun="0")) is True
         assert _count(database, "NL_WF") == 0
@@ -1537,7 +1537,7 @@ def test_wf_single_record_import_covers_native_and_standard_storage(tmp_path) ->
         assert import_one(native_flags, parsed_record(data_kubun="0")) is True
         assert _count(database, "NL_WF") == 0
         with pytest.raises(SchemaMigrationError):
-            import_one(standard, invalid)
+            standard.import_records(iter([invalid]))
         assert _count(database, "JYUSYOSIKI") == 243
         cancelled = WFParser().parse(cancellation_record())
         assert cancelled is not None
@@ -1566,7 +1566,7 @@ def test_wf_owned_transaction_rolls_back_on_validation_failure(tmp_path, standar
         invalid = parsed_record(month_day="0818")
         invalid["PayoutsJson"] = "[]"
         with pytest.raises(SchemaMigrationError):
-            import_one(importer, invalid, auto_commit=False)
+            importer.import_records(iter([invalid]), auto_commit=False)
 
         assert database.is_transaction_active() is False
         assert _count(database, target) == 1
@@ -1589,7 +1589,7 @@ def test_wf_owned_transaction_rolls_back_on_validation_failure(tmp_path, standar
         invalid = parsed_record(month_day="0819")
         invalid["DataKubun"] = "8"
         with pytest.raises(SchemaMigrationError):
-            import_one(importer, invalid, auto_commit=False)
+            importer.import_records(iter([invalid]), auto_commit=False)
         assert database.is_transaction_active() is False
         assert _count(database, target) == 2
         if standard:
@@ -2115,7 +2115,7 @@ def test_wf_postgresql_auto_commit_false_validation_failure_rolls_back(
     invalid = parsed_record(month_day="0818")
     invalid["PayoutsJson"] = "[]"
     with pytest.raises(SchemaMigrationError):
-        import_one(single, invalid, auto_commit=False)
+        single.import_records(iter([invalid]), auto_commit=False)
     assert postgresql_db.is_transaction_active() is False
     assert _count(postgresql_db, target) == 1
     assert single.get_statistics() == baseline_stats
@@ -2137,7 +2137,7 @@ def test_wf_postgresql_auto_commit_false_validation_failure_rolls_back(
     invalid = parsed_record(month_day="0819")
     invalid["DataKubun"] = "8"
     with pytest.raises(SchemaMigrationError):
-        import_one(single, invalid, auto_commit=False)
+        single.import_records(iter([invalid]), auto_commit=False)
     assert postgresql_db.is_transaction_active() is False
     assert _count(postgresql_db, target) == 2
     assert single.get_statistics() == expected_stats

@@ -151,12 +151,12 @@ def test_native_av_identity_does_not_include_announcement_time(tmp_path) -> None
     assert rows == [{"HappyoTime": "06151000"}]
 
 
-def _assert_standard_storage(database, importer_class=DataImporter) -> None:
+def _assert_standard_storage(database) -> None:
     for _, _, _, _, table_name, _ in CHANGE_RECORDS:
         database.execute(JRAVAN_SCHEMAS[table_name])
     database.commit()
 
-    importer = importer_class(database, batch_size=1, use_jravan_schema=True)
+    importer = DataImporter(database, batch_size=1, use_jravan_schema=True)
     for _, parsed in _parsed_records():
         stats = importer.import_records(iter([parsed]))
         assert stats["records_failed"] == 0
@@ -178,7 +178,7 @@ def test_sqlite_standard_storage_preserves_official_mdhm_text(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "change-records.db")})
     database.connect()
     try:
-        _assert_standard_storage(database, DataImporter)
+        _assert_standard_storage(database)
     finally:
         database.disconnect()
 
