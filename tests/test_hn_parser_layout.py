@@ -12,7 +12,6 @@ from src.database.schema_types import (
 )
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hn_parser import HNParser
 
 ZENKAKU_SPACE = b"\x81\x40"
@@ -158,7 +157,6 @@ def test_standard_import_refuses_the_obsolete_keyless_schema(tmp_path):
 
 @pytest.mark.parametrize(
     (
-        "importer_class",
         "table_name",
         "use_jravan_schema",
         "father_column",
@@ -166,14 +164,12 @@ def test_standard_import_refuses_the_obsolete_keyless_schema(tmp_path):
     ),
     [
         pytest.param(
-            importer_class,
             table_name,
             use_jravan_schema,
             father_column,
             mother_column,
-            id=f"{importer_class.__name__}-{table_name}",
+            id=f"{table_name}",
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, use_jravan_schema, father_column, mother_column in (
             ("NL_HN", False, "FHansyokuNum", "MHansyokuNum"),
             ("HANSYOKU", True, "HansyokuFNum", "HansyokuMNum"),
@@ -182,7 +178,6 @@ def test_standard_import_refuses_the_obsolete_keyless_schema(tmp_path):
 )
 def test_current_record_round_trips_through_supported_storage(
     tmp_path,
-    importer_class,
     table_name,
     use_jravan_schema,
     father_column,
@@ -193,7 +188,7 @@ def test_current_record_round_trips_through_supported_storage(
     with database:
         database.create_table(table_name, schema)
         record = HNParser().parse(build_record())
-        stats = importer_class(
+        stats = DataImporter(
             database,
             use_jravan_schema=use_jravan_schema,
         ).import_records(iter([record]))

@@ -21,8 +21,8 @@ from src.importer.importer import (
     validate_import_record_header,
     verify_hn_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hn_parser import HNParser
+from tests.importer_support import import_one
 from tests.test_hn_parser_layout import build_record
 
 
@@ -187,11 +187,9 @@ def test_hn_blank_optional_text_remains_an_empty_provider_value(
 
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 def test_hn_blank_reserved_spans_survive_every_sqlite_import_path(
     tmp_path,
     use_standard: bool,
-    entrypoint: str,
 ) -> None:
     """Validated blank reserved bytes stay provider strings, never SQL NULL."""
 
@@ -203,23 +201,15 @@ def test_hn_blank_reserved_spans_survive_every_sqlite_import_path(
     record = HNParser().parse(bytes(raw))
     assert record is not None
 
-    database = SQLiteDatabase({"path": str(tmp_path / f"reserved-{table_name}-{entrypoint}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"reserved-{table_name}.db")})
     with database:
         database.execute(schema)
         database.commit()
-        if entrypoint == "single":
-            assert DataImporter(database, use_jravan_schema=use_standard).import_single_record(
-                record
-            )
-        else:
-            importer_class = (
-                OptimizedDataImporter if entrypoint == "optimized-batch" else DataImporter
-            )
-            stats = importer_class(database, use_jravan_schema=use_standard).import_records(
-                iter([record])
-            )
-            assert stats["records_imported"] == 1
-            assert stats["records_failed"] == 0
+        stats = DataImporter(database, use_jravan_schema=use_standard).import_records(
+            iter([record])
+        )
+        assert stats["records_imported"] == 1
+        assert stats["records_failed"] == 0
         assert database.fetch_one(f"SELECT reserved, DelKubun FROM {table_name}") == {
             "reserved": "",
             "DelKubun": "",
@@ -296,20 +286,18 @@ def test_hn_blank_reserved_spans_remain_text_in_pg8000_multi_row_bindings(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_hn_batch_erase_is_physical_and_provider_ordered(
     tmp_path,
-    importer_class,
     auto_commit: bool,
     use_standard: bool,
 ) -> None:
     table_name = "HANSYOKU" if use_standard else "NL_HN"
     schema = JRAVAN_SCHEMAS[table_name] if use_standard else SCHEMAS[table_name]
-    database = SQLiteDatabase({"path": str(tmp_path / f"{importer_class.__name__}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"{DataImporter.__name__}.db")})
     with database:
         database.execute(schema)
         database.commit()
-        importer = importer_class(database, batch_size=1, use_jravan_schema=use_standard)
+        importer = DataImporter(database, batch_size=1, use_jravan_schema=use_standard)
         stats = importer.import_records(
             iter(
                 [
@@ -335,7 +323,7 @@ def test_hn_batch_erase_is_physical_and_provider_ordered(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-def test_hn_single_record_erase_is_physical(
+def test_hn_erase_is_physical(
     tmp_path,
     auto_commit: bool,
     use_standard: bool,
@@ -347,12 +335,14 @@ def test_hn_single_record_erase_is_physical(
         database.execute(schema)
         database.commit()
         importer = DataImporter(database, use_jravan_schema=use_standard)
-        assert importer.import_single_record(hn_record(), auto_commit=auto_commit)
-        assert importer.import_single_record(
+        assert import_one(importer, hn_record(), auto_commit=auto_commit)
+        assert import_one(
+            importer,
             hn_record(data_kubun="2", bamei="更新馬"),
             auto_commit=auto_commit,
         )
-        assert importer.import_single_record(
+        assert import_one(
+            importer,
             {
                 "RecordSpec": "HN",
                 "DataKubun": "0",
@@ -365,14 +355,15 @@ def test_hn_single_record_erase_is_physical(
         if not auto_commit:
             database.commit()
 
-    assert importer.get_statistics()["records_imported"] == 3
+    # `import_records` counts stored rows, not handled records: the data_kubun="2"
+    # revision is an in-place replace and the erase is a delete, so neither adds to
+    # records_imported. The removed `import_single_record` counted all three.
+    assert importer.get_statistics()["records_imported"] == 1
 
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_hn_unsafe_extra_required_column_is_rejected_before_dml(
     tmp_path,
-    importer_class,
     use_standard: bool,
 ) -> None:
     table_name = "HANSYOKU" if use_standard else "NL_HN"
@@ -387,7 +378,7 @@ def test_hn_unsafe_extra_required_column_is_rejected_before_dml(
         database.commit()
         before_columns = database.fetch_all(f'PRAGMA table_xinfo("{table_name}")')
         with pytest.raises(SchemaMigrationError):
-            importer_class(database, use_jravan_schema=use_standard).import_records(
+            DataImporter(database, use_jravan_schema=use_standard).import_records(
                 iter([deepcopy(hn_record())])
             )
         after_columns = database.fetch_all(f'PRAGMA table_xinfo("{table_name}")')
@@ -501,10 +492,8 @@ def postgresql_db():
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_hn_postgresql_provider_order_exact_erase_and_operation_statistics(
     postgresql_db,
-    importer_class,
     auto_commit: bool,
     use_standard: bool,
 ) -> None:
@@ -512,7 +501,7 @@ def test_hn_postgresql_provider_order_exact_erase_and_operation_statistics(
     schema = JRAVAN_SCHEMAS[table_name] if use_standard else SCHEMAS[table_name]
     postgresql_db.execute(schema)
     postgresql_db.commit()
-    stats = importer_class(
+    stats = DataImporter(
         postgresql_db,
         batch_size=1000,
         use_jravan_schema=use_standard,

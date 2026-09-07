@@ -25,14 +25,14 @@ from src.database.schema import SCHEMAS
 from src.database.schema_jravan import JRAVAN_SCHEMAS
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
-from src.realtime.updater import RealtimeUpdater
 from src.parser.o1_parser import O1Parser
 from src.parser.o2_parser import O2Parser
 from src.parser.o3_parser import O3Parser
 from src.parser.o4_parser import O4Parser
 from src.parser.o5_parser import O5Parser
 from src.parser.o6_parser import O6Parser
+from src.realtime.updater import RealtimeUpdater
+from tests.importer_support import import_one
 
 OFFICIAL_DATA_KUBUN = ("1", "2", "3", "4", "5", "9")
 OFFICIAL_SALE_FLAGS = ("0", "1", "3", "7")
@@ -101,17 +101,17 @@ class _Layout:
         favourite_value = favourite if favourite is not None else b"0" * self.favourite_width
         for index in range(filled):
             position = 40 + index * self.item_width
-            data[position:position + self.combination_width] = self.combination(index)
+            data[position : position + self.combination_width] = self.combination(index)
             position += self.combination_width
             for field_name, width in self.odds_fields:
                 provided = (odds or {}).get(field_name)
                 value = provided if provided is not None else b"0" * (width - 1) + b"1"
                 assert len(value) == width
-                data[position:position + width] = value
+                data[position : position + width] = value
                 position += width
-            data[position:position + self.favourite_width] = favourite_value
-        data[self.total_offset:self.total_offset + 11] = total
-        data[self.length - 2:self.length] = b"\r\n"
+            data[position : position + self.favourite_width] = favourite_value
+        data[self.total_offset : self.total_offset + 11] = total
+        data[self.length - 2 : self.length] = b"\r\n"
         raw = bytes(data)
         assert len(raw) == self.length
         return raw
@@ -215,9 +215,7 @@ def test_no_vote_combinations_are_preserved(record_type: str) -> None:
     zero_odds = {name: b"0" * width for name, width in layout.odds_fields}
     rows = layout.rows(odds=zero_odds, favourite=b" " * layout.favourite_width)
     combinations = [row["Kumi"] for row in rows]
-    assert combinations == [
-        layout.combination(index).decode("ascii") for index in range(3)
-    ]
+    assert combinations == [layout.combination(index).decode("ascii") for index in range(3)]
     for row in rows:
         for name, width in layout.odds_fields:
             assert row[name] == "0" * width
@@ -380,19 +378,19 @@ def _o1_raw(
     data[42:43] = b"3"
     for index in range(horses):
         position = 43 + index * 8
-        data[position:position + 2] = f"{index + 1:02d}".encode("ascii")
-        data[position + 2:position + 6] = tan_odds
-        data[position + 6:position + 8] = tan_favourite
+        data[position : position + 2] = f"{index + 1:02d}".encode("ascii")
+        data[position + 2 : position + 6] = tan_odds
+        data[position + 6 : position + 8] = tan_favourite
         position = 267 + index * 12
-        data[position:position + 2] = f"{index + 1:02d}".encode("ascii")
-        data[position + 2:position + 6] = fuku_low
-        data[position + 6:position + 10] = fuku_high
-        data[position + 10:position + 12] = fuku_favourite
+        data[position : position + 2] = f"{index + 1:02d}".encode("ascii")
+        data[position + 2 : position + 6] = fuku_low
+        data[position + 6 : position + 10] = fuku_high
+        data[position + 10 : position + 12] = fuku_favourite
     for index in range(brackets):
         position = 603 + index * 9
-        data[position:position + 2] = f"{index + 1}{index + 2}".encode("ascii")
-        data[position + 2:position + 7] = wakuren_odds
-        data[position + 7:position + 9] = wakuren_favourite
+        data[position : position + 2] = f"{index + 1}{index + 2}".encode("ascii")
+        data[position + 2 : position + 7] = wakuren_odds
+        data[position + 7 : position + 9] = wakuren_favourite
     data[927:960] = totals
     data[960:962] = b"\r\n"
     raw = bytes(data)
@@ -518,7 +516,7 @@ STANDARD_TABLES = {
     "O5": ("ODDS_SANREN_HEAD", "ODDS_SANREN"),
     "O6": ("ODDS_SANRENTAN_HEAD", "ODDS_SANRENTAN"),
 }
-IMPORTERS = (DataImporter, OptimizedDataImporter)
+IMPORTERS = (DataImporter,)
 
 
 def totals_only_rows(record_type: str) -> list[dict]:
@@ -596,14 +594,12 @@ def test_sqlite_single_record_path_keeps_the_totals_only_snapshot(
     auto_commit: bool,
 ) -> None:
     table_name = NATIVE_TABLES[record_type]
-    database = SQLiteDatabase(
-        {"path": str(tmp_path / f"single-{record_type}-{auto_commit}.db")}
-    )
+    database = SQLiteDatabase({"path": str(tmp_path / f"single-{record_type}-{auto_commit}.db")})
     with database:
         _create(database, (table_name,))
         importer = DataImporter(database)
         for row in totals_only_rows(record_type):
-            assert importer.import_single_record(row, auto_commit=auto_commit) is True
+            assert import_one(importer, row, auto_commit=auto_commit) is True
         if not auto_commit:
             database.commit()
         assert database.fetch_one(f"SELECT COUNT(*) AS cnt FROM {table_name}")["cnt"] == 1
@@ -673,8 +669,7 @@ def erase_rows(record_type: str) -> list[dict]:
     if record_type == "O1":
         return [dict(row) for row in _o1_rows(data_kubun="0", horses=0, brackets=0)]
     return [
-        dict(row)
-        for row in LAYOUTS[record_type].rows(data_kubun="0", filled=0, sale_flag=b"0")
+        dict(row) for row in LAYOUTS[record_type].rows(data_kubun="0", filled=0, sale_flag=b"0")
     ]
 
 
@@ -691,12 +686,7 @@ def test_sqlite_status_zero_erases_the_snapshot_without_a_tombstone(
 
     tables = STANDARD_TABLES[record_type] if use_standard else (NATIVE_TABLES[record_type],)
     database = SQLiteDatabase(
-        {
-            "path": str(
-                tmp_path
-                / f"erase-{record_type}-{importer_class.__name__}-{use_standard}.db"
-            )
-        }
+        {"path": str(tmp_path / f"erase-{record_type}-{importer_class.__name__}-{use_standard}.db")}
     )
     with database:
         _create(database, tables)
@@ -707,9 +697,7 @@ def test_sqlite_status_zero_erases_the_snapshot_without_a_tombstone(
         assert importer.import_records(iter(erase_rows(record_type)))["records_failed"] == 0
 
         for table_name in tables:
-            assert (
-                database.fetch_one(f"SELECT COUNT(*) AS cnt FROM {table_name}")["cnt"] == 0
-            )
+            assert database.fetch_one(f"SELECT COUNT(*) AS cnt FROM {table_name}")["cnt"] == 0
 
 
 @pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
@@ -773,9 +761,7 @@ def test_unset_announced_time_is_accepted(
         pytest.param(b"0101120x", id="non-digit"),
     ),
 )
-def test_malformed_announced_time_is_still_rejected(
-    record_type: str, announced: bytes
-) -> None:
+def test_malformed_announced_time_is_still_rejected(record_type: str, announced: bytes) -> None:
     layout = LAYOUTS[record_type]
     raw = bytearray(layout.raw())
     raw[27:35] = announced

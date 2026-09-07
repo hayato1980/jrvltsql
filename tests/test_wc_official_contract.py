@@ -19,8 +19,8 @@ from src.database.schema_types import (
 from src.database.sqlite_handler import SQLiteDatabase
 from src.database.table_mappings import JLTSQL_TO_JRAVAN, JRAVAN_TO_JLTSQL
 from src.importer.importer import _STANDARD_FIELD_ALIASES, DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.wc_parser import WCParser
+from tests.importer_support import import_one
 
 
 def _pad(value: str, width: int) -> bytes:
@@ -355,23 +355,20 @@ def test_wc_4701_history_is_documentation_only_not_a_physical_layout() -> None:
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "table_name", "standard", "auto_commit"),
+    ("table_name", "standard", "auto_commit"),
     [
         pytest.param(
-            importer_class,
             table_name,
             standard,
             auto_commit,
-            id=f"{importer_class.__name__}-{table_name}-commit-{auto_commit}",
+            id=f"{table_name}-commit-{auto_commit}",
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, standard in (("NL_WC", False), ("WOOD", True))
         for auto_commit in (True, False)
     ],
 )
 def test_wc_official_key_coexistence_course_update_and_provider_ordered_delete(
     tmp_path,
-    importer_class,
     table_name: str,
     standard: bool,
     auto_commit: bool,
@@ -381,7 +378,7 @@ def test_wc_official_key_coexistence_course_update_and_provider_ordered_delete(
     haron_column = "HaronTime10" if standard else "HaronTime10Total"
     with database:
         database.create_table(table_name, schema)
-        importer = importer_class(database, use_jravan_schema=standard)
+        importer = DataImporter(database, use_jravan_schema=standard)
         created = importer.import_records(
             iter([parsed_record(tresen_kubun="0"), parsed_record(tresen_kubun="1")]),
             auto_commit=auto_commit,
@@ -444,21 +441,18 @@ def _canonical_only(record: dict) -> dict:
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "table_name", "standard"),
+    ("table_name", "standard"),
     [
         pytest.param(
-            importer_class,
             table_name,
             standard,
-            id=f"{importer_class.__name__}-{table_name}",
+            id=f"{table_name}",
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, standard in (("NL_WC", False), ("WOOD", True))
     ],
 )
 def test_wc_caller_built_rows_are_revalidated_before_mutation(
     tmp_path,
-    importer_class,
     table_name: str,
     standard: bool,
 ) -> None:
@@ -466,7 +460,7 @@ def test_wc_caller_built_rows_are_revalidated_before_mutation(
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
     with database:
         database.create_table(table_name, schema)
-        importer = importer_class(database, use_jravan_schema=standard)
+        importer = DataImporter(database, use_jravan_schema=standard)
         importer.import_records(iter([parsed_record()]))
 
         legacy_headers = parsed_record(chokyo_time="0631")
@@ -582,23 +576,20 @@ def _obsolete_schema(table_name: str, *, standard: bool) -> str:
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "table_name", "standard", "auto_commit"),
+    ("table_name", "standard", "auto_commit"),
     [
         pytest.param(
-            importer_class,
             table_name,
             standard,
             auto_commit,
-            id=f"{importer_class.__name__}-{table_name}-commit-{auto_commit}",
+            id=f"{table_name}-commit-{auto_commit}",
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, standard in (("NL_WC", False), ("WOOD", True))
         for auto_commit in (True, False)
     ],
 )
 def test_wc_obsolete_wrong_key_is_rejected_before_schema_or_row_mutation(
     tmp_path,
-    importer_class,
     table_name: str,
     standard: bool,
     auto_commit: bool,
@@ -619,7 +610,7 @@ def test_wc_obsolete_wrong_key_is_rejected_before_schema_or_row_mutation(
         before_rows = database.fetch_all(f"SELECT * FROM {table_name}")
 
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=standard).import_records(
+            DataImporter(database, use_jravan_schema=standard).import_records(
                 iter([parsed_record()]), auto_commit=auto_commit
             )
 
@@ -655,11 +646,11 @@ def test_wc_single_record_uses_the_same_validation_and_exact_delete(
         missing_status = parsed_record()
         missing_status.pop("DataKubun")
         with pytest.raises(SchemaMigrationError):
-            importer.import_single_record(missing_status, auto_commit=auto_commit)
+            import_one(importer, missing_status, auto_commit=auto_commit)
         invalid_time = parsed_record()
         invalid_time["ChokyoTime"] = "1160"
         with pytest.raises(SchemaMigrationError):
-            importer.import_single_record(invalid_time, auto_commit=auto_commit)
+            import_one(importer, invalid_time, auto_commit=auto_commit)
         opaque_delete = parsed_record(
             data_kubun="0",
             course="8",
@@ -667,7 +658,7 @@ def test_wc_single_record_uses_the_same_validation_and_exact_delete(
             field_overrides={"HaronTime10Total": "ABCD"},
         )
         opaque_delete["reserved"] = "OVERSIZED"
-        assert importer.import_single_record(opaque_delete, auto_commit=auto_commit)
+        assert import_one(importer, opaque_delete, auto_commit=auto_commit)
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"] == 0
 
 
@@ -678,28 +669,25 @@ def test_wc_postgresql_native_and_standard_key_update_delete(postgresql_db) -> N
     assert SchemaManager(postgresql_db).apply_metadata_to_table("NL_WC") is True
     postgresql_db.commit()
 
-    for importer_class in (DataImporter, OptimizedDataImporter):
-        for table_name, standard in (("NL_WC", False), ("WOOD", True)):
-            importer = importer_class(postgresql_db, use_jravan_schema=standard)
-            stats = importer.import_records(
-                iter([parsed_record(tresen_kubun="0"), parsed_record(tresen_kubun="1")])
-            )
-            assert stats["records_imported"] == 2
-            assert postgresql_db.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {
-                "count": 2
-            }
-            importer.import_records(iter([parsed_record(tresen_kubun="0", course="2")]))
-            assert postgresql_db.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {
-                "count": 2
-            }
-            importer.import_records(
-                iter([parsed_record(data_kubun="0", tresen_kubun="0", course="4")])
-            )
-            assert postgresql_db.fetch_all(
-                f"SELECT TresenKubun AS tresen FROM {table_name} ORDER BY TresenKubun"
-            ) == [{"tresen": "1"}]
-            postgresql_db.execute(f"DELETE FROM {table_name}")
-            postgresql_db.commit()
+    for table_name, standard in (("NL_WC", False), ("WOOD", True)):
+        importer = DataImporter(postgresql_db, use_jravan_schema=standard)
+        stats = importer.import_records(
+            iter([parsed_record(tresen_kubun="0"), parsed_record(tresen_kubun="1")])
+        )
+        assert stats["records_imported"] == 2
+        assert postgresql_db.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {
+            "count": 2
+        }
+        importer.import_records(iter([parsed_record(tresen_kubun="0", course="2")]))
+        assert postgresql_db.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {
+            "count": 2
+        }
+        importer.import_records(iter([parsed_record(data_kubun="0", tresen_kubun="0", course="4")]))
+        assert postgresql_db.fetch_all(
+            f"SELECT TresenKubun AS tresen FROM {table_name} ORDER BY TresenKubun"
+        ) == [{"tresen": "1"}]
+        postgresql_db.execute(f"DELETE FROM {table_name}")
+        postgresql_db.commit()
 
     primary_key_query = (
         "SELECT pg_get_constraintdef(c.oid) AS definition "
@@ -718,10 +706,7 @@ def test_wc_postgresql_native_and_standard_key_update_delete(postgresql_db) -> N
         before_key = postgresql_db.fetch_one(primary_key_query, (table_name.lower(),))
         before_rows = postgresql_db.fetch_all(f"SELECT * FROM {table_name}")
 
-        for importer_class, auto_commit in (
-            (DataImporter, True),
-            (OptimizedDataImporter, False),
-        ):
+        for importer_class, auto_commit in ((DataImporter, True),):
             with pytest.raises(SchemaMigrationError, match="primary key"):
                 importer_class(postgresql_db, use_jravan_schema=standard).import_records(
                     iter([parsed_record()]), auto_commit=auto_commit
@@ -749,31 +734,27 @@ def test_wc_storage_rejects_an_extra_unique_before_it_can_erase_another_key(
     assert "PRIMARY KEY (" in schema
     drifted = schema.replace("PRIMARY KEY (", "UNIQUE (RecordSpec), PRIMARY KEY (", 1)
 
-    for importer_class in (DataImporter, OptimizedDataImporter):
-        for auto_commit in (True, False):
-            database = SQLiteDatabase(
-                {
-                    "path": str(
-                        tmp_path
-                        / f"unique-{table_name}-{importer_class.__name__}-{auto_commit}.db"
-                    )
-                }
-            )
-            with database:
-                database.execute(drifted)
-                database.commit()
-                before_indexes = database.fetch_all(f'PRAGMA index_list("{table_name}")')
-                importer = importer_class(database, use_jravan_schema=standard)
-                with pytest.raises(SchemaMigrationError, match="UNIQUE"):
-                    importer.import_records(
-                        iter([parsed_record(ketto_num="2020100001")]),
-                        auto_commit=auto_commit,
-                    )
-                assert database.fetch_all(f'PRAGMA index_list("{table_name}")') == before_indexes
-                assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {
-                    "count": 0
-                }
-                assert importer.get_statistics()["records_imported"] == 0
+    for auto_commit in (True, False):
+        database = SQLiteDatabase(
+            {
+                "path": str(
+                    tmp_path / f"unique-{table_name}-{DataImporter.__name__}-{auto_commit}.db"
+                )
+            }
+        )
+        with database:
+            database.execute(drifted)
+            database.commit()
+            before_indexes = database.fetch_all(f'PRAGMA index_list("{table_name}")')
+            importer = DataImporter(database, use_jravan_schema=standard)
+            with pytest.raises(SchemaMigrationError, match="UNIQUE"):
+                importer.import_records(
+                    iter([parsed_record(ketto_num="2020100001")]),
+                    auto_commit=auto_commit,
+                )
+            assert database.fetch_all(f'PRAGMA index_list("{table_name}")') == before_indexes
+            assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {"count": 0}
+            assert importer.get_statistics()["records_imported"] == 0
 
     database = SQLiteDatabase({"path": str(tmp_path / f"official-{table_name}.db")})
     with database:

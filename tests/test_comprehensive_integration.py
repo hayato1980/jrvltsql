@@ -28,6 +28,7 @@ from src.jvlink.constants import JV_RT_SUCCESS
 from src.parser.factory import ParserFactory
 from src.services.realtime_monitor import RealtimeMonitor
 from tests.fixtures.record_factory import make_hr_record, make_ra_record, make_se_record
+from tests.importer_support import import_one
 
 
 class TestFullPipelineIntegration(unittest.TestCase):
@@ -36,9 +37,9 @@ class TestFullPipelineIntegration(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.temp_dir.name) / 'integration.db'
+        self.db_path = Path(self.temp_dir.name) / "integration.db"
 
-        self.database = SQLiteDatabase({'path': str(self.db_path)})
+        self.database = SQLiteDatabase({"path": str(self.db_path)})
         self.database.connect()
 
         self.schema_mgr = SchemaManager(self.database)
@@ -59,7 +60,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         self.assertEqual(record["RecordSpec"], "RA")
 
         importer = DataImporter(self.database, batch_size=10)
-        self.assertTrue(importer.import_single_record(record))
+        self.assertTrue(import_one(importer, record))
 
         rows = self.database.fetch_all("SELECT Hondai FROM NL_RA")
         self.assertEqual(rows, [{"Hondai": "統合テスト競走"}])
@@ -71,7 +72,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
         self.assertTrue(all(results.values()))
 
         # Mock JV-Link to avoid actual API calls
-        with patch('src.fetcher.base.JVLinkWrapper') as mock_jvlink_class:
+        with patch("src.fetcher.base.JVLinkWrapper") as mock_jvlink_class:
             mock_jvlink = MagicMock()
             mock_jvlink_class.return_value = mock_jvlink
 
@@ -81,34 +82,28 @@ class TestFullPipelineIntegration(unittest.TestCase):
             mock_jvlink.jv_read.return_value = (0, b"", "")  # No data
 
             # Create batch processor
-            processor = BatchProcessor(
-                database=self.database,
-                sid="TEST",
-                batch_size=100
-            )
+            processor = BatchProcessor(database=self.database, sid="TEST", batch_size=100)
 
             result = processor.process_date_range(
-                data_spec="RACE",
-                from_date="20240101",
-                to_date="20240101"
+                data_spec="RACE", from_date="20240101", to_date="20240101"
             )
 
-            self.assertEqual(result['records_fetched'], 0)
-            self.assertEqual(result['records_parsed'], 0)
-            self.assertEqual(result['records_imported'], 0)
+            self.assertEqual(result["records_fetched"], 0)
+            self.assertEqual(result["records_parsed"], 0)
+            self.assertEqual(result["records_imported"], 0)
             mock_jvlink.jv_close.assert_called_once_with()
 
     def test_multiple_record_types(self):
         """Test importing multiple different record types."""
         # Create tables for multiple types
-        test_tables = ['NL_RA', 'NL_SE', 'NL_HR']
+        test_tables = ["NL_RA", "NL_SE", "NL_HR"]
         for table_name in test_tables:
             self.assertTrue(self.schema_mgr.create_table(table_name))
 
         samples = {
-            'RA': make_ra_record(),
-            'SE': make_se_record(),
-            'HR': make_hr_record(),
+            "RA": make_ra_record(),
+            "SE": make_se_record(),
+            "HR": make_hr_record(),
         }
 
         importer = DataImporter(self.database, batch_size=10)
@@ -117,7 +112,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
             parsed = self.factory.parse(sample)
             self.assertIsNotNone(parsed)
             self.assertEqual(parsed["RecordSpec"], record_type)
-            self.assertTrue(importer.import_single_record(parsed))
+            self.assertTrue(import_one(importer, parsed))
             rows = self.database.fetch_all(f"SELECT RecordSpec FROM NL_{record_type}")
             self.assertEqual(rows, [{"RecordSpec": record_type}])
 
@@ -128,9 +123,9 @@ class TestRealtimeIntegration(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.temp_dir.name) / 'realtime.db'
+        self.db_path = Path(self.temp_dir.name) / "realtime.db"
 
-        self.database = SQLiteDatabase({'path': str(self.db_path)})
+        self.database = SQLiteDatabase({"path": str(self.db_path)})
         self.database.connect()
 
     def tearDown(self):
@@ -138,8 +133,8 @@ class TestRealtimeIntegration(unittest.TestCase):
         self.database.disconnect()
         self.temp_dir.cleanup()
 
-    @patch('src.fetcher.base.JVLinkWrapper')
-    @patch('src.fetcher.base.ParserFactory')
+    @patch("src.fetcher.base.JVLinkWrapper")
+    @patch("src.fetcher.base.ParserFactory")
     def test_realtime_fetcher_integration(self, mock_factory, mock_jvlink_class):
         """Test RealtimeFetcher with mocked JV-Link."""
         # Setup mocks
@@ -156,7 +151,7 @@ class TestRealtimeIntegration(unittest.TestCase):
 
         # Mock parser
         mock_parser = MagicMock()
-        mock_parser.parse.return_value = {'RecordSpec': 'RA', 'data': 'test'}
+        mock_parser.parse.return_value = {"RecordSpec": "RA", "data": "test"}
         mock_factory_instance = MagicMock()
         mock_factory_instance.parse = mock_parser.parse
         mock_factory.return_value = mock_factory_instance
@@ -169,8 +164,8 @@ class TestRealtimeIntegration(unittest.TestCase):
         self.assertEqual(records[0]["RecordSpec"], "RA")
         mock_jvlink.jv_close.assert_called_once_with()
 
-    @patch('src.database.schema.SchemaManager')
-    @patch('src.services.realtime_monitor.threading.Thread')
+    @patch("src.database.schema.SchemaManager")
+    @patch("src.services.realtime_monitor.threading.Thread")
     def test_realtime_monitor_lifecycle(self, mock_thread, mock_schema_mgr):
         """Test RealtimeMonitor start/stop lifecycle."""
         # Mock schema manager
@@ -183,11 +178,7 @@ class TestRealtimeIntegration(unittest.TestCase):
         mock_thread.return_value = mock_thread_instance
 
         # Create monitor
-        monitor = RealtimeMonitor(
-            database=self.database,
-            data_specs=["0B12"],
-            sid="TEST"
-        )
+        monitor = RealtimeMonitor(database=self.database, data_specs=["0B12"], sid="TEST")
 
         # Test lifecycle
         self.assertFalse(monitor.status.is_running)
@@ -207,13 +198,13 @@ class TestTransactionHandling(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.temp_dir.name) / 'transaction.db'
+        self.db_path = Path(self.temp_dir.name) / "transaction.db"
 
-        self.database = SQLiteDatabase({'path': str(self.db_path)})
+        self.database = SQLiteDatabase({"path": str(self.db_path)})
         self.database.connect()
 
         self.schema_mgr = SchemaManager(self.database)
-        self.schema_mgr.create_table('NL_RA')
+        self.schema_mgr.create_table("NL_RA")
 
     def tearDown(self):
         """Clean up."""
@@ -226,7 +217,7 @@ class TestTransactionHandling(unittest.TestCase):
 
         sample = ParserFactory().parse(make_ra_record(hondai="コミット確認"))
         self.assertIsNotNone(sample)
-        self.assertTrue(importer.import_single_record(sample))
+        self.assertTrue(import_one(importer, sample))
 
         rows = self.database.fetch_all("SELECT Hondai FROM NL_RA")
         self.assertEqual(rows, [{"Hondai": "コミット確認"}])
@@ -258,9 +249,9 @@ class TestEdgeCases(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.temp_dir.name) / 'edge.db'
+        self.db_path = Path(self.temp_dir.name) / "edge.db"
 
-        self.database = SQLiteDatabase({'path': str(self.db_path)})
+        self.database = SQLiteDatabase({"path": str(self.db_path)})
         self.database.connect()
 
     def tearDown(self):
@@ -277,27 +268,26 @@ class TestEdgeCases(unittest.TestCase):
             self.database.fetch_all("SELECT * FROM non_existent")
 
         # Create and query empty table
-        schema_mgr.create_table('NL_RA')
+        schema_mgr.create_table("NL_RA")
         rows = self.database.fetch_all("SELECT * FROM NL_RA")
         self.assertEqual(len(rows), 0)
 
     def test_large_batch_size(self):
         """Test with unusually large batch size."""
         schema_mgr = SchemaManager(self.database)
-        schema_mgr.create_table('NL_RA')
+        schema_mgr.create_table("NL_RA")
 
         importer = DataImporter(self.database, batch_size=10000)
 
         factory = ParserFactory()
         records = [
-            factory.parse(make_ra_record(race_num=f"{race_num:02d}"))
-            for race_num in range(1, 11)
+            factory.parse(make_ra_record(race_num=f"{race_num:02d}")) for race_num in range(1, 11)
         ]
         self.assertTrue(all(record is not None for record in records))
 
         result = importer.import_records(records)
-        self.assertEqual(result['records_imported'], 10)
-        self.assertEqual(result['records_failed'], 0)
+        self.assertEqual(result["records_imported"], 10)
+        self.assertEqual(result["records_failed"], 0)
         self.assertEqual(
             self.database.fetch_one("SELECT COUNT(*) AS count FROM NL_RA")["count"],
             10,
@@ -306,16 +296,16 @@ class TestEdgeCases(unittest.TestCase):
     def test_unicode_handling(self):
         """Test handling of Japanese characters."""
         schema_mgr = SchemaManager(self.database)
-        schema_mgr.create_table('NL_RA')
+        schema_mgr.create_table("NL_RA")
 
         sample = ParserFactory().parse(make_ra_record(hondai="東京新聞杯"))
         self.assertIsNotNone(sample)
 
         importer = DataImporter(self.database, batch_size=10)
-        self.assertTrue(importer.import_single_record(sample))
+        self.assertTrue(import_one(importer, sample))
         rows = self.database.fetch_all("SELECT Hondai FROM NL_RA")
         self.assertEqual(rows, [{"Hondai": "東京新聞杯"}])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -26,9 +26,9 @@ from src.importer.importer import (
     validate_import_record_header,
     verify_hs_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hs_parser import HSParser
 from src.realtime.updater import RealtimeUpdater
+from tests.importer_support import import_one
 
 FIXTURES = Path(__file__).parent / "fixtures" / "official_layout"
 MANIFEST = json.loads((FIXTURES / "jvdata_sdk500_manifest.json").read_text(encoding="utf-8"))
@@ -129,10 +129,7 @@ def hs_schema_missing_marker_with_extra_check() -> str:
 
 def hs_table_columns(database) -> set[str]:
     if database.get_db_type() == "sqlite":
-        return {
-            str(row["name"])
-            for row in database.fetch_all('PRAGMA table_info("NL_HS")')
-        }
+        return {str(row["name"]) for row in database.fetch_all('PRAGMA table_info("NL_HS")')}
     return {
         str(row["column_name"])
         for row in database.fetch_all(
@@ -222,26 +219,14 @@ def parsed_hs(**overrides) -> dict:
 
 def _import(
     database,
-    entrypoint: str,
     records: list[dict],
     *,
     standard: bool,
     auto_commit: bool = True,
 ) -> dict:
-    if entrypoint == "data":
-        stats = DataImporter(database, use_jravan_schema=standard).import_records(
-            iter(records), auto_commit=auto_commit
-        )
-    elif entrypoint == "optimized":
-        stats = OptimizedDataImporter(database, use_jravan_schema=standard).import_records(
-            iter(records), auto_commit=auto_commit
-        )
-    else:
-        importer = DataImporter(database, use_jravan_schema=standard)
-        assert all(
-            importer.import_single_record(record, auto_commit=auto_commit) for record in records
-        )
-        stats = importer.get_statistics()
+    stats = DataImporter(database, use_jravan_schema=standard).import_records(
+        iter(records), auto_commit=auto_commit
+    )
     if not auto_commit:
         database.commit()
     return stats
@@ -249,7 +234,6 @@ def _import(
 
 def _assert_hs_failure_transaction_boundary(
     database,
-    entrypoint: str,
     *,
     standard: bool,
     auto_commit: bool,
@@ -258,17 +242,9 @@ def _assert_hs_failure_transaction_boundary(
     good = parsed_hs()
     malformed = parsed_hs(ketto_num="2022100106")
     malformed["Price"] = "9X"
-    importer = (
-        OptimizedDataImporter(database, batch_size=1, use_jravan_schema=standard)
-        if entrypoint == "optimized"
-        else DataImporter(database, batch_size=1, use_jravan_schema=standard)
-    )
+    importer = DataImporter(database, batch_size=1, use_jravan_schema=standard)
     with pytest.raises(SchemaMigrationError):
-        if entrypoint == "single":
-            assert importer.import_single_record(good, auto_commit=auto_commit)
-            importer.import_single_record(malformed, auto_commit=auto_commit)
-        else:
-            importer.import_records(iter([good, malformed]), auto_commit=auto_commit)
+        importer.import_records(iter([good, malformed]), auto_commit=auto_commit)
     expected = 1 if auto_commit else 0
     assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {"count": expected}
     stats = importer.get_statistics()
@@ -404,8 +380,8 @@ def test_hs_status_zero_caller_body_is_opaque_but_aliases_remain_strict(
         database.execute(SCHEMAS["NL_HS"])
         database.commit()
         importer = DataImporter(database)
-        assert importer.import_single_record(parsed_hs())
-        assert importer.import_single_record(erase)
+        assert import_one(importer, parsed_hs())
+        assert import_one(importer, erase)
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_HS") == {"count": 0}
 
 
@@ -507,8 +483,7 @@ def test_hs_schema_verifier_rejects_unsafe_storage(
     elif defect == "extra-required-column":
         schema = schema.replace(
             "PRIMARY KEY (KettoNum, SaleCode, FromDate)",
-            "ExternalRequired TEXT NOT NULL, "
-            "PRIMARY KEY (KettoNum, SaleCode, FromDate)",
+            "ExternalRequired TEXT NOT NULL, " "PRIMARY KEY (KettoNum, SaleCode, FromDate)",
             1,
         )
     else:
@@ -665,17 +640,15 @@ def test_hs_actual_pre_2_0_empty_storage_requires_explicit_rebuild(
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {"count": 0}
 
 
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
 def test_hs_invalid_first_record_precedes_standard_additive_migration(
     tmp_path: Path,
-    entrypoint: str,
 ) -> None:
     race_without_youbi = JRAVAN_SCHEMAS["RACE"].replace(
         "            YoubiCD                        VARCHAR(1)          ,  -- 文字列(1)\n",
         "",
     )
     assert race_without_youbi != JRAVAN_SCHEMAS["RACE"]
-    database = SQLiteDatabase({"path": str(tmp_path / f"invalid-{entrypoint}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / "invalid.db")})
     with database:
         database.execute(race_without_youbi)
         database.commit()
@@ -683,14 +656,7 @@ def test_hs_invalid_first_record_precedes_standard_additive_migration(
         malformed = parsed_hs()
         malformed["Price"] = "9X"
         with pytest.raises(SchemaMigrationError):
-            if entrypoint == "data":
-                DataImporter(database, use_jravan_schema=True).import_records(iter([malformed]))
-            elif entrypoint == "optimized":
-                OptimizedDataImporter(database, use_jravan_schema=True).import_records(
-                    iter([malformed])
-                )
-            else:
-                DataImporter(database, use_jravan_schema=True).import_single_record(malformed)
+            DataImporter(database, use_jravan_schema=True).import_records(iter([malformed]))
         assert database.fetch_all('PRAGMA table_info("RACE")') == before
 
 
@@ -729,11 +695,9 @@ def test_hs_dual_rejects_one_unsafe_target_before_either_changes(tmp_path: Path)
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
 def test_hs_all_current_fields_round_trip(
     tmp_path: Path,
     standard: bool,
-    entrypoint: str,
 ) -> None:
     table_name = "SALE" if standard else "NL_HS"
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -741,7 +705,7 @@ def test_hs_all_current_fields_round_trip(
     with database:
         database.execute(schema)
         database.commit()
-        _import(database, entrypoint, [parsed_hs()], standard=standard)
+        _import(database, [parsed_hs()], standard=standard)
         row = database.fetch_one(
             f"SELECT RecordSpec, DataKubun, MakeDate, CurrentLayoutVersion, "
             f"KettoNum, HansyokuFNum, HansyokuMNum, BirthYear, SaleCode, "
@@ -767,17 +731,15 @@ def test_hs_all_current_fields_round_trip(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hs_provider_order_exact_erase_and_operation_statistics(
     tmp_path: Path,
     standard: bool,
-    entrypoint: str,
     auto_commit: bool,
 ) -> None:
     table_name = "SALE" if standard else "NL_HS"
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
-    database = SQLiteDatabase({"path": str(tmp_path / f"{table_name}-{entrypoint}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"{table_name}.db")})
     with database:
         database.execute(schema)
         database.commit()
@@ -787,7 +749,6 @@ def test_hs_provider_order_exact_erase_and_operation_statistics(
         erase = parsed_hs(data_kubun="0")
         stats = _import(
             database,
-            entrypoint,
             [first, revision, survivor, erase],
             standard=standard,
             auto_commit=auto_commit,
@@ -806,12 +767,10 @@ def test_hs_provider_order_exact_erase_and_operation_statistics(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hs_sqlite_failure_rollback_and_incremental_commit_statistics(
     tmp_path: Path,
     standard: bool,
-    entrypoint: str,
     auto_commit: bool,
 ) -> None:
     table_name = "SALE" if standard else "NL_HS"
@@ -822,7 +781,6 @@ def test_hs_sqlite_failure_rollback_and_incremental_commit_statistics(
         database.commit()
         _assert_hs_failure_transaction_boundary(
             database,
-            entrypoint,
             standard=standard,
             auto_commit=auto_commit,
         )
@@ -857,12 +815,10 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hs_postgresql_provider_order_exact_erase_and_operation_statistics(
     postgresql_db,
     standard: bool,
-    entrypoint: str,
     auto_commit: bool,
 ) -> None:
     table_name = "SALE" if standard else "NL_HS"
@@ -871,7 +827,6 @@ def test_hs_postgresql_provider_order_exact_erase_and_operation_statistics(
     postgresql_db.commit()
     stats = _import(
         postgresql_db,
-        entrypoint,
         [
             parsed_hs(price="100"),
             parsed_hs(make_date="20260819", price="200"),
@@ -888,12 +843,10 @@ def test_hs_postgresql_provider_order_exact_erase_and_operation_statistics(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hs_postgresql_failure_rollback_and_incremental_commit_statistics(
     postgresql_db,
     standard: bool,
-    entrypoint: str,
     auto_commit: bool,
 ) -> None:
     table_name = "SALE" if standard else "NL_HS"
@@ -902,7 +855,6 @@ def test_hs_postgresql_failure_rollback_and_incremental_commit_statistics(
     postgresql_db.commit()
     _assert_hs_failure_transaction_boundary(
         postgresql_db,
-        entrypoint,
         standard=standard,
         auto_commit=auto_commit,
     )
@@ -962,8 +914,7 @@ def test_hs_postgresql_schema_verifier_rejects_unusable_or_untrusted_storage(
     elif defect == "extra-required-column":
         schema = schema.replace(
             "PRIMARY KEY (KettoNum, SaleCode, FromDate)",
-            "ExternalRequired TEXT NOT NULL, "
-            "PRIMARY KEY (KettoNum, SaleCode, FromDate)",
+            "ExternalRequired TEXT NOT NULL, " "PRIMARY KEY (KettoNum, SaleCode, FromDate)",
             1,
         )
     elif defect == "deferrable-pk":
@@ -983,11 +934,9 @@ def test_hs_postgresql_schema_verifier_rejects_unusable_or_untrusted_storage(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
 def test_hs_postgresql_idle_schema_rejection_closes_implicit_transaction(
     postgresql_db,
     standard: bool,
-    entrypoint: str,
 ) -> None:
     table_name = "SALE" if standard else "NL_HS"
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -998,17 +947,10 @@ def test_hs_postgresql_idle_schema_rejection_closes_implicit_transaction(
     )
     postgresql_db.execute(unsafe)
     postgresql_db.commit()
-    importer = (
-        OptimizedDataImporter(postgresql_db, use_jravan_schema=standard)
-        if entrypoint == "optimized"
-        else DataImporter(postgresql_db, use_jravan_schema=standard)
-    )
+    importer = DataImporter(postgresql_db, use_jravan_schema=standard)
     assert postgresql_db.has_pending_transaction() is False
     with pytest.raises(SchemaMigrationError):
-        if entrypoint == "single":
-            importer.import_single_record(parsed_hs(), auto_commit=True)
-        else:
-            importer.import_records(iter([parsed_hs()]), auto_commit=True)
+        importer.import_records(iter([parsed_hs()]), auto_commit=True)
     # Check ownership before the diagnostic SELECT below starts a new lazy
     # PostgreSQL read transaction.
     assert postgresql_db.has_pending_transaction() is False
@@ -1066,16 +1008,14 @@ def test_hs_dual_postgresql_schema_rejection_closes_only_call_created_transactio
         postgresql_db.rollback()
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-mode"))
 def test_hs_postgresql_empty_standard_import_respects_transaction_mode(
     postgresql_db,
-    importer_class,
     auto_commit: bool,
 ) -> None:
     postgresql_db.execute(JRAVAN_SCHEMAS["SALE"])
     postgresql_db.commit()
-    importer = importer_class(postgresql_db, use_jravan_schema=True)
+    importer = DataImporter(postgresql_db, use_jravan_schema=True)
     stats = importer.import_records(iter(()), auto_commit=auto_commit)
     assert stats["records_imported"] == 0
     assert stats["records_failed"] == 0
@@ -1096,9 +1036,7 @@ def test_hs_postgresql_empty_standard_import_preserves_existing_caller_transacti
     stats = DataImporter(postgresql_db, use_jravan_schema=True).import_records(iter(()))
     assert stats["records_imported"] == 0
     assert postgresql_db.has_pending_transaction() is True
-    assert postgresql_db.fetch_one("SELECT COUNT(*) AS count FROM hs_empty_marker") == {
-        "count": 1
-    }
+    assert postgresql_db.fetch_one("SELECT COUNT(*) AS count FROM hs_empty_marker") == {"count": 1}
     postgresql_db.rollback()
 
 
@@ -1141,15 +1079,11 @@ def test_hs_dual_missing_marker_with_extra_check_rejects_before_either_migration
     sqlite = SQLiteDatabase({"path": str(tmp_path / f"dual-marker-{postgresql_primary}.db")})
     with sqlite:
         sqlite.execute(
-            SCHEMAS["NL_HS"]
-            if postgresql_primary
-            else hs_schema_missing_marker_with_extra_check()
+            SCHEMAS["NL_HS"] if postgresql_primary else hs_schema_missing_marker_with_extra_check()
         )
         sqlite.commit()
         postgresql_db.execute(
-            hs_schema_missing_marker_with_extra_check()
-            if postgresql_primary
-            else SCHEMAS["NL_HS"]
+            hs_schema_missing_marker_with_extra_check() if postgresql_primary else SCHEMAS["NL_HS"]
         )
         postgresql_db.commit()
         before_sqlite = hs_table_columns(sqlite)

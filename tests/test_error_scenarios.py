@@ -11,12 +11,10 @@ Tests various error conditions and recovery mechanisms:
 6. Timeout handling
 """
 
-import os
 import tempfile
-import time
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 from src.database.base import DatabaseError
 from src.database.migration import SchemaMigrationError
@@ -26,6 +24,7 @@ from src.fetcher.historical import FetcherError, HistoricalFetcher
 from src.importer.importer import DataImporter
 from src.jvlink.wrapper import JVLinkError
 from src.parser.factory import ParserFactory
+from tests.importer_support import import_one
 
 
 class TestInvalidDataHandling(unittest.TestCase):
@@ -34,13 +33,13 @@ class TestInvalidDataHandling(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.temp_dir.name) / 'error_test.db'
+        self.db_path = Path(self.temp_dir.name) / "error_test.db"
 
-        self.database = SQLiteDatabase({'path': str(self.db_path)})
+        self.database = SQLiteDatabase({"path": str(self.db_path)})
         self.database.connect()
 
         self.schema_mgr = SchemaManager(self.database)
-        self.schema_mgr.create_table('NL_RA')
+        self.schema_mgr.create_table("NL_RA")
 
         self.factory = ParserFactory()
         self.importer = DataImporter(self.database, batch_size=10)
@@ -77,44 +76,44 @@ class TestInvalidDataHandling(unittest.TestCase):
     def test_import_invalid_record(self):
         """Test importing record with missing required fields."""
         invalid_record = {
-            'レコード種別ID': 'RA',
-            'DataKubun': '1',
-            'MakeDate': '20240101',
+            "レコード種別ID": "RA",
+            "DataKubun": "1",
+            "MakeDate": "20240101",
             # Missing required fields
         }
 
-        success = self.importer.import_single_record(invalid_record)
+        success = import_one(self.importer, invalid_record)
         # May succeed or fail depending on schema, but shouldn't crash
         self.assertIsInstance(success, bool)
 
     def test_import_wrong_record_type(self):
         """An incomplete SE record is rejected as invalid, not routed loosely."""
         wrong_record = {
-            'レコード種別ID': 'SE',
-            'DataKubun': '1',
-            'MakeDate': '20240101',
-            '開催年月日': '20240101',
+            "レコード種別ID": "SE",
+            "DataKubun": "1",
+            "MakeDate": "20240101",
+            "開催年月日": "20240101",
         }
 
         with self.assertRaises(SchemaMigrationError):
-            self.importer.import_single_record(wrong_record)
+            import_one(self.importer, wrong_record)
 
     def test_duplicate_key_violation(self):
         """Test handling of duplicate key constraint violations."""
         # Use ASCII field names to avoid encoding issues
         sample = {
-            'RecordSpec': 'RA',
-            'DataKubun': '1',
-            'MakeDate': '20240101',
-            'year': '2024',
-            'month_day': '0101'
+            "RecordSpec": "RA",
+            "DataKubun": "1",
+            "MakeDate": "20240101",
+            "year": "2024",
+            "month_day": "0101",
         }
 
         # Import first time (may or may not succeed with limited fields)
-        success1 = self.importer.import_single_record(sample)
+        success1 = import_one(self.importer, sample)
 
         # Import again (may fail due to UNIQUE constraint)
-        success2 = self.importer.import_single_record(sample)
+        success2 = import_one(self.importer, sample)
 
         # Should handle gracefully without crashing
         self.assertIsInstance(success1, bool)
@@ -123,14 +122,14 @@ class TestInvalidDataHandling(unittest.TestCase):
     def test_null_value_handling(self):
         """Test handling of NULL/None values."""
         record_with_nulls = {
-            'レコード種別ID': 'RA',
-            'DataKubun': '1',
-            'MakeDate': '20240101',
-            '開催年月日': None,  # NULL value
-            '競馬場コード': '',  # Empty string
+            "レコード種別ID": "RA",
+            "DataKubun": "1",
+            "MakeDate": "20240101",
+            "開催年月日": None,  # NULL value
+            "競馬場コード": "",  # Empty string
         }
 
-        success = self.importer.import_single_record(record_with_nulls)
+        success = import_one(self.importer, record_with_nulls)
         # Should handle NULL values gracefully
         self.assertIsInstance(success, bool)
 
@@ -143,6 +142,7 @@ class TestDatabaseConnectivityErrors(unittest.TestCase):
         # Use a path with non-existent parent directories that SQLite can't auto-create
         # Use platform-appropriate invalid path
         import sys
+
         if sys.platform == "win32":
             invalid_path = "Z:\\nonexistent\\dir\\that\\cannot\\be\\created\\database.db"
         else:
@@ -150,16 +150,16 @@ class TestDatabaseConnectivityErrors(unittest.TestCase):
 
         # Should raise error when trying to use connection
         with self.assertRaises((DatabaseError, Exception)):
-            db = SQLiteDatabase({'path': invalid_path})
+            db = SQLiteDatabase({"path": invalid_path})
             db.connect()
             db.execute("CREATE TABLE test (id INTEGER)")
 
     def test_query_after_disconnect(self):
         """Test querying after database disconnection."""
         temp_dir = tempfile.TemporaryDirectory()
-        db_path = Path(temp_dir.name) / 'test.db'
+        db_path = Path(temp_dir.name) / "test.db"
 
-        db = SQLiteDatabase({'path': str(db_path)})
+        db = SQLiteDatabase({"path": str(db_path)})
         db.connect()
         db.disconnect()
 
@@ -172,12 +172,12 @@ class TestDatabaseConnectivityErrors(unittest.TestCase):
     def test_concurrent_write_conflict(self):
         """Test concurrent write operations."""
         temp_dir = tempfile.TemporaryDirectory()
-        db_path = Path(temp_dir.name) / 'concurrent.db'
+        db_path = Path(temp_dir.name) / "concurrent.db"
 
-        db1 = SQLiteDatabase({'path': str(db_path)})
+        db1 = SQLiteDatabase({"path": str(db_path)})
         db1.connect()
 
-        db2 = SQLiteDatabase({'path': str(db_path)})
+        db2 = SQLiteDatabase({"path": str(db_path)})
         db2.connect()
 
         # Create table in first connection
@@ -205,9 +205,9 @@ class TestDatabaseConnectivityErrors(unittest.TestCase):
     def test_invalid_sql_syntax(self):
         """Test executing invalid SQL."""
         temp_dir = tempfile.TemporaryDirectory()
-        db_path = Path(temp_dir.name) / 'test.db'
+        db_path = Path(temp_dir.name) / "test.db"
 
-        db = SQLiteDatabase({'path': str(db_path)})
+        db = SQLiteDatabase({"path": str(db_path)})
         db.connect()
 
         # Invalid SQL should raise error
@@ -224,23 +224,23 @@ class TestResourceConstraints(unittest.TestCase):
     def test_very_large_batch(self):
         """Test importing very large batch of records."""
         temp_dir = tempfile.TemporaryDirectory()
-        db_path = Path(temp_dir.name) / 'large_batch.db'
+        db_path = Path(temp_dir.name) / "large_batch.db"
 
-        db = SQLiteDatabase({'path': str(db_path)})
+        db = SQLiteDatabase({"path": str(db_path)})
         db.connect()
 
         schema_mgr = SchemaManager(db)
-        schema_mgr.create_table('NL_RA')
+        schema_mgr.create_table("NL_RA")
 
         # Generate large batch
         large_batch = [
             {
-                'レコード種別ID': 'RA',
-                'DataKubun': '1',
-                'MakeDate': '20240101',
-                '開催年月日': f'2024{i:04d}',
-                '競馬場コード': f'{i % 10:02d}',
-                'レース番号': f'{i % 12:02d}'
+                "レコード種別ID": "RA",
+                "DataKubun": "1",
+                "MakeDate": "20240101",
+                "開催年月日": f"2024{i:04d}",
+                "競馬場コード": f"{i % 10:02d}",
+                "レース番号": f"{i % 12:02d}",
             }
             for i in range(1000)  # 1000 records
         ]
@@ -249,8 +249,8 @@ class TestResourceConstraints(unittest.TestCase):
         result = importer.import_records(large_batch)
 
         # Should complete without memory errors
-        self.assertIn('records_imported', result)
-        self.assertIn('records_failed', result)
+        self.assertIn("records_imported", result)
+        self.assertIn("records_failed", result)
 
         db.disconnect()
         temp_dir.cleanup()
@@ -258,25 +258,25 @@ class TestResourceConstraints(unittest.TestCase):
     def test_long_string_values(self):
         """Test handling of very long string values."""
         temp_dir = tempfile.TemporaryDirectory()
-        db_path = Path(temp_dir.name) / 'long_strings.db'
+        db_path = Path(temp_dir.name) / "long_strings.db"
 
-        db = SQLiteDatabase({'path': str(db_path)})
+        db = SQLiteDatabase({"path": str(db_path)})
         db.connect()
 
         schema_mgr = SchemaManager(db)
-        schema_mgr.create_table('NL_RA')
+        schema_mgr.create_table("NL_RA")
 
         # Record with very long string
         long_record = {
-            'レコード種別ID': 'RA',
-            'DataKubun': '1',
-            'MakeDate': '20240101',
-            '開催年月日': '20240101',
-            'レース名': 'A' * 10000,  # Very long race name
+            "レコード種別ID": "RA",
+            "DataKubun": "1",
+            "MakeDate": "20240101",
+            "開催年月日": "20240101",
+            "レース名": "A" * 10000,  # Very long race name
         }
 
         importer = DataImporter(db, batch_size=10)
-        success = importer.import_single_record(long_record)
+        success = import_one(importer, long_record)
 
         # Should handle or truncate long strings
         self.assertIsInstance(success, bool)
@@ -287,25 +287,25 @@ class TestResourceConstraints(unittest.TestCase):
     def test_many_columns_record(self):
         """Test record with many columns."""
         temp_dir = tempfile.TemporaryDirectory()
-        db_path = Path(temp_dir.name) / 'many_columns.db'
+        db_path = Path(temp_dir.name) / "many_columns.db"
 
-        db = SQLiteDatabase({'path': str(db_path)})
+        db = SQLiteDatabase({"path": str(db_path)})
         db.connect()
 
         schema_mgr = SchemaManager(db)
-        schema_mgr.create_table('NL_RA')
+        schema_mgr.create_table("NL_RA")
 
         # Create record with all possible fields
         many_fields_record = {
-            'レコード種別ID': 'RA',
-            'DataKubun': '1',
-            'MakeDate': '20240101',
+            "レコード種別ID": "RA",
+            "DataKubun": "1",
+            "MakeDate": "20240101",
         }
         for i in range(100):
-            many_fields_record[f'field_{i}'] = f'value_{i}'
+            many_fields_record[f"field_{i}"] = f"value_{i}"
 
         importer = DataImporter(db, batch_size=10)
-        success = importer.import_single_record(many_fields_record)
+        success = import_one(importer, many_fields_record)
 
         # Should handle gracefully (extra fields ignored)
         self.assertIsInstance(success, bool)
@@ -317,9 +317,9 @@ class TestResourceConstraints(unittest.TestCase):
 class TestFetcherErrors(unittest.TestCase):
     """Test fetcher error handling."""
 
-    @patch('src.fetcher.historical.time.sleep', return_value=None)
-    @patch('src.fetcher.base.JVLinkWrapper')
-    @patch('src.jvlink.bridge.find_bridge_executable', return_value=None)
+    @patch("src.fetcher.historical.time.sleep", return_value=None)
+    @patch("src.fetcher.base.JVLinkWrapper")
+    @patch("src.jvlink.bridge.find_bridge_executable", return_value=None)
     def test_wait_for_download_completes_when_downloaded_file_count_reaches_download_count(
         self,
         mock_find_bridge,
@@ -353,7 +353,7 @@ class TestFetcherErrors(unittest.TestCase):
 
         mock_jvlink.jv_open.assert_not_called()
 
-    @patch('src.fetcher.base.JVLinkWrapper')
+    @patch("src.fetcher.base.JVLinkWrapper")
     def test_jvopen_failure(self, mock_jvlink_class):
         """Test handling of JVOpen failure."""
         mock_jvlink = MagicMock()
@@ -367,8 +367,8 @@ class TestFetcherErrors(unittest.TestCase):
         with self.assertRaises(Exception):
             list(fetcher.fetch("RACE", "20240101", "20240101"))
 
-    @patch('src.fetcher.base.JVLinkWrapper')
-    @patch('src.fetcher.base.ParserFactory')
+    @patch("src.fetcher.base.JVLinkWrapper")
+    @patch("src.fetcher.base.ParserFactory")
     def test_jvread_error_recovery(self, mock_factory, mock_jvlink_class):
         """Test recovery from JVRead errors."""
         mock_jvlink = MagicMock()
@@ -397,13 +397,13 @@ class TestConcurrencyIssues(unittest.TestCase):
     def test_multiple_importers_same_db(self):
         """Test multiple DataImporter instances on same database."""
         temp_dir = tempfile.TemporaryDirectory()
-        db_path = Path(temp_dir.name) / 'concurrent.db'
+        db_path = Path(temp_dir.name) / "concurrent.db"
 
-        db = SQLiteDatabase({'path': str(db_path)})
+        db = SQLiteDatabase({"path": str(db_path)})
         db.connect()
 
         schema_mgr = SchemaManager(db)
-        schema_mgr.create_table('NL_RA')
+        schema_mgr.create_table("NL_RA")
 
         # Create multiple importers
         importer1 = DataImporter(db, batch_size=10)
@@ -411,20 +411,20 @@ class TestConcurrencyIssues(unittest.TestCase):
 
         # Both try to import
         record1 = {
-            'レコード種別ID': 'RA',
-            'DataKubun': '1',
-            'MakeDate': '20240101',
-            '開催年月日': '20240101',
+            "レコード種別ID": "RA",
+            "DataKubun": "1",
+            "MakeDate": "20240101",
+            "開催年月日": "20240101",
         }
         record2 = {
-            'レコード種別ID': 'RA',
-            'DataKubun': '1',
-            'MakeDate': '20240102',
-            '開催年月日': '20240102',
+            "レコード種別ID": "RA",
+            "DataKubun": "1",
+            "MakeDate": "20240102",
+            "開催年月日": "20240102",
         }
 
-        success1 = importer1.import_single_record(record1)
-        success2 = importer2.import_single_record(record2)
+        success1 = import_one(importer1, record1)
+        success2 = import_one(importer2, record2)
 
         # Both should succeed (or handle conflicts)
         self.assertIsInstance(success1, bool)
@@ -440,9 +440,9 @@ class TestDataIntegrityViolations(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.temp_dir.name) / 'integrity.db'
+        self.db_path = Path(self.temp_dir.name) / "integrity.db"
 
-        self.database = SQLiteDatabase({'path': str(self.db_path)})
+        self.database = SQLiteDatabase({"path": str(self.db_path)})
         self.database.connect()
 
     def tearDown(self):
@@ -470,9 +470,7 @@ class TestDataIntegrityViolations(unittest.TestCase):
         # Try to insert child with non-existent parent
         # SQLite doesn't enforce FK by default, but test the pattern
         try:
-            self.database.execute(
-                "INSERT INTO child (id, parent_id) VALUES (1, 999)"
-            )
+            self.database.execute("INSERT INTO child (id, parent_id) VALUES (1, 999)")
         except Exception as e:
             # FK violation may or may not raise depending on DB config
             self.assertIsInstance(e, Exception)
@@ -488,10 +486,8 @@ class TestDataIntegrityViolations(unittest.TestCase):
 
         # Try to insert invalid value
         with self.assertRaises((DatabaseError, Exception)):
-            self.database.execute(
-                "INSERT INTO test_check (id, value) VALUES (1, -1)"
-            )
+            self.database.execute("INSERT INTO test_check (id, value) VALUES (1, -1)")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

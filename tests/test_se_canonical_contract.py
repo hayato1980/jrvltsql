@@ -4,10 +4,11 @@ import pytest
 
 from src.database.migration import SchemaMigrationError
 from src.database.schema import SCHEMAS
-from src.importer.importer import convert_record_types
+from src.importer.importer import DataImporter, convert_record_types
 from src.parser.canonical import canonicalize_se_fields
 from src.parser.se_parser import SEParser
 from tests.fixtures.record_factory import make_se_record
+from tests.importer_support import import_one
 
 
 def _record(**fields: str) -> bytes:
@@ -170,16 +171,12 @@ def test_space_padded_fixed_width_numeric_value_is_canonicalized() -> None:
     assert canonical["BaTaijyuKg"] == 57
 
 
-@pytest.mark.parametrize("optimized", [False, True])
-def test_existing_seven_key_jravan_table_is_rejected_without_mutation(
-    tmp_path, optimized: bool
-) -> None:
+def test_existing_seven_key_jravan_table_is_rejected_without_mutation(tmp_path) -> None:
     from src.database.sqlite_handler import SQLiteDatabase
     from src.importer.importer import DataImporter
-    from src.importer.importer_optimized import OptimizedDataImporter
 
-    db = SQLiteDatabase({"path": str(tmp_path / f"legacy-jravan-{optimized}.db")})
-    importer_class = OptimizedDataImporter if optimized else DataImporter
+    db = SQLiteDatabase({"path": str(tmp_path / "legacy-jravan.db")})
+    importer_class = DataImporter
     importer = importer_class(db, use_jravan_schema=True)
     with db:
         db.execute(
@@ -202,16 +199,14 @@ def test_existing_seven_key_jravan_table_is_rejected_without_mutation(
     assert row_count == {"n": 1}
 
 
-@pytest.mark.parametrize("optimized", [False, True])
 def test_jravan_importer_auto_commit_false_keeps_migration_and_row_in_caller_transaction(
-    tmp_path, optimized: bool
+    tmp_path,
 ) -> None:
     from src.database.sqlite_handler import SQLiteDatabase
     from src.importer.importer import DataImporter
-    from src.importer.importer_optimized import OptimizedDataImporter
 
-    db = SQLiteDatabase({"path": str(tmp_path / f"transaction-{optimized}.db")})
-    importer_class = OptimizedDataImporter if optimized else DataImporter
+    db = SQLiteDatabase({"path": str(tmp_path / "transaction.db")})
+    importer_class = DataImporter
     importer = importer_class(db, batch_size=1, use_jravan_schema=True)
     with db:
         db.execute(
@@ -266,7 +261,8 @@ def test_jravan_single_record_auto_commit_false_stays_in_caller_transaction(tmp_
             "RaceNum, Umaban, KettoNum))"
         )
         db.commit()
-        inserted = importer.import_single_record(
+        inserted = import_one(
+            importer,
             {
                 "RecordSpec": "SE",
                 "DataKubun": "1",
@@ -292,12 +288,9 @@ def test_jravan_single_record_auto_commit_false_stays_in_caller_transaction(tmp_
         assert db.fetch_one("SELECT COUNT(*) AS n FROM UMA_RACE")["n"] == 0
 
 
-def test_optimized_importer_does_not_retry_inside_caller_transaction(
-    tmp_path, monkeypatch
-) -> None:
+def test_importer_does_not_retry_inside_caller_transaction(tmp_path, monkeypatch) -> None:
     from src.database.sqlite_handler import SQLiteDatabase
     from src.importer.importer import ImporterError
-    from src.importer.importer_optimized import OptimizedDataImporter
 
     db = SQLiteDatabase({"path": str(tmp_path / "optimized-failure.db")})
     with db:
@@ -313,9 +306,7 @@ def test_optimized_importer_does_not_retry_inside_caller_transaction(
         original_insert = db.insert
 
         def recording_insert_many(table_name, data_list, use_replace=True):
-            attempted_batches.append(
-                (table_name, tuple(row.get("RaceNum") for row in data_list))
-            )
+            attempted_batches.append((table_name, tuple(row.get("RaceNum") for row in data_list)))
             return original_insert_many(table_name, data_list, use_replace)
 
         def recording_insert(table_name, data, use_replace=True):
@@ -324,7 +315,7 @@ def test_optimized_importer_does_not_retry_inside_caller_transaction(
 
         monkeypatch.setattr(db, "insert_many", recording_insert_many)
         monkeypatch.setattr(db, "insert", recording_insert)
-        importer = OptimizedDataImporter(db, batch_size=2)
+        importer = DataImporter(db, batch_size=2)
         records = iter(
             [
                 {
@@ -346,10 +337,13 @@ def test_optimized_importer_does_not_retry_inside_caller_transaction(
             importer.import_records(records, auto_commit=False)
         db.rollback()
 
-        assert sum(
-            table_name == "NL_RA" and 3 in race_nums
-            for table_name, race_nums in attempted_batches
-        ) == 1
+        assert (
+            sum(
+                table_name == "NL_RA" and 3 in race_nums
+                for table_name, race_nums in attempted_batches
+            )
+            == 1
+        )
         assert attempted_individual_rows == []
         assert db.fetch_one("SELECT COUNT(*) AS n FROM NL_RA")["n"] == 0
 
@@ -388,17 +382,16 @@ def test_status_a_honsyokin_zero_is_real_but_fukasyokin_zero_is_initial() -> Non
     assert canonical["FukasyokinYen"] is None
 
 
-def test_optimized_importer_cleans_transport_fields_and_keeps_canonical(tmp_path) -> None:
+def test_importer_cleans_transport_fields_and_keeps_canonical(tmp_path) -> None:
     from src.database.schema import create_all_tables
     from src.database.sqlite_handler import SQLiteDatabase
-    from src.importer.importer_optimized import OptimizedDataImporter
 
     record = SEParser().parse(_record(Time="1148", Honsyokin="00008000"))
     assert record is not None
     db = SQLiteDatabase({"path": str(tmp_path / "optimized.db")})
     with db:
         create_all_tables(db)
-        stats = OptimizedDataImporter(db).import_records(iter([record]))
+        stats = DataImporter(db).import_records(iter([record]))
         stored = db.fetch_one("SELECT RaceTimeSeconds, HonsyokinYen FROM NL_SE")
 
     assert stats["records_imported"] == 1
@@ -427,10 +420,9 @@ def test_standard_reserved_alias_conflict_is_rejected_before_mutation(tmp_path) 
     assert count == {"count": 0}
 
 
-def test_optimized_importer_rejects_malformed_key_before_conversion(tmp_path) -> None:
+def test_importer_rejects_malformed_key_before_conversion(tmp_path) -> None:
     from src.database.schema import create_all_tables
     from src.database.sqlite_handler import SQLiteDatabase
-    from src.importer.importer_optimized import OptimizedDataImporter
 
     record = SEParser().parse(_record())
     assert record is not None
@@ -439,28 +431,24 @@ def test_optimized_importer_rejects_malformed_key_before_conversion(tmp_path) ->
     with db:
         create_all_tables(db)
         with pytest.raises(SchemaMigrationError):
-            OptimizedDataImporter(db).import_records(iter([record]))
+            DataImporter(db).import_records(iter([record]))
         count = db.fetch_one("SELECT COUNT(*) AS count FROM NL_SE")
 
     assert count == {"count": 0}
 
 
-@pytest.mark.parametrize("optimized", [False, True])
-def test_jravan_importers_reject_malformed_semantic_primary_key(
-    tmp_path, optimized: bool
-) -> None:
+def test_jravan_importers_reject_malformed_semantic_primary_key(tmp_path) -> None:
     from src.database.schema_jravan import JRAVAN_SCHEMAS
     from src.database.sqlite_handler import SQLiteDatabase
     from src.importer.importer import DataImporter
-    from src.importer.importer_optimized import OptimizedDataImporter
 
     record = SEParser().parse(_record())
     assert record is not None
     record["Year"] = "****"
-    db = SQLiteDatabase({"path": str(tmp_path / f"jravan-{optimized}.db")})
+    db = SQLiteDatabase({"path": str(tmp_path / "jravan.db")})
     with db:
         db.execute(JRAVAN_SCHEMAS["UMA_RACE"])
-        importer_class = OptimizedDataImporter if optimized else DataImporter
+        importer_class = DataImporter
         with pytest.raises(SchemaMigrationError):
             importer_class(db, use_jravan_schema=True).import_records(iter([record]))
         count = db.fetch_one("SELECT COUNT(*) AS count FROM UMA_RACE")

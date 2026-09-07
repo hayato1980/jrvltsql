@@ -24,7 +24,6 @@ from src.importer.importer import (
     validate_import_record_header,
     validate_se_record,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.canonical import canonicalize_se_fields
 from src.parser.se_parser import SEParser
 from src.realtime.updater import RealtimeUpdater
@@ -169,29 +168,18 @@ def _parsed_se(
 
 def _importer_classes() -> Iterator[type[DataImporter]]:
     yield DataImporter
-    yield OptimizedDataImporter
 
 
 def _import_records(
     database,
-    entrypoint: str,
     records: list[dict],
     *,
     standard: bool,
     auto_commit: bool,
 ) -> None:
-    if entrypoint == "data-batch":
-        DataImporter(database, use_jravan_schema=standard).import_records(
-            iter(records), auto_commit=auto_commit
-        )
-    elif entrypoint == "optimized-batch":
-        OptimizedDataImporter(database, use_jravan_schema=standard).import_records(
-            iter(records), auto_commit=auto_commit
-        )
-    else:
-        importer = DataImporter(database, use_jravan_schema=standard)
-        for record in records:
-            assert importer.import_single_record(record, auto_commit=auto_commit) is True
+    DataImporter(database, use_jravan_schema=standard).import_records(
+        iter(records), auto_commit=auto_commit
+    )
     if not auto_commit:
         database.commit()
 
@@ -558,9 +546,7 @@ def test_unsafe_standard_se_key_stops_before_unrelated_additive_migration(
         {"Reserved_229": "A" * 61},
     ),
 )
-def test_first_se_body_rejection_stops_before_standard_migration(
-    tmp_path, changes: dict
-) -> None:
+def test_first_se_body_rejection_stops_before_standard_migration(tmp_path, changes: dict) -> None:
     race_schema = JRAVAN_SCHEMAS["RACE"].replace(
         "            YoubiCD                        VARCHAR(1)          ,  -- 文字列(1)\n",
         "",
@@ -591,9 +577,7 @@ def test_first_se_body_rejection_stops_before_standard_migration(
         ("Reserved_385", "ABCD"),
     ],
 )
-def test_se_caller_body_must_fit_the_official_cp932_span(
-    field_name: str, value: str
-) -> None:
+def test_se_caller_body_must_fit_the_official_cp932_span(field_name: str, value: str) -> None:
     record = _parsed_se()
     record[field_name] = value
 
@@ -683,10 +667,9 @@ def test_data_importer_fallback_counts_only_durable_se_rows(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_se_postgresql_full_key_update_erase_and_readback(
-    postgresql_db, standard: bool, entrypoint: str, auto_commit: bool
+    postgresql_db, standard: bool, auto_commit: bool
 ) -> None:
     table_name = "UMA_RACE" if standard else "NL_SE"
     schema_sql = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -697,7 +680,6 @@ def test_se_postgresql_full_key_update_erase_and_readback(
     second = _parsed_se(ketto_num="2020000002")
     _import_records(
         postgresql_db,
-        entrypoint,
         [first, second],
         standard=standard,
         auto_commit=auto_commit,
@@ -706,7 +688,6 @@ def test_se_postgresql_full_key_update_erase_and_readback(
     revision["DataKubun"] = "2"
     _import_records(
         postgresql_db,
-        entrypoint,
         [revision],
         standard=standard,
         auto_commit=auto_commit,
@@ -723,7 +704,6 @@ def test_se_postgresql_full_key_update_erase_and_readback(
 
     _import_records(
         postgresql_db,
-        entrypoint,
         [_parsed_se(data_kubun="0", ketto_num="2020000001")],
         standard=standard,
         auto_commit=auto_commit,
@@ -796,17 +776,14 @@ def test_se_postgresql_rejects_fixed_char_for_variable_text(postgresql_db) -> No
     postgresql_db.commit()
 
     with pytest.raises(SchemaMigrationError):
-        DataImporter(postgresql_db, use_jravan_schema=True).import_records(
-            iter([_parsed_se()])
-        )
+        DataImporter(postgresql_db, use_jravan_schema=True).import_records(iter([_parsed_se()]))
     assert postgresql_db.fetch_one("SELECT COUNT(*) AS n FROM UMA_RACE") == {"n": 0}
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 def test_se_postgresql_dual_rejects_overwidth_body_before_any_write(
-    tmp_path, postgresql_db, entrypoint: str
+    tmp_path, postgresql_db
 ) -> None:
-    sqlite = SQLiteDatabase({"path": str(tmp_path / f"dual-{entrypoint}.db")})
+    sqlite = SQLiteDatabase({"path": str(tmp_path / "dual.db")})
     with sqlite:
         sqlite.execute(JRAVAN_SCHEMAS["UMA_RACE"])
         postgresql_db.execute(JRAVAN_SCHEMAS["UMA_RACE"])
@@ -817,14 +794,7 @@ def test_se_postgresql_dual_rejects_overwidth_body_before_any_write(
         record["Reserved_229"] = "A" * 61
 
         with pytest.raises(SchemaMigrationError):
-            if entrypoint == "data-batch":
-                DataImporter(dual, use_jravan_schema=True).import_records(iter([record]))
-            elif entrypoint == "optimized-batch":
-                OptimizedDataImporter(dual, use_jravan_schema=True).import_records(
-                    iter([record])
-                )
-            else:
-                DataImporter(dual, use_jravan_schema=True).import_single_record(record)
+            DataImporter(dual, use_jravan_schema=True).import_records(iter([record]))
 
         assert sqlite.fetch_one("SELECT COUNT(*) AS n FROM UMA_RACE") == {"n": 0}
         assert postgresql_db.fetch_one("SELECT COUNT(*) AS n FROM UMA_RACE") == {"n": 0}

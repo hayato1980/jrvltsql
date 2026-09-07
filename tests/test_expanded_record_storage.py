@@ -15,13 +15,13 @@ from src.database.schema_jravan import JRAVAN_SCHEMAS
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer import importer as importer_module
 from src.importer.importer import DataImporter, ImporterError
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.av_parser import AVParser
 from src.parser.h1_parser import H1Parser
 from src.parser.h6_parser import H6Parser
 from src.parser.o1_parser import O1Parser
 from src.parser.o2_parser import O2Parser
 from src.realtime.updater import RealtimeUpdater
+from tests.importer_support import import_one
 
 
 def _pad(value: str, length: int) -> bytes:
@@ -105,12 +105,10 @@ def _make_h1_vote_record(
         for offset, kumi, hyo, ninki in entries:
             data[offset : offset + len(kumi)] = kumi
             data[offset + len(kumi) : offset + len(kumi) + 11] = hyo
-            data[
-                offset + len(kumi) + 11 : offset + len(kumi) + 11 + len(ninki)
-            ] = ninki
+            data[offset + len(kumi) + 11 : offset + len(kumi) + 11 + len(ninki)] = ninki
     for index in range(14):
-        data[28799 + index * 11 : 28810 + index * 11] = (
-            f"{total_start + index:011d}".encode("ascii")
+        data[28799 + index * 11 : 28810 + index * 11] = f"{total_start + index:011d}".encode(
+            "ascii"
         )
     data[-2:] = b"\r\n"
     return bytes(data)
@@ -166,13 +164,27 @@ def _make_repository_h1_vote_flat_record() -> bytes:
     data[38:39] = b"3"
     data[39:42] = b"101"
     fields = (
-        (42, "01", 2), (44, "00000000101", 11), (55, "01", 2),
-        (57, "01", 2), (59, "00000000202", 11), (70, "02", 2),
-        (72, "12", 2), (74, "00000000303", 11), (85, "03", 2),
-        (87, "0102", 4), (91, "00000000404", 11), (102, "004", 3),
-        (105, "0102", 4), (109, "00000000505", 11), (120, "005", 3),
-        (123, "0102", 4), (127, "00000000606", 11), (138, "006", 3),
-        (141, "010203", 6), (147, "00000000707", 11), (158, "007", 3),
+        (42, "01", 2),
+        (44, "00000000101", 11),
+        (55, "01", 2),
+        (57, "01", 2),
+        (59, "00000000202", 11),
+        (70, "02", 2),
+        (72, "12", 2),
+        (74, "00000000303", 11),
+        (85, "03", 2),
+        (87, "0102", 4),
+        (91, "00000000404", 11),
+        (102, "004", 3),
+        (105, "0102", 4),
+        (109, "00000000505", 11),
+        (120, "005", 3),
+        (123, "0102", 4),
+        (127, "00000000606", 11),
+        (138, "006", 3),
+        (141, "010203", 6),
+        (147, "00000000707", 11),
+        (158, "007", 3),
     )
     for offset, value, length in fields:
         data[offset : offset + length] = _pad(value, length)
@@ -288,8 +300,7 @@ def postgresql_db():
 
 
 def _assert_o1_storage(db, table_name: str):
-    rows = db.fetch_all(
-        f"""
+    rows = db.fetch_all(f"""
         SELECT
             Umaban AS umaban,
             Kumi AS kumi,
@@ -298,8 +309,7 @@ def _assert_o1_storage(db, table_name: str):
             WakurenOdds AS wakurenodds
         FROM {table_name}
         ORDER BY Umaban, Kumi
-        """
-    )
+        """)
     assert len(rows) == 4
     wakuren_rows = [row for row in rows if row["umaban"] == 0]
     assert [(row["kumi"], row["wakurenodds"]) for row in wakuren_rows] == [
@@ -433,23 +443,19 @@ def _assert_historical_importer_retains_cancellation_then_applies_zero_erase(
     statuses = db.fetch_all("SELECT DISTINCT DataKubun AS status FROM NL_O1")
     assert statuses == [{"status": "9"}]
 
-    stats = importer.import_records(
-        iter([{**race_key, "headDataKubun": "0"}, *erase])
-    )
+    stats = importer.import_records(iter([{**race_key, "headDataKubun": "0"}, *erase]))
     assert stats["records_imported"] == 2
     assert stats["records_failed"] == 0
     assert db.fetch_one("SELECT COUNT(*) AS cnt FROM NL_RA")["cnt"] == 0
     assert db.fetch_one("SELECT COUNT(*) AS cnt FROM NL_O1")["cnt"] == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_sqlite_historical_importers_retain_cancellation_then_apply_zero_erase(
     sqlite_db,
-    importer_class,
 ):
     _assert_historical_importer_retains_cancellation_then_applies_zero_erase(
         sqlite_db,
-        importer_class,
+        DataImporter,
     )
 
 
@@ -459,14 +465,12 @@ def test_postgresql_realtime_batch_retains_cancellation_then_applies_zero_erase(
     _assert_realtime_batch_retains_cancellation_then_applies_zero_erase(postgresql_db)
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_postgresql_historical_importers_retain_cancellation_then_apply_zero_erase(
     postgresql_db,
-    importer_class,
 ):
     _assert_historical_importer_retains_cancellation_then_applies_zero_erase(
         postgresql_db,
-        importer_class,
+        DataImporter,
     )
 
 
@@ -498,19 +502,17 @@ def _assert_standard_race_retains_legacy_cancellation_then_applies_current_erase
     assert db.fetch_one("SELECT COUNT(*) AS cnt FROM RACE")["cnt"] == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_sqlite_standard_race_cancellation_and_erase(sqlite_db, importer_class):
+def test_sqlite_standard_race_cancellation_and_erase(sqlite_db):
     _assert_standard_race_retains_legacy_cancellation_then_applies_current_erase(
         sqlite_db,
-        importer_class,
+        DataImporter,
     )
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_postgresql_standard_race_cancellation_and_erase(postgresql_db, importer_class):
+def test_postgresql_standard_race_cancellation_and_erase(postgresql_db):
     _assert_standard_race_retains_legacy_cancellation_then_applies_current_erase(
         postgresql_db,
-        importer_class,
+        DataImporter,
     )
 
 
@@ -545,9 +547,7 @@ def _assert_standard_o1_preserves_header_and_split_children(db, importer_class):
     assert db.fetch_one("SELECT COUNT(*) AS cnt FROM ODDS_TANPUKU")["cnt"] == 2
     assert db.fetch_one("SELECT COUNT(*) AS cnt FROM ODDS_WAKU")["cnt"] == 2
 
-    stats = importer.import_records(
-        iter(_flatten(O1Parser().parse(_make_o1_erase_record())))
-    )
+    stats = importer.import_records(iter(_flatten(O1Parser().parse(_make_o1_erase_record()))))
     assert stats["records_failed"] == 0
     for table_name in (
         "ODDS_TANPUKUWAKU_HEAD",
@@ -557,22 +557,18 @@ def _assert_standard_o1_preserves_header_and_split_children(db, importer_class):
         assert db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {table_name}")["cnt"] == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_sqlite_standard_o1_preserves_header_and_split_children(
     sqlite_db,
-    importer_class,
 ):
-    _assert_standard_o1_preserves_header_and_split_children(sqlite_db, importer_class)
+    _assert_standard_o1_preserves_header_and_split_children(sqlite_db, DataImporter)
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_postgresql_standard_o1_preserves_header_and_split_children(
     postgresql_db,
-    importer_class,
 ):
     _assert_standard_o1_preserves_header_and_split_children(
         postgresql_db,
-        importer_class,
+        DataImporter,
     )
 
 
@@ -626,21 +622,19 @@ _STANDARD_ODDS_CASES = (
 )
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize(
     ("record_type", "header_table", "child_table", "child_fields"),
     _STANDARD_ODDS_CASES,
 )
 def test_sqlite_standard_o2_o6_header_child_upsert_and_erase(
     sqlite_db,
-    importer_class,
     record_type,
     header_table,
     child_table,
     child_fields,
 ):
     _create_jravan_tables(sqlite_db, [header_table, child_table])
-    importer = importer_class(sqlite_db, use_jravan_schema=True, batch_size=100)
+    importer = DataImporter(sqlite_db, use_jravan_schema=True, batch_size=100)
     base = {
         "RecordSpec": record_type,
         "MakeDate": "20260419",
@@ -657,20 +651,14 @@ def test_sqlite_standard_o2_o6_header_child_upsert_and_erase(
         **child_fields,
     }
 
-    assert importer.import_records(iter([{**base, "DataKubun": "9"}]))[
-        "records_failed"
-    ] == 0
-    assert importer.import_records(iter([{**base, "DataKubun": "2"}]))[
-        "records_failed"
-    ] == 0
+    assert importer.import_records(iter([{**base, "DataKubun": "9"}]))["records_failed"] == 0
+    assert importer.import_records(iter([{**base, "DataKubun": "2"}]))["records_failed"] == 0
     header = sqlite_db.fetch_one(
         f"SELECT COUNT(*) AS cnt, MAX(DataKubun) AS status, "
         f"MAX(HappyoTime) AS happyo_time FROM {header_table}"
     )
     assert header == {"cnt": 1, "status": "2", "happyo_time": "04191549"}
-    assert sqlite_db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {child_table}")[
-        "cnt"
-    ] == 1
+    assert sqlite_db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {child_table}")["cnt"] == 1
 
     erase = {
         key: value
@@ -689,12 +677,8 @@ def test_sqlite_standard_o2_o6_header_child_upsert_and_erase(
     }
     erase["DataKubun"] = "0"
     assert importer.import_records(iter([erase]))["records_failed"] == 0
-    assert sqlite_db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {header_table}")[
-        "cnt"
-    ] == 0
-    assert sqlite_db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {child_table}")[
-        "cnt"
-    ] == 0
+    assert sqlite_db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {header_table}")["cnt"] == 0
+    assert sqlite_db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {child_table}")["cnt"] == 0
 
 
 def _assert_standard_odds_duplicate_existing_keys_fail_closed(db):
@@ -784,29 +768,23 @@ def _assert_standard_odds_replaces_snapshot_and_reuses_verification(
 
     assert stats["records_failed"] == 0
     assert verification_calls == 1
-    assert db.fetch_all(
-        "SELECT Kumi AS kumi FROM ODDS_UMAREN ORDER BY Kumi"
-    ) == [{"kumi": "0102"}]
-    assert db.fetch_one(
-        "SELECT HappyoTime AS happyo_time FROM ODDS_UMAREN_HEAD"
-    ) == {"happyo_time": "04191550"}
+    assert db.fetch_all("SELECT Kumi AS kumi FROM ODDS_UMAREN ORDER BY Kumi") == [{"kumi": "0102"}]
+    assert db.fetch_one("SELECT HappyoTime AS happyo_time FROM ODDS_UMAREN_HEAD") == {
+        "happyo_time": "04191550"
+    }
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_sqlite_standard_odds_replaces_snapshot_and_reuses_verification(
-    sqlite_db, importer_class, monkeypatch
-):
+def test_sqlite_standard_odds_replaces_snapshot_and_reuses_verification(sqlite_db, monkeypatch):
     _assert_standard_odds_replaces_snapshot_and_reuses_verification(
-        sqlite_db, importer_class, monkeypatch
+        sqlite_db, DataImporter, monkeypatch
     )
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_postgresql_standard_odds_replaces_snapshot_and_reuses_verification(
-    postgresql_db, importer_class, monkeypatch
+    postgresql_db, monkeypatch
 ):
     _assert_standard_odds_replaces_snapshot_and_reuses_verification(
-        postgresql_db, importer_class, monkeypatch
+        postgresql_db, DataImporter, monkeypatch
     )
 
 
@@ -840,39 +818,25 @@ def _assert_standard_odds_migrates_existing_child_columns(db, importer_class):
         "Ninki": "001",
     }
 
-    stats = importer_class(db, use_jravan_schema=True).import_records(
-        iter([record])
-    )
+    stats = importer_class(db, use_jravan_schema=True).import_records(iter([record]))
 
     assert stats["records_failed"] == 0
-    assert db.fetch_one(
-        "SELECT Ninki AS ninki FROM ODDS_UMAREN"
-    ) == {"ninki": "001"}
+    assert db.fetch_one("SELECT Ninki AS ninki FROM ODDS_UMAREN") == {"ninki": "001"}
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_sqlite_standard_odds_migrates_existing_child_columns(
-    sqlite_db, importer_class
-):
-    _assert_standard_odds_migrates_existing_child_columns(sqlite_db, importer_class)
+def test_sqlite_standard_odds_migrates_existing_child_columns(sqlite_db):
+    _assert_standard_odds_migrates_existing_child_columns(sqlite_db, DataImporter)
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_postgresql_standard_odds_migrates_existing_child_columns(
-    postgresql_db, importer_class
-):
-    _assert_standard_odds_migrates_existing_child_columns(
-        postgresql_db, importer_class
-    )
+def test_postgresql_standard_odds_migrates_existing_child_columns(postgresql_db):
+    _assert_standard_odds_migrates_existing_child_columns(postgresql_db, DataImporter)
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_sqlite_standard_o2_empty_snapshot_preserves_total_and_clears_children(
     sqlite_db,
-    importer_class,
 ):
     _create_jravan_tables(sqlite_db, ["ODDS_UMAREN_HEAD", "ODDS_UMAREN"])
-    importer = importer_class(sqlite_db, use_jravan_schema=True)
+    importer = DataImporter(sqlite_db, use_jravan_schema=True)
     populated = {
         "RecordSpec": "O2",
         "DataKubun": "2",
@@ -898,18 +862,13 @@ def test_sqlite_standard_o2_empty_snapshot_preserves_total_and_clears_children(
     assert importer.import_records(iter(empty_snapshot))["records_failed"] == 0
 
     assert sqlite_db.fetch_one(
-        "SELECT DataKubun AS status, TotalHyosuUmaren AS total "
-        "FROM ODDS_UMAREN_HEAD"
+        "SELECT DataKubun AS status, TotalHyosuUmaren AS total " "FROM ODDS_UMAREN_HEAD"
     ) == {"status": "4", "total": "00000000999"}
-    assert sqlite_db.fetch_one("SELECT COUNT(*) AS cnt FROM ODDS_UMAREN")[
-        "cnt"
-    ] == 0
+    assert sqlite_db.fetch_one("SELECT COUNT(*) AS cnt FROM ODDS_UMAREN")["cnt"] == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_sqlite_standard_odds_child_failure_rolls_back_header(
     sqlite_db,
-    importer_class,
 ):
     _create_jravan_tables(sqlite_db, ["ODDS_UMAREN_HEAD", "ODDS_UMAREN"])
     record = {
@@ -931,7 +890,7 @@ def test_sqlite_standard_odds_child_failure_rolls_back_header(
         "Odds": "012340",
         "Ninki": "001",
     }
-    importer = importer_class(sqlite_db, use_jravan_schema=True)
+    importer = DataImporter(sqlite_db, use_jravan_schema=True)
     assert importer.import_records(iter([record]))["records_failed"] == 0
     sqlite_db.execute(
         "CREATE TRIGGER reject_standard_odds_child "
@@ -950,12 +909,9 @@ def test_sqlite_standard_odds_child_failure_rolls_back_header(
         importer.import_records(iter([replacement]))
 
     assert sqlite_db.fetch_one(
-        "SELECT DataKubun AS status, HappyoTime AS happyo_time "
-        "FROM ODDS_UMAREN_HEAD"
+        "SELECT DataKubun AS status, HappyoTime AS happyo_time " "FROM ODDS_UMAREN_HEAD"
     ) == {"status": "2", "happyo_time": "04191549"}
-    assert sqlite_db.fetch_all(
-        "SELECT Kumi AS kumi FROM ODDS_UMAREN"
-    ) == [{"kumi": "0102"}]
+    assert sqlite_db.fetch_all("SELECT Kumi AS kumi FROM ODDS_UMAREN") == [{"kumi": "0102"}]
 
 
 _STANDARD_H1_TABLES = (
@@ -1000,8 +956,7 @@ def _assert_standard_h1_replaces_complete_snapshot(db, importer_class):
         "fuku_ninki": "02",
     }
     assert db.fetch_one(
-        "SELECT Kumi AS kumi, UmarenHyo AS umaren_hyo, "
-        "WideHyo AS wide_hyo FROM HYOSU_UMARENWIDE"
+        "SELECT Kumi AS kumi, UmarenHyo AS umaren_hyo, " "WideHyo AS wide_hyo FROM HYOSU_UMARENWIDE"
     ) == {
         "kumi": "0102",
         "umaren_hyo": "00000000404",
@@ -1021,8 +976,7 @@ def _assert_standard_h1_replaces_complete_snapshot(db, importer_class):
     )
     assert importer.import_records(iter(empty))["records_failed"] == 0
     assert db.fetch_one(
-        "SELECT DataKubun AS status, HatubaiFlag1 AS flag, "
-        "HyoTotal1 AS total1 FROM HYOSU"
+        "SELECT DataKubun AS status, HatubaiFlag1 AS flag, " "HyoTotal1 AS total1 FROM HYOSU"
     ) == {"status": "5", "flag": "0", "total1": "00000009000"}
     for table_name in _STANDARD_H1_TABLES[1:]:
         assert db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {table_name}")["cnt"] == 0
@@ -1033,11 +987,7 @@ def _assert_standard_h1_replaces_complete_snapshot(db, importer_class):
     for table_name in _STANDARD_H1_TABLES[1:]:
         assert db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {table_name}")["cnt"] == 1
 
-    erase = _flatten(
-        H1Parser().parse(
-            _make_h1_vote_record(data_kubun="0", populated=False)
-        )
-    )
+    erase = _flatten(H1Parser().parse(_make_h1_vote_record(data_kubun="0", populated=False)))
     assert importer.import_records(iter(erase))["records_failed"] == 0
     for table_name in _STANDARD_H1_TABLES:
         assert db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {table_name}")["cnt"] == 0
@@ -1064,8 +1014,7 @@ def _assert_standard_h6_replaces_complete_snapshot(db, importer_class):
         "total2": "00000000008",
     }
     assert db.fetch_one(
-        "SELECT Kumi AS kumi, Hyo AS hyo, Ninki AS ninki "
-        "FROM HYOSU_SANRENTAN"
+        "SELECT Kumi AS kumi, Hyo AS hyo, Ninki AS ninki " "FROM HYOSU_SANRENTAN"
     ) == {"kumi": "010203", "hyo": "00000000808", "ninki": "0008"}
 
     empty = _flatten(
@@ -1093,38 +1042,26 @@ def _assert_standard_h6_replaces_complete_snapshot(db, importer_class):
     assert importer.import_records(iter(populated))["records_failed"] == 0
     assert db.fetch_one("SELECT COUNT(*) AS cnt FROM HYOSU_SANRENTAN")["cnt"] == 1
 
-    erase = _flatten(
-        H6Parser().parse(
-            _make_h6_vote_record(data_kubun="0", populated=False)
-        )
-    )
+    erase = _flatten(H6Parser().parse(_make_h6_vote_record(data_kubun="0", populated=False)))
     assert importer.import_records(iter(erase))["records_failed"] == 0
     for table_name in _STANDARD_H6_TABLES:
         assert db.fetch_one(f"SELECT COUNT(*) AS cnt FROM {table_name}")["cnt"] == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_sqlite_standard_h1_replaces_complete_snapshot(sqlite_db, importer_class):
-    _assert_standard_h1_replaces_complete_snapshot(sqlite_db, importer_class)
+def test_sqlite_standard_h1_replaces_complete_snapshot(sqlite_db):
+    _assert_standard_h1_replaces_complete_snapshot(sqlite_db, DataImporter)
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_postgresql_standard_h1_replaces_complete_snapshot(
-    postgresql_db, importer_class
-):
-    _assert_standard_h1_replaces_complete_snapshot(postgresql_db, importer_class)
+def test_postgresql_standard_h1_replaces_complete_snapshot(postgresql_db):
+    _assert_standard_h1_replaces_complete_snapshot(postgresql_db, DataImporter)
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_sqlite_standard_h6_replaces_complete_snapshot(sqlite_db, importer_class):
-    _assert_standard_h6_replaces_complete_snapshot(sqlite_db, importer_class)
+def test_sqlite_standard_h6_replaces_complete_snapshot(sqlite_db):
+    _assert_standard_h6_replaces_complete_snapshot(sqlite_db, DataImporter)
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_postgresql_standard_h6_replaces_complete_snapshot(
-    postgresql_db, importer_class
-):
-    _assert_standard_h6_replaces_complete_snapshot(postgresql_db, importer_class)
+def test_postgresql_standard_h6_replaces_complete_snapshot(postgresql_db):
+    _assert_standard_h6_replaces_complete_snapshot(postgresql_db, DataImporter)
 
 
 def test_h6_empty_full_record_retains_physical_totals_on_header():
@@ -1143,13 +1080,8 @@ def test_h6_empty_full_record_retains_physical_totals_on_header():
     assert rows[0]["SanrentanHenkanHyoTotal"] == "00000000009"
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_sqlite_standard_vote_refund_arrays_keep_blank_positions(
-    sqlite_db, importer_class
-):
-    _create_jravan_tables(
-        sqlite_db, (*_STANDARD_H1_TABLES, *_STANDARD_H6_TABLES)
-    )
+def test_sqlite_standard_vote_refund_arrays_keep_blank_positions(sqlite_db):
+    _create_jravan_tables(sqlite_db, (*_STANDARD_H1_TABLES, *_STANDARD_H6_TABLES))
     h1_raw = bytearray(_make_h1_vote_record(populated=False))
     h1_raw[39:67] = b" 1" + (b" " * 26)
     h1_raw[67:75] = b" 1" + (b" " * 6)
@@ -1164,7 +1096,7 @@ def test_sqlite_standard_vote_refund_arrays_keep_blank_positions(
     assert len(h1_rows[0]["HenkanWaku"]) == 8
     assert len(h1_rows[0]["HenkanDoWaku"]) == 8
     assert len(h6_rows[0]["HenkanUma"]) == 18
-    importer = importer_class(sqlite_db, use_jravan_schema=True)
+    importer = DataImporter(sqlite_db, use_jravan_schema=True)
     assert importer.import_records(iter(h1_rows))["records_failed"] == 0
     assert importer.import_records(iter(h6_rows))["records_failed"] == 0
 
@@ -1182,37 +1114,30 @@ def test_sqlite_standard_vote_refund_arrays_keep_blank_positions(
         "dowaku3": "1",
         "refund_total": None,
     }
-    assert sqlite_db.fetch_one(
-        "SELECT HenkanUma2 AS uma2, HenkanUma3 AS uma3 FROM HYOSU2"
-    ) == {"uma2": None, "uma3": "1"}
+    assert sqlite_db.fetch_one("SELECT HenkanUma2 AS uma2, HenkanUma3 AS uma3 FROM HYOSU2") == {
+        "uma2": None,
+        "uma3": "1",
+    }
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_sqlite_standard_h6_direct_parser_revisions_replace_nullable_snapshot(
-    sqlite_db, importer_class
-):
+def test_sqlite_standard_h6_direct_parser_revisions_replace_nullable_snapshot(sqlite_db):
     _create_jravan_tables(sqlite_db, _STANDARD_H6_TABLES)
     parser = H6Parser()
     first = _flatten(parser.parse(_make_h6_vote_record()))
-    second_raw = bytearray(
-        _make_h6_vote_record(data_kubun="4", populated=False)
-    )
+    second_raw = bytearray(_make_h6_vote_record(data_kubun="4", populated=False))
     second_raw[32:50] = b" " * 18
     second_raw[102866:102888] = b" " * 22
     second = _flatten(parser.parse(bytes(second_raw)))
 
-    stats = importer_class(
-        sqlite_db, use_jravan_schema=True, batch_size=10000
-    ).import_records(iter([*first, *second]))
+    stats = DataImporter(sqlite_db, use_jravan_schema=True, batch_size=10000).import_records(
+        iter([*first, *second])
+    )
 
     assert stats["records_failed"] == 0
     assert sqlite_db.fetch_one(
-        "SELECT HenkanUma1 AS refund_flag, HyoTotal1 AS total1, "
-        "HyoTotal2 AS total2 FROM HYOSU2"
+        "SELECT HenkanUma1 AS refund_flag, HyoTotal1 AS total1, " "HyoTotal2 AS total2 FROM HYOSU2"
     ) == {"refund_flag": None, "total1": None, "total2": None}
-    assert sqlite_db.fetch_one(
-        "SELECT COUNT(*) AS cnt FROM HYOSU_SANRENTAN"
-    )["cnt"] == 0
+    assert sqlite_db.fetch_one("SELECT COUNT(*) AS cnt FROM HYOSU_SANRENTAN")["cnt"] == 0
 
 
 def test_provider_vote_parsers_reject_repository_flattened_layouts():
@@ -1220,10 +1145,7 @@ def test_provider_vote_parsers_reject_repository_flattened_layouts():
     assert H6Parser().parse(_make_repository_h6_vote_flat_record()) is None
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_sqlite_standard_vote_verification_is_reused(
-    sqlite_db, importer_class, monkeypatch
-):
+def test_sqlite_standard_vote_verification_is_reused(sqlite_db, monkeypatch):
     _create_jravan_tables(sqlite_db, _STANDARD_H6_TABLES)
     verification_calls = 0
     original_verify = importer_module.verify_standard_vote_tables
@@ -1234,12 +1156,10 @@ def test_sqlite_standard_vote_verification_is_reused(
         return original_verify(*args, **kwargs)
 
     monkeypatch.setattr(importer_module, "verify_standard_vote_tables", counted_verify)
-    importer = importer_class(sqlite_db, use_jravan_schema=True)
+    importer = DataImporter(sqlite_db, use_jravan_schema=True)
     first = _flatten(H6Parser().parse(_make_h6_vote_record()))
     second = _flatten(
-        H6Parser().parse(
-            _make_h6_vote_record(data_kubun="5", child_hyo="00000000909")
-        )
+        H6Parser().parse(_make_h6_vote_record(data_kubun="5", child_hyo="00000000909"))
     )
 
     assert importer.import_records(iter(first))["records_failed"] == 0
@@ -1271,26 +1191,15 @@ def _assert_standard_h6_rejects_a_drifted_child_table(db, importer_class):
     assert db.fetch_one("SELECT COUNT(*) AS cnt FROM HYOSU_SANRENTAN")["cnt"] == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_sqlite_standard_h6_rejects_a_drifted_child_table(
-    sqlite_db, importer_class
-):
-    _assert_standard_h6_rejects_a_drifted_child_table(sqlite_db, importer_class)
+def test_sqlite_standard_h6_rejects_a_drifted_child_table(sqlite_db):
+    _assert_standard_h6_rejects_a_drifted_child_table(sqlite_db, DataImporter)
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_postgresql_standard_h6_rejects_a_drifted_child_table(
-    postgresql_db, importer_class
-):
-    _assert_standard_h6_rejects_a_drifted_child_table(
-        postgresql_db, importer_class
-    )
+def test_postgresql_standard_h6_rejects_a_drifted_child_table(postgresql_db):
+    _assert_standard_h6_rejects_a_drifted_child_table(postgresql_db, DataImporter)
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_sqlite_standard_h1_duplicate_header_keys_fail_closed(
-    sqlite_db, importer_class
-):
+def test_sqlite_standard_h1_duplicate_header_keys_fail_closed(sqlite_db):
     _create_jravan_tables(sqlite_db, _STANDARD_H1_TABLES)
     duplicate_key = (2026, 419, "06", 3, 8, 11)
     for status in ("2", "4"):
@@ -1304,17 +1213,14 @@ def test_sqlite_standard_h1_duplicate_header_keys_fail_closed(
     rows = _flatten(H1Parser().parse(_make_h1_vote_record()))
 
     with pytest.raises(SchemaMigrationError, match="duplicate official keys"):
-        importer_class(sqlite_db, use_jravan_schema=True).import_records(iter(rows))
+        DataImporter(sqlite_db, use_jravan_schema=True).import_records(iter(rows))
 
     assert sqlite_db.fetch_one("SELECT COUNT(*) AS cnt FROM HYOSU")["cnt"] == 2
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_sqlite_standard_h6_child_failure_restores_previous_snapshot(
-    sqlite_db, importer_class
-):
+def test_sqlite_standard_h6_child_failure_restores_previous_snapshot(sqlite_db):
     _create_jravan_tables(sqlite_db, _STANDARD_H6_TABLES)
-    importer = importer_class(sqlite_db, use_jravan_schema=True)
+    importer = DataImporter(sqlite_db, use_jravan_schema=True)
     original = _flatten(H6Parser().parse(_make_h6_vote_record()))
     assert importer.import_records(iter(original))["records_failed"] == 0
     sqlite_db.execute(
@@ -1336,22 +1242,20 @@ def test_sqlite_standard_h6_child_failure_restores_previous_snapshot(
     with pytest.raises(ImporterError, match="child rejected"):
         importer.import_records(iter(replacement))
 
-    assert sqlite_db.fetch_one(
-        "SELECT DataKubun AS status, HyoTotal1 AS total1 FROM HYOSU2"
-    ) == {"status": "4", "total1": "00000008000"}
-    assert sqlite_db.fetch_one(
-        "SELECT Hyo AS hyo FROM HYOSU_SANRENTAN"
-    ) == {"hyo": "00000000808"}
+    assert sqlite_db.fetch_one("SELECT DataKubun AS status, HyoTotal1 AS total1 FROM HYOSU2") == {
+        "status": "4",
+        "total1": "00000008000",
+    }
+    assert sqlite_db.fetch_one("SELECT Hyo AS hyo FROM HYOSU_SANRENTAN") == {"hyo": "00000000808"}
 
 
 def test_sqlite_importer_stores_official_av_record(sqlite_db):
     _create_tables(sqlite_db, ["NL_AV"])
     record = AVParser().parse(_make_av_record())
 
-    assert DataImporter(sqlite_db).import_single_record(record) is True
+    assert import_one(DataImporter(sqlite_db), record) is True
 
-    row = sqlite_db.fetch_one(
-        """
+    row = sqlite_db.fetch_one("""
         SELECT
             Year AS year,
             MonthDay AS monthday,
@@ -1359,8 +1263,7 @@ def test_sqlite_importer_stores_official_av_record(sqlite_db):
             Umaban AS umaban,
             JiyuKubun AS jiyukubun
         FROM NL_AV
-        """
-    )
+        """)
     assert row == {
         "year": 2026,
         "monthday": 419,
@@ -1393,6 +1296,6 @@ def test_postgresql_importer_keeps_the_official_total_of_an_empty_o2_snapshot(
 
     assert stats["records_imported"] == 1
     assert stats["records_failed"] == 0
-    assert postgresql_db.fetch_all(
-        'SELECT Kumi AS "Kumi", Vote AS "Vote" FROM NL_O2'
-    ) == [{"Kumi": O2Parser.TOTAL_COMBINATION, "Vote": 999}]
+    assert postgresql_db.fetch_all('SELECT Kumi AS "Kumi", Vote AS "Vote" FROM NL_O2') == [
+        {"Kumi": O2Parser.TOTAL_COMBINATION, "Vote": 999}
+    ]

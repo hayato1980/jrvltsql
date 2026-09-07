@@ -15,7 +15,6 @@ from src.database.schema_jravan import JRAVAN_SCHEMAS
 from src.database.schema_types import get_table_column_types, get_table_primary_key_columns
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.ks_parser import KSParser
 
 
@@ -287,13 +286,12 @@ def test_ks_normalized_schemas_match_official_cardinality_and_keys() -> None:
     assert get_table_primary_key_columns("KISYU_SEISEKI") == ["KisyuCode", "Num"]
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 @pytest.mark.parametrize(
     "main_table,result_table,use_standard",
     [("NL_KS", "NL_KS_SEISEKI", False), ("KISYU", "KISYU_SEISEKI", True)],
 )
 def test_ks_importers_store_complete_record_idempotently(
-    tmp_path, importer_class, main_table: str, result_table: str, use_standard: bool
+    tmp_path, main_table: str, result_table: str, use_standard: bool
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"{main_table}.db")})
     record, expected_header, expected_results, _ = build_record()
@@ -301,7 +299,7 @@ def test_ks_importers_store_complete_record_idempotently(
     with database:
         database.create_table(main_table, schemas[main_table])
         database.create_table(result_table, schemas[result_table])
-        importer = importer_class(database, use_jravan_schema=use_standard)
+        importer = DataImporter(database, use_jravan_schema=use_standard)
         first = importer.import_records(iter([KSParser().parse(record)]))
         second = importer.import_records(iter([KSParser().parse(record)]))
         main_row = database.fetch_one(f"SELECT * FROM {main_table}")
@@ -318,13 +316,12 @@ def test_ks_importers_store_complete_record_idempotently(
     ]
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 @pytest.mark.parametrize(
     "main_table,result_table,use_standard",
     [("NL_KS", "NL_KS_SEISEKI", False), ("KISYU", "KISYU_SEISEKI", True)],
 )
 def test_ks_delete_removes_parent_and_children_in_delivery_order(
-    tmp_path, importer_class, main_table: str, result_table: str, use_standard: bool
+    tmp_path, main_table: str, result_table: str, use_standard: bool
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"delete-{main_table}.db")})
     schemas = JRAVAN_SCHEMAS if use_standard else SCHEMAS
@@ -334,7 +331,7 @@ def test_ks_delete_removes_parent_and_children_in_delivery_order(
     with database:
         database.create_table(main_table, schemas[main_table])
         database.create_table(result_table, schemas[result_table])
-        importer = importer_class(database, use_jravan_schema=use_standard)
+        importer = DataImporter(database, use_jravan_schema=use_standard)
         deleted = importer.import_records(iter([initial, deletion]))
         deleted_main_count = database.fetch_one(f"SELECT COUNT(*) AS count FROM {main_table}")[
             "count"
@@ -355,20 +352,16 @@ def test_ks_delete_removes_parent_and_children_in_delivery_order(
     assert child_count == 3
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ks_import_refuses_missing_result_table_before_parent_mutation(
-    tmp_path, importer_class
-) -> None:
+def test_ks_import_refuses_missing_result_table_before_parent_mutation(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "missing-child.db")})
     with database:
         database.create_table("NL_KS", SCHEMAS["NL_KS"])
         with pytest.raises(SchemaMigrationError, match="NL_KS_SEISEKI"):
-            importer_class(database).import_records(iter([KSParser().parse(build_record()[0])]))
+            DataImporter(database).import_records(iter([KSParser().parse(build_record()[0])]))
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_KS")["count"] == 0
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ks_standard_keyless_header_fails_closed_without_row_loss(tmp_path, importer_class) -> None:
+def test_ks_standard_keyless_header_fails_closed_without_row_loss(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "keyless-standard.db")})
     keyless_header = JRAVAN_SCHEMAS["KISYU"].replace(",\n            PRIMARY KEY (KisyuCode)", "")
     with database:
@@ -381,7 +374,7 @@ def test_ks_standard_keyless_header_fails_closed_without_row_loss(tmp_path, impo
         )
         database.commit()
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([KSParser().parse(build_record()[0])])
             )
         rows = database.fetch_all("SELECT KisyuCode, KisyuName FROM KISYU")
@@ -389,8 +382,7 @@ def test_ks_standard_keyless_header_fails_closed_without_row_loss(tmp_path, impo
     assert rows == [{"KisyuCode": "99999", "KisyuName": "preserve"}]
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ks_legacy_standard_header_fails_closed_without_row_loss(tmp_path, importer_class) -> None:
+def test_ks_legacy_standard_header_fails_closed_without_row_loss(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "legacy-standard.db")})
     legacy_header = """
         CREATE TABLE KISYU (
@@ -409,7 +401,7 @@ def test_ks_legacy_standard_header_fails_closed_without_row_loss(tmp_path, impor
         )
         database.commit()
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([KSParser().parse(build_record()[0])])
             )
         rows = database.fetch_all("SELECT RecordSpec, KisyuName FROM KISYU")
@@ -417,10 +409,7 @@ def test_ks_legacy_standard_header_fails_closed_without_row_loss(tmp_path, impor
     assert rows == [{"RecordSpec": "KS", "KisyuName": "preserve-legacy"}]
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ks_standard_keyless_result_table_fails_closed_without_row_loss(
-    tmp_path, importer_class
-) -> None:
+def test_ks_standard_keyless_result_table_fails_closed_without_row_loss(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "keyless-child.db")})
     keyless_child = JRAVAN_SCHEMAS["KISYU_SEISEKI"].replace(
         ",\n            PRIMARY KEY (KisyuCode, Num)", ""
@@ -434,7 +423,7 @@ def test_ks_standard_keyless_result_table_fails_closed_without_row_loss(
         )
         database.commit()
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([KSParser().parse(build_record()[0])])
             )
         rows = database.fetch_all("SELECT KisyuCode, Num, SetYear FROM KISYU_SEISEKI")
@@ -442,8 +431,7 @@ def test_ks_standard_keyless_result_table_fails_closed_without_row_loss(
     assert rows == [{"KisyuCode": "99999", "Num": 1, "SetYear": 2000}]
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ks_child_failure_rolls_back_parent(tmp_path, importer_class) -> None:
+def test_ks_child_failure_rolls_back_parent(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "atomic.db")})
     child_schema = SCHEMAS["NL_KS_SEISEKI"].replace(
         "PRIMARY KEY (KisyuCode, Num)",
@@ -452,7 +440,7 @@ def test_ks_child_failure_rolls_back_parent(tmp_path, importer_class) -> None:
     with database:
         database.create_table("NL_KS", SCHEMAS["NL_KS"])
         database.create_table("NL_KS_SEISEKI", child_schema)
-        stats = importer_class(database).import_records(iter([KSParser().parse(build_record()[0])]))
+        stats = DataImporter(database).import_records(iter([KSParser().parse(build_record()[0])]))
         main_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_KS")["count"]
         child_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_KS_SEISEKI")["count"]
 
@@ -486,8 +474,7 @@ def test_ks_coupled_failure_never_enters_parent_only_batch_fallback(monkeypatch)
     database.insert.assert_not_called()
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ks_postgresql_native_and_standard_store_all_rows(postgresql_db, importer_class) -> None:
+def test_ks_postgresql_native_and_standard_store_all_rows(postgresql_db) -> None:
     for schema in (
         SCHEMAS["NL_KS"],
         SCHEMAS["NL_KS_SEISEKI"],
@@ -497,7 +484,7 @@ def test_ks_postgresql_native_and_standard_store_all_rows(postgresql_db, importe
         postgresql_db.execute(schema)
     postgresql_db.commit()
 
-    native = importer_class(postgresql_db).import_records(
+    native = DataImporter(postgresql_db).import_records(
         iter(
             [
                 KSParser().parse(build_record()[0]),
@@ -506,7 +493,7 @@ def test_ks_postgresql_native_and_standard_store_all_rows(postgresql_db, importe
             ]
         )
     )
-    standard = importer_class(postgresql_db, use_jravan_schema=True).import_records(
+    standard = DataImporter(postgresql_db, use_jravan_schema=True).import_records(
         iter(
             [
                 KSParser().parse(build_record()[0]),
@@ -534,8 +521,7 @@ def test_ks_postgresql_native_and_standard_store_all_rows(postgresql_db, importe
     ) == {"Num": 3, "Tail": 516}
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ks_postgresql_child_failure_rolls_back_parent(postgresql_db, importer_class) -> None:
+def test_ks_postgresql_child_failure_rolls_back_parent(postgresql_db) -> None:
     child_schema = SCHEMAS["NL_KS_SEISEKI"].replace(
         "PRIMARY KEY (KisyuCode, Num)",
         "MustSupply TEXT NOT NULL, PRIMARY KEY (KisyuCode, Num)",
@@ -544,9 +530,7 @@ def test_ks_postgresql_child_failure_rolls_back_parent(postgresql_db, importer_c
     postgresql_db.execute(child_schema)
     postgresql_db.commit()
 
-    stats = importer_class(postgresql_db).import_records(
-        iter([KSParser().parse(build_record()[0])])
-    )
+    stats = DataImporter(postgresql_db).import_records(iter([KSParser().parse(build_record()[0])]))
 
     assert stats["records_imported"] == 0
     assert stats["records_failed"] == 1

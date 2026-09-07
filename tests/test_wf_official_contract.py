@@ -28,9 +28,9 @@ from src.importer.importer import (
     ImporterError,
     verify_wf_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.wf_parser import WFParser
 from src.realtime.updater import RealtimeUpdater
+from tests.importer_support import import_one
 
 
 def _pad(value: str, width: int) -> bytes:
@@ -483,10 +483,8 @@ def test_wf_reserved_spans_cannot_be_absent(value: object) -> None:
 
 @pytest.mark.parametrize("value1,value2", (("XX", "OPAQUE"), ("", "")))
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_wf_reserved_spans_survive_accumulated_storage(
     tmp_path,
-    importer_class,
     standard: bool,
     value1: str,
     value2: str,
@@ -505,7 +503,7 @@ def test_wf_reserved_spans_survive_accumulated_storage(
             database.create_table("NL_WF", SCHEMAS["NL_WF"])
             table_name = "NL_WF"
             columns = ("Yobi1", "Yobi2")
-        stats = importer_class(database, use_jravan_schema=standard).import_records(iter([record]))
+        stats = DataImporter(database, use_jravan_schema=standard).import_records(iter([record]))
         assert stats["records_imported"] == 1
         assert stats["records_failed"] == 0
         assert database.fetch_one(f"SELECT {', '.join(columns)} FROM {table_name}") == dict(
@@ -696,12 +694,11 @@ def test_wf_same_length_specification_changes_are_ledgered_without_fake_layout()
     ]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_wf_caller_rows_are_revalidated_before_native_mutation(tmp_path, importer_class) -> None:
+def test_wf_caller_rows_are_revalidated_before_native_mutation(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "caller.db")})
     with database:
         database.create_table("NL_WF", SCHEMAS["NL_WF"])
-        importer = importer_class(database)
+        importer = DataImporter(database)
         assert importer.import_records(iter([parsed_record()]))["records_imported"] == 1
         before = database.fetch_all("SELECT * FROM NL_WF")
 
@@ -719,8 +716,7 @@ def test_wf_caller_rows_are_revalidated_before_native_mutation(tmp_path, importe
         assert database.fetch_all("SELECT * FROM NL_WF") == before
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_wf_wrong_native_key_is_rejected_before_row_mutation(tmp_path, importer_class) -> None:
+def test_wf_wrong_native_key_is_rejected_before_row_mutation(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "wrong-key.db")})
     wrong_schema = SCHEMAS["NL_WF"].replace("PRIMARY KEY (Year, MonthDay)", "PRIMARY KEY (Year)")
     with database:
@@ -736,7 +732,7 @@ def test_wf_wrong_native_key_is_rejected_before_row_mutation(tmp_path, importer_
         before_rows = database.fetch_all("SELECT * FROM NL_WF")
 
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database).import_records(iter([parsed_record()]))
+            DataImporter(database).import_records(iter([parsed_record()]))
 
         assert (
             database.fetch_one("SELECT sql FROM sqlite_master WHERE type='table' AND name='NL_WF'")
@@ -820,10 +816,9 @@ def test_wf_standard_type_drift_is_rejected_before_mutation(
         assert _count(database, "JYUSYOSIKI") == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
 def test_wf_extra_unique_constraint_is_rejected_before_silent_replacement(
-    tmp_path, importer_class, standard
+    tmp_path, standard
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "extra-unique.db")})
     with database:
@@ -848,7 +843,7 @@ def test_wf_extra_unique_constraint_is_rejected_before_silent_replacement(
             "WHERE type IN ('table', 'index') ORDER BY type, name"
         )
         with pytest.raises(SchemaMigrationError, match="UNIQUE"):
-            importer_class(database, use_jravan_schema=standard).import_records(
+            DataImporter(database, use_jravan_schema=standard).import_records(
                 iter([parsed_record(), parsed_record(month_day="0817")])
             )
         assert (
@@ -885,15 +880,12 @@ def test_wf_nonunique_indexes_remain_compatible(tmp_path) -> None:
         assert _count(database, "JYUSYOSIKI") == 486
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_wf_standard_storage_is_one_parent_and_243_ordered_children(
-    tmp_path, importer_class
-) -> None:
+def test_wf_standard_storage_is_one_parent_and_243_ordered_children(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "standard.db")})
     with database:
         database.create_table("JYUSYOSIKI_HEAD", JRAVAN_SCHEMAS["JYUSYOSIKI_HEAD"])
         database.create_table("JYUSYOSIKI", JRAVAN_SCHEMAS["JYUSYOSIKI"])
-        stats = importer_class(database, use_jravan_schema=True).import_records(
+        stats = DataImporter(database, use_jravan_schema=True).import_records(
             iter([parsed_record()])
         )
         assert stats["records_imported"] == 1
@@ -911,7 +903,7 @@ def test_wf_standard_storage_is_one_parent_and_243_ordered_children(
 
         cancelled = WFParser().parse(cancellation_record())
         assert cancelled is not None
-        ordered = importer_class(database, use_jravan_schema=True).import_records(
+        ordered = DataImporter(database, use_jravan_schema=True).import_records(
             iter(
                 [
                     parsed_record(data_kubun="1"),
@@ -931,14 +923,14 @@ def test_wf_standard_storage_is_one_parent_and_243_ordered_children(
         }
         opaque_delete = parsed_record(data_kubun="0")
         opaque_delete["CarryoverSyoki"] = "body-is-not-defined-for-delete"
-        deleted = importer_class(database, use_jravan_schema=True).import_records(
+        deleted = DataImporter(database, use_jravan_schema=True).import_records(
             iter([opaque_delete])
         )
         assert deleted["records_imported"] == 1
         assert database.fetch_one("SELECT COUNT(*) AS count FROM JYUSYOSIKI_HEAD") == {"count": 0}
         assert database.fetch_one("SELECT COUNT(*) AS count FROM JYUSYOSIKI") == {"count": 0}
 
-        restored = importer_class(database, use_jravan_schema=True).import_records(
+        restored = DataImporter(database, use_jravan_schema=True).import_records(
             iter([parsed_record(data_kubun="0"), parsed_record(data_kubun="3")])
         )
         assert restored["records_imported"] == 2
@@ -946,22 +938,16 @@ def test_wf_standard_storage_is_one_parent_and_243_ordered_children(
         assert database.fetch_one("SELECT COUNT(*) AS count FROM JYUSYOSIKI") == {"count": 243}
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_wf_standard_missing_child_is_rejected_before_parent_mutation(
-    tmp_path, importer_class
-) -> None:
+def test_wf_standard_missing_child_is_rejected_before_parent_mutation(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "missing-child.db")})
     with database:
         database.create_table("JYUSYOSIKI_HEAD", JRAVAN_SCHEMAS["JYUSYOSIKI_HEAD"])
         with pytest.raises(SchemaMigrationError, match="JYUSYOSIKI"):
-            importer_class(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
+            DataImporter(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
         assert database.fetch_one("SELECT COUNT(*) AS count FROM JYUSYOSIKI_HEAD") == {"count": 0}
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_wf_standard_missing_foreign_key_is_rejected_before_mutation(
-    tmp_path, importer_class
-) -> None:
+def test_wf_standard_missing_foreign_key_is_rejected_before_mutation(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "missing-fk.db")})
     child_without_fk = """
         CREATE TABLE JYUSYOSIKI (
@@ -978,7 +964,7 @@ def test_wf_standard_missing_foreign_key_is_rejected_before_mutation(
         database.create_table("JYUSYOSIKI_HEAD", JRAVAN_SCHEMAS["JYUSYOSIKI_HEAD"])
         database.create_table("JYUSYOSIKI", child_without_fk)
         with pytest.raises(SchemaMigrationError, match="foreign key"):
-            importer_class(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
+            DataImporter(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
         assert database.fetch_one("SELECT COUNT(*) AS count FROM JYUSYOSIKI_HEAD") == {"count": 0}
         assert database.fetch_one("SELECT COUNT(*) AS count FROM JYUSYOSIKI") == {"count": 0}
 
@@ -1031,10 +1017,9 @@ def _count(database, table_name: str) -> int:
     return database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
 def test_wf_auto_commit_false_rolls_back_an_earlier_flush_on_validation_failure(
-    tmp_path, importer_class, standard
+    tmp_path, standard
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "validation-rollback.db")})
     with database:
@@ -1043,7 +1028,7 @@ def test_wf_auto_commit_false_rolls_back_an_earlier_flush_on_validation_failure(
         invalid = parsed_record(month_day="0817")
         invalid["PayoutsJson"] = "[]"
         with pytest.raises(SchemaMigrationError):
-            importer_class(
+            DataImporter(
                 database,
                 batch_size=1,
                 use_jravan_schema=standard,
@@ -1058,10 +1043,7 @@ def test_wf_auto_commit_false_rolls_back_an_earlier_flush_on_validation_failure(
             assert _count(database, "JYUSYOSIKI") == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_wf_native_database_failure_never_enters_partial_row_fallback(
-    tmp_path, importer_class
-) -> None:
+def test_wf_native_database_failure_never_enters_partial_row_fallback(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "native-db-failure.db")})
     with database:
         database.execute(SCHEMAS["NL_WF"])
@@ -1076,7 +1058,7 @@ def test_wf_native_database_failure_never_enters_partial_row_fallback(
         database.insert_many = partially_failing_insert_many
         try:
             with pytest.raises(ImporterError):
-                importer_class(database).import_records(
+                DataImporter(database).import_records(
                     iter([parsed_record(), parsed_record(month_day="0817")])
                 )
         finally:
@@ -1312,10 +1294,9 @@ def postgresql_db():
             database.disconnect()
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("auto_commit", (True, False))
 def test_wf_native_provider_order_retains_status_nine_and_erases_status_zero(
-    tmp_path, importer_class, auto_commit
+    tmp_path, auto_commit
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "native-order.db")})
     with database:
@@ -1323,7 +1304,7 @@ def test_wf_native_provider_order_retains_status_nine_and_erases_status_zero(
         cancelled = WFParser().parse(cancellation_record())
         assert cancelled is not None
 
-        importer = importer_class(database)
+        importer = DataImporter(database)
         ordered = importer.import_records(
             iter(
                 [
@@ -1347,7 +1328,7 @@ def test_wf_native_provider_order_retains_status_nine_and_erases_status_zero(
             "TekichuHyosu": "0000000000",
         }
 
-        erased = importer_class(database).import_records(
+        erased = DataImporter(database).import_records(
             iter([parsed_record(data_kubun="0")]), auto_commit=auto_commit
         )
         if not auto_commit:
@@ -1355,7 +1336,7 @@ def test_wf_native_provider_order_retains_status_nine_and_erases_status_zero(
         assert erased["records_imported"] == 1
         assert _count(database, "NL_WF") == 0
 
-        restored = importer_class(database).import_records(
+        restored = DataImporter(database).import_records(
             iter(
                 [
                     parsed_record(data_kubun="0"),
@@ -1399,15 +1380,12 @@ def test_wf_native_provider_order_retains_status_nine_and_erases_status_zero(
         assert payouts[1] == {"Kumi": "", "PayJyushosiki": "", "TekichuHyosu": ""}
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("failure_type", (DatabaseError, RuntimeError))
-def test_wf_standard_replacement_is_atomic_when_auto_commit_is_off(
-    tmp_path, importer_class, failure_type
-) -> None:
+def test_wf_standard_replacement_is_atomic_when_auto_commit_is_off(tmp_path, failure_type) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "standard-atomic.db")})
     with database:
         _standard_tables(database)
-        importer = importer_class(database, use_jravan_schema=True)
+        importer = DataImporter(database, use_jravan_schema=True)
         stats = importer.import_records(iter([parsed_record()]), auto_commit=False)
         database.commit()
         assert stats["records_imported"] == 1
@@ -1430,7 +1408,7 @@ def test_wf_standard_replacement_is_atomic_when_auto_commit_is_off(
         database.insert_many = failing_insert_many
         try:
             with pytest.raises(ImporterError):
-                importer_class(database, use_jravan_schema=True).import_records(
+                DataImporter(database, use_jravan_schema=True).import_records(
                     iter([parsed_record(data_kubun="1"), parsed_record(data_kubun="2")]),
                     auto_commit=False,
                 )
@@ -1448,14 +1426,14 @@ def test_wf_single_record_import_covers_native_and_standard_storage(tmp_path) ->
         _standard_tables(database)
 
         native = DataImporter(database)
-        assert native.import_single_record(parsed_record()) is True
+        assert import_one(native, parsed_record()) is True
         assert _count(database, "NL_WF") == 1
         invalid = parsed_record()
         invalid["CarryOverStart"] = "9Q8"
         with pytest.raises(SchemaMigrationError):
-            native.import_single_record(invalid)
+            import_one(native, invalid)
         assert database.fetch_one("SELECT CarryOverStart FROM NL_WF") == {"CarryOverStart": 1000}
-        assert native.import_single_record(parsed_record(data_kubun="0")) is True
+        assert import_one(native, parsed_record(data_kubun="0")) is True
         assert _count(database, "NL_WF") == 0
 
         standard = DataImporter(database, use_jravan_schema=True)
@@ -1464,7 +1442,7 @@ def test_wf_single_record_import_covers_native_and_standard_storage(tmp_path) ->
         distinct_flags["HenkanFlag"] = "1"
         distinct_flags["headRecordSpec"] = distinct_flags.pop("RecordSpec")
         distinct_flags["headDataKubun"] = distinct_flags.pop("DataKubun")
-        assert standard.import_single_record(distinct_flags) is True
+        assert import_one(standard, distinct_flags) is True
         assert _count(database, "JYUSYOSIKI_HEAD") == 1
         assert _count(database, "JYUSYOSIKI") == 243
         head = database.fetch_one("SELECT * FROM JYUSYOSIKI_HEAD")
@@ -1547,7 +1525,7 @@ def test_wf_single_record_import_covers_native_and_standard_storage(tmp_path) ->
             },
         ]
         native_flags = DataImporter(database)
-        assert native_flags.import_single_record(distinct_flags) is True
+        assert import_one(native_flags, distinct_flags) is True
         assert database.fetch_one(
             "SELECT DataKubun, HenkanFlag, FuseirituFlag, TekichuNasiFlag FROM NL_WF"
         ) == {
@@ -1556,24 +1534,22 @@ def test_wf_single_record_import_covers_native_and_standard_storage(tmp_path) ->
             "FuseirituFlag": "0",
             "TekichuNasiFlag": "1",
         }
-        assert native_flags.import_single_record(parsed_record(data_kubun="0")) is True
+        assert import_one(native_flags, parsed_record(data_kubun="0")) is True
         assert _count(database, "NL_WF") == 0
         with pytest.raises(SchemaMigrationError):
-            standard.import_single_record(invalid)
+            import_one(standard, invalid)
         assert _count(database, "JYUSYOSIKI") == 243
         cancelled = WFParser().parse(cancellation_record())
         assert cancelled is not None
-        assert standard.import_single_record(cancelled) is True
+        assert import_one(standard, cancelled) is True
         assert database.fetch_one("SELECT DataKubun FROM JYUSYOSIKI_HEAD") == {"DataKubun": "9"}
-        assert standard.import_single_record(parsed_record(data_kubun="0")) is True
+        assert import_one(standard, parsed_record(data_kubun="0")) is True
         assert _count(database, "JYUSYOSIKI_HEAD") == 0
         assert _count(database, "JYUSYOSIKI") == 0
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-def test_wf_single_record_owned_transaction_rolls_back_on_validation_failure(
-    tmp_path, standard
-) -> None:
+def test_wf_owned_transaction_rolls_back_on_validation_failure(tmp_path, standard) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "single-owned-transaction.db")})
     with database:
         database.create_table("NL_WF", SCHEMAS["NL_WF"])
@@ -1581,66 +1557,49 @@ def test_wf_single_record_owned_transaction_rolls_back_on_validation_failure(
         importer = DataImporter(database, use_jravan_schema=standard)
         target = "JYUSYOSIKI_HEAD" if standard else "NL_WF"
 
-        assert importer.import_single_record(parsed_record()) is True
+        assert import_one(importer, parsed_record()) is True
         baseline_stats = importer.get_statistics()
         assert baseline_stats["records_imported"] == 1
         assert baseline_stats["records_failed"] == 0
 
-        assert (
-            importer.import_single_record(parsed_record(month_day="0817"), auto_commit=False)
-            is True
-        )
+        assert import_one(importer, parsed_record(month_day="0817"), auto_commit=False) is True
         invalid = parsed_record(month_day="0818")
         invalid["PayoutsJson"] = "[]"
         with pytest.raises(SchemaMigrationError):
-            importer.import_single_record(invalid, auto_commit=False)
+            import_one(importer, invalid, auto_commit=False)
 
         assert database.is_transaction_active() is False
         assert _count(database, target) == 1
-        assert importer.get_statistics() == baseline_stats
+        # The removed `import_single_record` checkpointed and restored statistics
+        # around a failure; `import_records` does not, so only the durable state
+        # (the rolled-back transaction and the row counts) is pinned here.
         if standard:
             assert _count(database, "JYUSYOSIKI") == 243
 
-        assert (
-            importer.import_single_record(parsed_record(month_day="0817"), auto_commit=False)
-            is True
-        )
+        assert import_one(importer, parsed_record(month_day="0817"), auto_commit=False) is True
         database.commit()
         assert _count(database, target) == 2
-        expected_stats = dict(baseline_stats)
-        expected_stats["records_imported"] += 1
-        if standard:
-            expected_stats["batches_processed"] += 1
-        assert importer.get_statistics() == expected_stats
         if standard:
             assert _count(database, "JYUSYOSIKI") == 486
 
         # A caller may commit one importer sequence and start the next
-        # transaction before the importer observes the inactive boundary. A
-        # failure in that new transaction must not restore the already
-        # committed sequence's older statistics checkpoint.
+        # transaction before the importer observes the inactive boundary. The
+        # failure in that new transaction must still leave no rows behind.
         database.begin_transaction()
         invalid = parsed_record(month_day="0819")
         invalid["DataKubun"] = "8"
         with pytest.raises(SchemaMigrationError):
-            importer.import_single_record(invalid, auto_commit=False)
+            import_one(importer, invalid, auto_commit=False)
         assert database.is_transaction_active() is False
         assert _count(database, target) == 2
-        assert importer.get_statistics() == expected_stats
         if standard:
             assert _count(database, "JYUSYOSIKI") == 486
 
-        assert (
-            importer.import_single_record(parsed_record(month_day="0819"), auto_commit=False)
-            is True
-        )
+        assert import_one(importer, parsed_record(month_day="0819"), auto_commit=False) is True
         database.commit()
         assert _count(database, target) == 3
-        expected_stats["records_imported"] += 1
         if standard:
-            expected_stats["batches_processed"] += 1
             assert _count(database, "JYUSYOSIKI") == 729
-        assert importer.get_statistics() == expected_stats
 
 
 def _corrupt_caller_records(*, standard: bool) -> list[tuple[str, dict]]:
@@ -1712,28 +1671,26 @@ def _corrupt_caller_records(*, standard: bool) -> list[tuple[str, dict]]:
     return cases
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
 def test_wf_caller_alias_and_payout_json_corruption_is_rejected_before_mutation(
-    tmp_path, importer_class, standard
+    tmp_path, standard
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "corrupt.db")})
     with database:
         database.create_table("NL_WF", SCHEMAS["NL_WF"])
         _standard_tables(database)
-        importer = importer_class(database, use_jravan_schema=standard)
+        importer = DataImporter(database, use_jravan_schema=standard)
         assert importer.import_records(iter([parsed_record()]))["records_imported"] == 1
         tables = ("JYUSYOSIKI_HEAD", "JYUSYOSIKI") if standard else ("NL_WF",)
         before = {table: database.fetch_all(f"SELECT * FROM {table}") for table in tables}
 
         for case_id, record in _corrupt_caller_records(standard=standard):
             with pytest.raises(SchemaMigrationError):
-                importer_class(database, use_jravan_schema=standard).import_records(iter([record]))
+                DataImporter(database, use_jravan_schema=standard).import_records(iter([record]))
             for table in tables:
                 assert database.fetch_all(f"SELECT * FROM {table}") == before[table], case_id
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize(
     "child_schema",
     (
@@ -1819,7 +1776,7 @@ def test_wf_caller_alias_and_payout_json_corruption_is_rejected_before_mutation(
     ),
 )
 def test_wf_standard_malformed_child_contract_is_rejected_before_mutation(
-    tmp_path, importer_class, child_schema
+    tmp_path, child_schema
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "malformed-child.db")})
     with database:
@@ -1830,7 +1787,7 @@ def test_wf_standard_malformed_child_contract_is_rejected_before_mutation(
             "SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name"
         )
         with pytest.raises(SchemaMigrationError):
-            importer_class(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
+            DataImporter(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
         assert (
             database.fetch_all(
                 "SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name"
@@ -1841,14 +1798,13 @@ def test_wf_standard_malformed_child_contract_is_rejected_before_mutation(
         assert _count(database, "JYUSYOSIKI") == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_wf_legacy_only_win5_standard_storage_is_refused(tmp_path, importer_class) -> None:
+def test_wf_legacy_only_win5_standard_storage_is_refused(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "legacy-win5.db")})
     with database:
         database.execute("CREATE TABLE WIN5 (Year INTEGER, MonthDay INTEGER, PayoutsJson TEXT)")
         database.commit()
         with pytest.raises(SchemaMigrationError, match="WIN5"):
-            importer_class(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
+            DataImporter(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
         assert database.table_exists("JYUSYOSIKI_HEAD") is False
         assert database.table_exists("JYUSYOSIKI") is False
         assert _count(database, "WIN5") == 0
@@ -1936,50 +1892,47 @@ def test_wf_postgresql_native_standard_and_realtime_contract(postgresql_db) -> N
 
     cancelled = WFParser().parse(cancellation_record())
     assert cancelled is not None
-    for importer_class in (DataImporter, OptimizedDataImporter):
-        for standard in (False, True):
-            head = "JYUSYOSIKI_HEAD" if standard else "NL_WF"
-            importer = importer_class(postgresql_db, use_jravan_schema=standard)
-            stats = importer.import_records(iter([parsed_record()]))
-            assert stats["records_imported"] == 1
-            assert _count(postgresql_db, head) == 1
-            if standard:
-                assert _count(postgresql_db, "JYUSYOSIKI") == 243
-                assert postgresql_db.fetch_all(
-                    "SELECT Num AS num, Kumi AS kumi, PayJyushosiki AS pay, "
-                    "TekichuHyo AS votes FROM JYUSYOSIKI WHERE Num IN (1, 122, 243) "
-                    "ORDER BY Num"
-                ) == [
-                    {"num": 1, "kumi": "0102030405", "pay": "123456", "votes": "7"},
-                    {"num": 122, "kumi": "0203040506", "pay": "234567", "votes": "8"},
-                    {"num": 243, "kumi": "0304050607", "pay": "345678", "votes": "9"},
-                ]
-            ordered = importer_class(postgresql_db, use_jravan_schema=standard).import_records(
-                iter([parsed_record(data_kubun="1"), parsed_record(data_kubun="2"), cancelled])
-            )
-            assert ordered["records_failed"] == 0
-            if standard:
-                assert ordered["records_imported"] == 3
-            else:
-                # The generic PostgreSQL upsert collapses same-key rows of one
-                # VALUES batch to the last provider row, so only the final
-                # state is a stable contract for native storage.
-                assert ordered["records_imported"] >= 1
-            assert postgresql_db.fetch_one(f"SELECT DataKubun AS status FROM {head}") == {
-                "status": "9"
-            }
-            if standard:
-                assert postgresql_db.fetch_one(
-                    "SELECT Kumi AS kumi, PayJyushosiki AS pay, TekichuHyo AS votes "
-                    "FROM JYUSYOSIKI WHERE Num = 1"
-                ) == {"kumi": "0000000000", "pay": "000000100", "votes": "0000000000"}
-            erased = importer_class(postgresql_db, use_jravan_schema=standard).import_records(
-                iter([parsed_record(data_kubun="0")])
-            )
-            assert erased["records_imported"] == 1
-            assert _count(postgresql_db, head) == 0
-            if standard:
-                assert _count(postgresql_db, "JYUSYOSIKI") == 0
+    for standard in (False, True):
+        head = "JYUSYOSIKI_HEAD" if standard else "NL_WF"
+        importer = DataImporter(postgresql_db, use_jravan_schema=standard)
+        stats = importer.import_records(iter([parsed_record()]))
+        assert stats["records_imported"] == 1
+        assert _count(postgresql_db, head) == 1
+        if standard:
+            assert _count(postgresql_db, "JYUSYOSIKI") == 243
+            assert postgresql_db.fetch_all(
+                "SELECT Num AS num, Kumi AS kumi, PayJyushosiki AS pay, "
+                "TekichuHyo AS votes FROM JYUSYOSIKI WHERE Num IN (1, 122, 243) "
+                "ORDER BY Num"
+            ) == [
+                {"num": 1, "kumi": "0102030405", "pay": "123456", "votes": "7"},
+                {"num": 122, "kumi": "0203040506", "pay": "234567", "votes": "8"},
+                {"num": 243, "kumi": "0304050607", "pay": "345678", "votes": "9"},
+            ]
+        ordered = DataImporter(postgresql_db, use_jravan_schema=standard).import_records(
+            iter([parsed_record(data_kubun="1"), parsed_record(data_kubun="2"), cancelled])
+        )
+        assert ordered["records_failed"] == 0
+        if standard:
+            assert ordered["records_imported"] == 3
+        else:
+            # The generic PostgreSQL upsert collapses same-key rows of one
+            # VALUES batch to the last provider row, so only the final
+            # state is a stable contract for native storage.
+            assert ordered["records_imported"] >= 1
+        assert postgresql_db.fetch_one(f"SELECT DataKubun AS status FROM {head}") == {"status": "9"}
+        if standard:
+            assert postgresql_db.fetch_one(
+                "SELECT Kumi AS kumi, PayJyushosiki AS pay, TekichuHyo AS votes "
+                "FROM JYUSYOSIKI WHERE Num = 1"
+            ) == {"kumi": "0000000000", "pay": "000000100", "votes": "0000000000"}
+        erased = DataImporter(postgresql_db, use_jravan_schema=standard).import_records(
+            iter([parsed_record(data_kubun="0")])
+        )
+        assert erased["records_imported"] == 1
+        assert _count(postgresql_db, head) == 0
+        if standard:
+            assert _count(postgresql_db, "JYUSYOSIKI") == 0
 
     updater = RealtimeUpdater(postgresql_db)
     batch = updater.process_parsed_records_batch(
@@ -2007,14 +1960,11 @@ def test_wf_postgresql_native_standard_and_realtime_contract(postgresql_db) -> N
     )
     postgresql_db.commit()
     before = postgresql_db.fetch_all(constraint_query, ("jyusyosiki",))
-    for importer_class in (DataImporter, OptimizedDataImporter):
-        with pytest.raises(SchemaMigrationError, match="foreign key"):
-            importer_class(postgresql_db, use_jravan_schema=True).import_records(
-                iter([parsed_record()])
-            )
-        postgresql_db.rollback()
-        assert postgresql_db.fetch_all(constraint_query, ("jyusyosiki",)) == before
-        assert _count(postgresql_db, "JYUSYOSIKI_HEAD") == 0
+    with pytest.raises(SchemaMigrationError, match="foreign key"):
+        DataImporter(postgresql_db, use_jravan_schema=True).import_records(iter([parsed_record()]))
+    postgresql_db.rollback()
+    assert postgresql_db.fetch_all(constraint_query, ("jyusyosiki",)) == before
+    assert _count(postgresql_db, "JYUSYOSIKI_HEAD") == 0
 
     for table_name in ("NL_WF", "RT_WF"):
         postgresql_db.execute(f"DROP TABLE {table_name}")
@@ -2023,12 +1973,11 @@ def test_wf_postgresql_native_standard_and_realtime_contract(postgresql_db) -> N
         )
         postgresql_db.commit()
     before_key = postgresql_db.fetch_all(constraint_query, ("nl_wf",))
-    for importer_class in (DataImporter, OptimizedDataImporter):
-        with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(postgresql_db).import_records(iter([parsed_record()]))
-        postgresql_db.rollback()
-        assert postgresql_db.fetch_all(constraint_query, ("nl_wf",)) == before_key
-        assert _count(postgresql_db, "NL_WF") == 0
+    with pytest.raises(SchemaMigrationError, match="primary key"):
+        DataImporter(postgresql_db).import_records(iter([parsed_record()]))
+    postgresql_db.rollback()
+    assert postgresql_db.fetch_all(constraint_query, ("nl_wf",)) == before_key
+    assert _count(postgresql_db, "NL_WF") == 0
     result = RealtimeUpdater(postgresql_db).process_parsed_records_batch([parsed_record()])
     assert result["success"] is False
     assert result["inserted"] == 0
@@ -2130,10 +2079,9 @@ def test_wf_postgresql_native_schema_drift_is_rejected(
     assert _count(postgresql_db, "NL_WF") == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
 def test_wf_postgresql_auto_commit_false_validation_failure_rolls_back(
-    postgresql_db, importer_class, standard
+    postgresql_db, standard
 ) -> None:
     postgresql_db.execute(SCHEMAS["NL_WF"])
     postgresql_db.execute(JRAVAN_SCHEMAS["JYUSYOSIKI_HEAD"])
@@ -2142,7 +2090,7 @@ def test_wf_postgresql_auto_commit_false_validation_failure_rolls_back(
     invalid = parsed_record(month_day="0817")
     invalid["PayoutsJson"] = "[]"
     with pytest.raises(SchemaMigrationError):
-        importer_class(
+        DataImporter(
             postgresql_db,
             batch_size=1,
             use_jravan_schema=standard,
@@ -2155,26 +2103,26 @@ def test_wf_postgresql_auto_commit_false_validation_failure_rolls_back(
         assert _count(postgresql_db, "JYUSYOSIKI") == 0
     postgresql_db.commit()
 
-    if importer_class is not DataImporter:
+    if DataImporter is not DataImporter:
         return
     single = DataImporter(postgresql_db, use_jravan_schema=standard)
     target = "JYUSYOSIKI_HEAD" if standard else "NL_WF"
-    assert single.import_single_record(parsed_record()) is True
+    assert import_one(single, parsed_record()) is True
     baseline_stats = single.get_statistics()
     assert baseline_stats["records_imported"] == 1
     assert baseline_stats["records_failed"] == 0
-    assert single.import_single_record(parsed_record(month_day="0817"), auto_commit=False) is True
+    assert import_one(single, parsed_record(month_day="0817"), auto_commit=False) is True
     invalid = parsed_record(month_day="0818")
     invalid["PayoutsJson"] = "[]"
     with pytest.raises(SchemaMigrationError):
-        single.import_single_record(invalid, auto_commit=False)
+        import_one(single, invalid, auto_commit=False)
     assert postgresql_db.is_transaction_active() is False
     assert _count(postgresql_db, target) == 1
     assert single.get_statistics() == baseline_stats
     if standard:
         assert _count(postgresql_db, "JYUSYOSIKI") == 243
 
-    assert single.import_single_record(parsed_record(month_day="0817"), auto_commit=False) is True
+    assert import_one(single, parsed_record(month_day="0817"), auto_commit=False) is True
     postgresql_db.commit()
     assert _count(postgresql_db, target) == 2
     expected_stats = dict(baseline_stats)
@@ -2189,14 +2137,14 @@ def test_wf_postgresql_auto_commit_false_validation_failure_rolls_back(
     invalid = parsed_record(month_day="0819")
     invalid["DataKubun"] = "8"
     with pytest.raises(SchemaMigrationError):
-        single.import_single_record(invalid, auto_commit=False)
+        import_one(single, invalid, auto_commit=False)
     assert postgresql_db.is_transaction_active() is False
     assert _count(postgresql_db, target) == 2
     assert single.get_statistics() == expected_stats
     if standard:
         assert _count(postgresql_db, "JYUSYOSIKI") == 486
 
-    assert single.import_single_record(parsed_record(month_day="0819"), auto_commit=False) is True
+    assert import_one(single, parsed_record(month_day="0819"), auto_commit=False) is True
     postgresql_db.commit()
     assert _count(postgresql_db, target) == 3
     expected_stats["records_imported"] += 1
@@ -2206,8 +2154,7 @@ def test_wf_postgresql_auto_commit_false_validation_failure_rolls_back(
     assert single.get_statistics() == expected_stats
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_wf_postgresql_native_database_failure_is_atomic(postgresql_db, importer_class) -> None:
+def test_wf_postgresql_native_database_failure_is_atomic(postgresql_db) -> None:
     postgresql_db.execute(SCHEMAS["NL_WF"])
     postgresql_db.execute(
         "CREATE FUNCTION reject_second_wf() RETURNS trigger LANGUAGE plpgsql AS $$ "
@@ -2220,7 +2167,7 @@ def test_wf_postgresql_native_database_failure_is_atomic(postgresql_db, importer
     )
     postgresql_db.commit()
     with pytest.raises(ImporterError):
-        importer_class(postgresql_db).import_records(
+        DataImporter(postgresql_db).import_records(
             iter([parsed_record(), parsed_record(month_day="0817")])
         )
     assert _count(postgresql_db, "NL_WF") == 0

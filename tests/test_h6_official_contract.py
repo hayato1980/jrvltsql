@@ -29,9 +29,9 @@ from src.importer.importer import (
     validate_h6_record,
     verify_h6_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.h6_parser import H6Parser
 from src.realtime.updater import RealtimeUpdater
+from tests.importer_support import import_one
 
 STANDARD_TABLES = ("HYOSU2", "HYOSU_SANRENTAN")
 NATIVE_TABLES = ("NL_H6", "RT_H6")
@@ -175,13 +175,16 @@ def test_h6_status_nine_accepts_only_the_provider_blank_vote(tmp_path: Path) -> 
         b"1" * (H6Parser.VOTE_WIDTH - 1) + b"\t",
         b"1" * 5 + b"\t" + b"1" * 5,
     ):
-        assert H6Parser().parse(
-            h6_raw(
-                data_kubun="9",
-                hyo=malformed_hyo,
-                ninki=b" " * H6Parser.FAVOURITE_WIDTH,
+        assert (
+            H6Parser().parse(
+                h6_raw(
+                    data_kubun="9",
+                    hyo=malformed_hyo,
+                    ninki=b" " * H6Parser.FAVOURITE_WIDTH,
+                )
             )
-        ) is None
+            is None
+        )
 
     for live_status in ("2", "4", "5"):
         live = dict(cancelled, DataKubun=live_status)
@@ -253,9 +256,7 @@ def test_h6_status_zero_validates_only_the_header_and_race_key() -> None:
         b"\t" + b"1" * (H6Parser.VOTE_WIDTH - 1),
         b"\x81\x20" + b"1" * (H6Parser.VOTE_WIDTH - 2),
     ):
-        parsed = H6Parser().parse(
-            h6_raw(data_kubun="0", entries=1, hyo=opaque_hyo)
-        )
+        parsed = H6Parser().parse(h6_raw(data_kubun="0", entries=1, hyo=opaque_hyo))
         assert parsed is not None
         assert len(parsed) == 1
         assert parsed[0]["DataKubun"] == "0"
@@ -373,17 +374,15 @@ def test_h6_totals_only_snapshot_is_stored_once_per_race(
                 "count": 0
             }
         else:
-            assert database.fetch_all(
-                "SELECT SanrentanKumi, SanrentanHyoTotal FROM NL_H6"
-            ) == [{"SanrentanKumi": "TOTAL", "SanrentanHyoTotal": None}]
+            assert database.fetch_all("SELECT SanrentanKumi, SanrentanHyoTotal FROM NL_H6") == [
+                {"SanrentanKumi": "TOTAL", "SanrentanHyoTotal": None}
+            ]
 
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_h6_batch_erase_is_physical_and_provider_ordered(
     tmp_path: Path,
-    importer_class,
     auto_commit: bool,
     use_standard: bool,
 ) -> None:
@@ -391,11 +390,11 @@ def test_h6_batch_erase_is_physical_and_provider_ordered(
 
     tables = _tables(use_standard)
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"erase-{importer_class.__name__}-{use_standard}-{auto_commit}.db")}
+        {"path": str(tmp_path / f"erase-{DataImporter.__name__}-{use_standard}-{auto_commit}.db")}
     )
     with database:
         _create(database, tables)
-        importer = importer_class(database, batch_size=1, use_jravan_schema=use_standard)
+        importer = DataImporter(database, batch_size=1, use_jravan_schema=use_standard)
         records = [
             *h6_rows(data_kubun="2"),
             *h6_rows(data_kubun="4", race_num=b"12"),
@@ -425,9 +424,9 @@ def test_h6_single_record_erase_is_physical(
         _create(database, tables)
         importer = DataImporter(database, use_jravan_schema=use_standard)
         for row in h6_rows():
-            assert importer.import_single_record(row, auto_commit=auto_commit)
+            assert import_one(importer, row, auto_commit=auto_commit)
         for row in h6_erase():
-            assert importer.import_single_record(row, auto_commit=auto_commit)
+            assert import_one(importer, row, auto_commit=auto_commit)
         for table_name in tables:
             assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {
                 "count": 0
@@ -461,9 +460,7 @@ def test_h6_standard_family_accepts_only_the_official_key_index(
         assert verify_h6_storage_schema(database, table_name) is True
 
         probe_column = "MakeDate" if table_name == "HYOSU2" else "Kumi"
-        database.execute(
-            f"CREATE UNIQUE INDEX jltsql_h6_probe ON {table_name} ({probe_column})"
-        )
+        database.execute(f"CREATE UNIQUE INDEX jltsql_h6_probe ON {table_name} ({probe_column})")
         database.commit()
         with pytest.raises(SchemaMigrationError):
             verify_h6_storage_schema(database, table_name)
@@ -600,17 +597,15 @@ def test_h6_schema_verifier_rejects_each_unsafe_contract(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("defect", DEFECTS)
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_h6_importer_paths_reject_each_unsafe_contract_before_dml(
     tmp_path: Path,
-    importer_class,
     defect: str,
     use_standard: bool,
 ) -> None:
     tables = _tables(use_standard)
     unsafe_table = tables[0]
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"dml-{importer_class.__name__}-{unsafe_table}-{defect}.db")}
+        {"path": str(tmp_path / f"dml-{DataImporter.__name__}-{unsafe_table}-{defect}.db")}
     )
     with database:
         for table_name in tables:
@@ -620,7 +615,7 @@ def test_h6_importer_paths_reject_each_unsafe_contract_before_dml(
                 else _canonical(table_name)
             )
         database.commit()
-        importer = importer_class(database, use_jravan_schema=use_standard)
+        importer = DataImporter(database, use_jravan_schema=use_standard)
         with pytest.raises(SchemaMigrationError):
             importer.import_records(iter(h6_rows()))
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {unsafe_table}") == {"count": 0}
@@ -639,7 +634,7 @@ def test_h6_single_record_path_rejects_each_unsafe_contract_before_dml(
         database.commit()
         importer = DataImporter(database)
         with pytest.raises(SchemaMigrationError):
-            importer.import_single_record(h6_row(), auto_commit=auto_commit)
+            import_one(importer, h6_row(), auto_commit=auto_commit)
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_H6") == {"count": 0}
 
 
@@ -710,9 +705,7 @@ def test_h6_realtime_routing_preserves_the_official_markers(tmp_path: Path) -> N
         database.commit()
         updater = RealtimeUpdater(database)
         assert updater.process_record(h6_raw(hyo=b"00000000000", ninki=b"****")) is not None
-        assert database.fetch_one("SELECT SanrentanNinki FROM RT_H6") == {
-            "SanrentanNinki": "****"
-        }
+        assert database.fetch_one("SELECT SanrentanNinki FROM RT_H6") == {"SanrentanNinki": "****"}
 
         invalid_caller = h6_row(
             DataKubun="2",
@@ -750,13 +743,11 @@ def test_h6_realtime_routing_preserves_the_official_markers(tmp_path: Path) -> N
         )
         assert accepted_cancel is not None
         assert all(result["success"] is True for result in accepted_cancel)
-        assert database.fetch_one(
-            "SELECT SanrentanHyo FROM RT_H6 WHERE RaceNum = 15"
-        ) == {"SanrentanHyo": None}
+        assert database.fetch_one("SELECT SanrentanHyo FROM RT_H6 WHERE RaceNum = 15") == {
+            "SanrentanHyo": None
+        }
 
-        assert updater.process_record(
-            h6_raw(data_kubun="4", race_num=b"16", entries=1)
-        ) is not None
+        assert updater.process_record(h6_raw(data_kubun="4", race_num=b"16", entries=1)) is not None
         opaque_delete = updater.process_record(
             h6_raw(
                 data_kubun="0",
@@ -767,9 +758,9 @@ def test_h6_realtime_routing_preserves_the_official_markers(tmp_path: Path) -> N
         )
         assert opaque_delete is not None
         assert all(result["success"] is True for result in opaque_delete)
-        assert database.fetch_one(
-            "SELECT COUNT(*) AS count FROM RT_H6 WHERE RaceNum = 16"
-        ) == {"count": 0}
+        assert database.fetch_one("SELECT COUNT(*) AS count FROM RT_H6 WHERE RaceNum = 16") == {
+            "count": 0
+        }
 
         assert database.fetch_one(
             "SELECT COUNT(*) AS count FROM RT_H6 WHERE RaceNum IN (12, 13, 14)"
@@ -805,17 +796,15 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_h6_postgresql_provider_order_and_exact_erase(
     postgresql_db,
-    importer_class,
     use_standard: bool,
 ) -> None:
     tables = _tables(use_standard)
     for table_name in tables:
         postgresql_db.execute(_canonical(table_name))
     postgresql_db.commit()
-    importer = importer_class(postgresql_db, batch_size=1, use_jravan_schema=use_standard)
+    importer = DataImporter(postgresql_db, batch_size=1, use_jravan_schema=use_standard)
     stats = importer.import_records(
         iter(
             [

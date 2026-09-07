@@ -14,8 +14,8 @@ from src.database.schema_jravan import JRAVAN_SCHEMAS
 from src.database.schema_types import get_table_column_types, get_table_primary_key_columns
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter, ImporterError
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.ch_parser import CHParser
+from tests.importer_support import import_one
 
 
 @pytest.fixture
@@ -258,10 +258,9 @@ def test_ch_normalized_schemas_match_official_cardinality_and_keys() -> None:
 
 
 @pytest.mark.parametrize(
-    "importer_class,main_table,result_table,use_standard",
+    "main_table,result_table,use_standard",
     [
-        pytest.param(importer_class, main, result, standard, id=f"{importer_class.__name__}-{main}")
-        for importer_class in (DataImporter, OptimizedDataImporter)
+        pytest.param(main, result, standard, id=f"{main}")
         for main, result, standard in (
             ("NL_CH", "NL_CH_SEISEKI", False),
             ("CHOKYO", "CHOKYO_SEISEKI", True),
@@ -269,7 +268,7 @@ def test_ch_normalized_schemas_match_official_cardinality_and_keys() -> None:
     ],
 )
 def test_ch_importers_store_header_and_three_complete_result_rows_idempotently(
-    tmp_path, importer_class, main_table: str, result_table: str, use_standard: bool
+    tmp_path, main_table: str, result_table: str, use_standard: bool
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"{main_table}.db")})
     record, expected_header, expected_results, _ = build_record()
@@ -278,7 +277,7 @@ def test_ch_importers_store_header_and_three_complete_result_rows_idempotently(
     with database:
         database.create_table(main_table, main_schema)
         database.create_table(result_table, result_schema)
-        importer = importer_class(database, use_jravan_schema=use_standard)
+        importer = DataImporter(database, use_jravan_schema=use_standard)
         first = importer.import_records(iter([CHParser().parse(record)]))
         second = importer.import_records(iter([CHParser().parse(record)]))
         main_row = database.fetch_one(f"SELECT * FROM {main_table}")
@@ -325,9 +324,7 @@ def test_ch_single_record_api_stores_one_header_and_three_results(
     with database:
         database.create_table(main_table, main_schema)
         database.create_table(result_table, result_schema)
-        inserted = DataImporter(database, use_jravan_schema=use_standard).import_single_record(
-            parsed
-        )
+        inserted = import_one(DataImporter(database, use_jravan_schema=use_standard), parsed)
         main_count = database.fetch_one(f"SELECT COUNT(*) AS count FROM {main_table}")["count"]
         result_count = database.fetch_one(f"SELECT COUNT(*) AS count FROM {result_table}")["count"]
 
@@ -336,10 +333,7 @@ def test_ch_single_record_api_stores_one_header_and_three_results(
     assert result_count == 3
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ch_batch_metadata_retry_never_commits_header_without_results(
-    tmp_path, importer_class
-) -> None:
+def test_ch_batch_metadata_retry_never_commits_header_without_results(tmp_path) -> None:
     """A concrete-backend catalog failure must retry before any CH write."""
     database = SQLiteDatabase({"path": str(tmp_path / "metadata-retry.db")})
     parsed = CHParser().parse(build_record()[0])
@@ -360,7 +354,7 @@ def test_ch_batch_metadata_retry_never_commits_header_without_results(
             return original_fetch_one(sql, parameters)
 
         database.fetch_one = transient_fetch_one
-        stats = importer_class(database).import_records(iter([parsed]))
+        stats = DataImporter(database).import_records(iter([parsed]))
         main_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH")["count"]
         result_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH_SEISEKI")["count"]
 
@@ -371,9 +365,8 @@ def test_ch_batch_metadata_retry_never_commits_header_without_results(
     assert result_count == 3
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 def test_ch_transient_standard_header_catalog_failure_cannot_bypass_primary_key_check(
-    tmp_path, importer_class
+    tmp_path,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "transient-keyless-header.db")})
     keyless_header = JRAVAN_SCHEMAS["CHOKYO"].replace(
@@ -398,18 +391,16 @@ def test_ch_transient_standard_header_catalog_failure_cannot_bypass_primary_key_
 
         database.fetch_one = transient_fetch_one
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=True).import_records(iter([parsed]))
+            DataImporter(database, use_jravan_schema=True).import_records(iter([parsed]))
         main_count = original_fetch_one("SELECT COUNT(*) AS count FROM CHOKYO")["count"]
-        result_count = original_fetch_one("SELECT COUNT(*) AS count FROM CHOKYO_SEISEKI")[
-            "count"
-        ]
+        result_count = original_fetch_one("SELECT COUNT(*) AS count FROM CHOKYO_SEISEKI")["count"]
 
     assert failed_once is True
     assert main_count == 0
     assert result_count == 0
 
 
-def test_ch_single_record_caller_transaction_rolls_back_parent_when_child_fails(
+def test_ch_caller_transaction_rolls_back_parent_when_child_fails(
     tmp_path,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "single-caller-transaction.db")})
@@ -428,20 +419,19 @@ def test_ch_single_record_caller_transaction_rolls_back_parent_when_child_fails(
             return original_insert_many(table_name, rows, use_replace)
 
         database.insert_many = fail_child_before_sql
-        inserted = DataImporter(database).import_single_record(parsed, auto_commit=False)
+        # `import_records` propagates the child failure; the removed
+        # `import_single_record` swallowed it and returned False.
+        with pytest.raises(ImporterError, match="client-side child failure"):
+            DataImporter(database).import_records(iter([parsed]), auto_commit=False)
         database.commit()
         main_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH")["count"]
-        result_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH_SEISEKI")[
-            "count"
-        ]
+        result_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH_SEISEKI")["count"]
 
-    assert inserted is False
     assert main_count == 0
     assert result_count == 0
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ch_rollback_failure_never_enters_parent_only_fallback(tmp_path, importer_class) -> None:
+def test_ch_rollback_failure_never_enters_parent_only_fallback(tmp_path) -> None:
     """A failed rollback must neither fall back nor break context teardown."""
     database = SQLiteDatabase({"path": str(tmp_path / "rollback-failure.db")})
     parsed = CHParser().parse(build_record()[0])
@@ -473,7 +463,7 @@ def test_ch_rollback_failure_never_enters_parent_only_fallback(tmp_path, importe
 
             database.insert_many = fail_child_once
             database.rollback = fail_rollback_once
-            importer_class(database).import_records(iter([parsed]))
+            DataImporter(database).import_records(iter([parsed]))
 
     assert database.is_connected() is False
     with database:
@@ -486,55 +476,9 @@ def test_ch_rollback_failure_never_enters_parent_only_fallback(tmp_path, importe
     assert result_count == 0
 
 
-def test_ch_single_record_rollback_failure_preserves_false_contract(tmp_path) -> None:
-    """A swallowed insert error must not make context teardown raise a new error."""
-    database = SQLiteDatabase({"path": str(tmp_path / "single-rollback-failure.db")})
-    parsed = CHParser().parse(build_record()[0])
-    assert parsed is not None
-
-    with database:
-        database.create_table("NL_CH", SCHEMAS["NL_CH"])
-        database.create_table("NL_CH_SEISEKI", SCHEMAS["NL_CH_SEISEKI"])
-        database.commit()
-        original_insert_many = database.insert_many
-        original_rollback = database.rollback
-        child_failed = False
-        rollback_failed = False
-
-        def fail_child_once(table_name: str, rows, use_replace: bool = True):
-            nonlocal child_failed
-            if table_name == "NL_CH_SEISEKI" and not child_failed:
-                child_failed = True
-                raise DatabaseError("child batch failure")
-            return original_insert_many(table_name, rows, use_replace)
-
-        def fail_rollback_once():
-            nonlocal rollback_failed
-            if not rollback_failed:
-                rollback_failed = True
-                raise DatabaseError("rollback failure")
-            return original_rollback()
-
-        database.insert_many = fail_child_once
-        database.rollback = fail_rollback_once
-        inserted = DataImporter(database).import_single_record(parsed)
-
-    assert database.is_connected() is False
-    with database:
-        main_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH")["count"]
-        result_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH_SEISEKI")["count"]
-
-    assert inserted is False
-    assert child_failed is True
-    assert rollback_failed is True
-    assert main_count == 0
-    assert result_count == 0
-
-
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ch_batch_verifies_result_schema_once(tmp_path, importer_class) -> None:
+def test_ch_batch_verifies_result_schema_once(tmp_path) -> None:
     """Catalog verification is a batch contract, not a per-record operation."""
-    database = SQLiteDatabase({"path": str(tmp_path / f"metadata-{importer_class.__name__}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"metadata-{DataImporter.__name__}.db")})
     parsed = CHParser().parse(build_record()[0])
     assert parsed is not None
 
@@ -558,7 +502,7 @@ def test_ch_batch_verifies_result_schema_once(tmp_path, importer_class) -> None:
 
         database.fetch_one = counting_fetch_one
         database.fetch_all = counting_fetch_all
-        stats = importer_class(database, batch_size=5).import_records(
+        stats = DataImporter(database, batch_size=5).import_records(
             iter([parsed.copy() for _ in range(5)])
         )
 
@@ -567,22 +511,16 @@ def test_ch_batch_verifies_result_schema_once(tmp_path, importer_class) -> None:
     assert metadata_calls == {"catalog_exists": 2, "fetch_all": 3}
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ch_import_refuses_missing_result_table_before_main_mutation(
-    tmp_path, importer_class
-) -> None:
+def test_ch_import_refuses_missing_result_table_before_main_mutation(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "missing-child.db")})
     with database:
         database.create_table("NL_CH", SCHEMAS["NL_CH"])
         with pytest.raises(SchemaMigrationError, match="NL_CH_SEISEKI"):
-            importer_class(database).import_records(iter([CHParser().parse(build_record()[0])]))
+            DataImporter(database).import_records(iter([CHParser().parse(build_record()[0])]))
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH")["count"] == 0
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ch_import_refuses_incomplete_result_metadata_before_mutation(
-    tmp_path, importer_class
-) -> None:
+def test_ch_import_refuses_incomplete_result_metadata_before_mutation(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "incomplete-metadata.db")})
     parsed = CHParser().parse(build_record()[0])
     assert parsed is not None
@@ -591,13 +529,12 @@ def test_ch_import_refuses_incomplete_result_metadata_before_mutation(
         database.create_table("NL_CH", SCHEMAS["NL_CH"])
         database.create_table("NL_CH_SEISEKI", SCHEMAS["NL_CH_SEISEKI"])
         with pytest.raises(SchemaMigrationError, match="three"):
-            importer_class(database).import_records(iter([parsed]))
+            DataImporter(database).import_records(iter([parsed]))
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH")["count"] == 0
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH_SEISEKI")["count"] == 0
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ch_coupled_child_failure_rolls_back_main_row(tmp_path, importer_class) -> None:
+def test_ch_coupled_child_failure_rolls_back_main_row(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "atomic.db")})
     child_schema = SCHEMAS["NL_CH_SEISEKI"].replace(
         "PRIMARY KEY (ChokyosiCode, Num)",
@@ -606,7 +543,7 @@ def test_ch_coupled_child_failure_rolls_back_main_row(tmp_path, importer_class) 
     with database:
         database.create_table("NL_CH", SCHEMAS["NL_CH"])
         database.create_table("NL_CH_SEISEKI", child_schema)
-        stats = importer_class(database).import_records(iter([CHParser().parse(build_record()[0])]))
+        stats = DataImporter(database).import_records(iter([CHParser().parse(build_record()[0])]))
         main_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH")["count"]
         child_count = database.fetch_one("SELECT COUNT(*) AS count FROM NL_CH_SEISEKI")["count"]
 
@@ -631,10 +568,7 @@ OBSOLETE_NATIVE_CH = """
 """
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ch_native_additive_migration_preserves_old_row_then_full_reimport(
-    tmp_path, importer_class
-) -> None:
+def test_ch_native_additive_migration_preserves_old_row_then_full_reimport(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "native-migration.db")})
     with database:
         database.execute(OBSOLETE_NATIVE_CH)
@@ -653,7 +587,7 @@ def test_ch_native_additive_migration_preserves_old_row_then_full_reimport(
             "SaikinJyusyo2_id, SaikinJyusyo3_Bamei FROM NL_CH"
         )
 
-        stats = importer_class(database).import_records(iter([CHParser().parse(build_record()[0])]))
+        stats = DataImporter(database).import_records(iter([CHParser().parse(build_record()[0])]))
         completed = database.fetch_one(
             "SELECT ChokyosiName, SaikinJyusyo2_id, SaikinJyusyo3_Bamei FROM NL_CH"
         )
@@ -677,8 +611,7 @@ def test_ch_native_additive_migration_preserves_old_row_then_full_reimport(
     assert result_rows["count"] == 3
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ch_standard_keyless_header_fails_closed_without_row_loss(tmp_path, importer_class) -> None:
+def test_ch_standard_keyless_header_fails_closed_without_row_loss(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "keyless-header.db")})
     keyless_header = JRAVAN_SCHEMAS["CHOKYO"].replace(
         ",\n            PRIMARY KEY (ChokyosiCode)", ""
@@ -693,7 +626,7 @@ def test_ch_standard_keyless_header_fails_closed_without_row_loss(tmp_path, impo
         )
         database.commit()
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([CHParser().parse(build_record()[0])])
             )
         rows = database.fetch_all("SELECT ChokyosiCode, ChokyosiName FROM CHOKYO")
@@ -701,10 +634,7 @@ def test_ch_standard_keyless_header_fails_closed_without_row_loss(tmp_path, impo
     assert rows == [{"ChokyosiCode": "OLD01", "ChokyosiName": "preserve-header"}]
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ch_standard_keyless_result_table_fails_closed_without_row_loss(
-    tmp_path, importer_class
-) -> None:
+def test_ch_standard_keyless_result_table_fails_closed_without_row_loss(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "keyless-child.db")})
     keyless_child = JRAVAN_SCHEMAS["CHOKYO_SEISEKI"].replace(
         ",\n            PRIMARY KEY (ChokyosiCode, Num)", ""
@@ -719,7 +649,7 @@ def test_ch_standard_keyless_result_table_fails_closed_without_row_loss(
         )
         database.commit()
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([CHParser().parse(build_record()[0])])
             )
         rows = database.fetch_all("SELECT ChokyosiCode, Num, SetYear FROM CHOKYO_SEISEKI")
@@ -729,10 +659,7 @@ def test_ch_standard_keyless_result_table_fails_closed_without_row_loss(
     assert main_count == 0
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ch_postgresql_native_and_standard_store_all_coupled_rows(
-    postgresql_db, importer_class
-) -> None:
+def test_ch_postgresql_native_and_standard_store_all_coupled_rows(postgresql_db) -> None:
     for schema in (
         SCHEMAS["NL_CH"],
         SCHEMAS["NL_CH_SEISEKI"],
@@ -743,8 +670,8 @@ def test_ch_postgresql_native_and_standard_store_all_coupled_rows(
     postgresql_db.commit()
 
     parsed = CHParser().parse(build_record()[0])
-    native = importer_class(postgresql_db).import_records(iter([parsed]))
-    standard = importer_class(postgresql_db, use_jravan_schema=True).import_records(
+    native = DataImporter(postgresql_db).import_records(iter([parsed]))
+    standard = DataImporter(postgresql_db, use_jravan_schema=True).import_records(
         iter([CHParser().parse(build_record()[0])])
     )
 
@@ -774,8 +701,7 @@ def test_ch_postgresql_native_and_standard_store_all_coupled_rows(
     assert standard_tail == {"Num": 3, "Tail": 516}
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ch_postgresql_child_failure_rolls_back_header(postgresql_db, importer_class) -> None:
+def test_ch_postgresql_child_failure_rolls_back_header(postgresql_db) -> None:
     child_schema = SCHEMAS["NL_CH_SEISEKI"].replace(
         "PRIMARY KEY (ChokyosiCode, Num)",
         "MustSupply TEXT NOT NULL, PRIMARY KEY (ChokyosiCode, Num)",
@@ -784,9 +710,7 @@ def test_ch_postgresql_child_failure_rolls_back_header(postgresql_db, importer_c
     postgresql_db.execute(child_schema)
     postgresql_db.commit()
 
-    stats = importer_class(postgresql_db).import_records(
-        iter([CHParser().parse(build_record()[0])])
-    )
+    stats = DataImporter(postgresql_db).import_records(iter([CHParser().parse(build_record()[0])]))
 
     assert stats["records_imported"] == 0
     assert stats["records_failed"] == 1

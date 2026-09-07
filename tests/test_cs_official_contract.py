@@ -19,7 +19,6 @@ from src.database.schema_types import (
 )
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter, validate_import_record_header
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.cs_parser import CSParser
 
 OFFICIAL_FIXTURES = Path(__file__).parent / "fixtures" / "official_layout"
@@ -81,29 +80,14 @@ def parsed_record(**overrides) -> dict:
     return record
 
 
-def _import_records(database, entrypoint, records, *, standard, auto_commit):
-    if entrypoint == "data-batch":
-        result = DataImporter(
-            database,
-            batch_size=1,
-            use_jravan_schema=standard,
-        ).import_records(iter(records), auto_commit=auto_commit)
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
-    elif entrypoint == "optimized-batch":
-        result = OptimizedDataImporter(
-            database,
-            batch_size=1,
-            use_jravan_schema=standard,
-        ).import_records(iter(records), auto_commit=auto_commit)
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
-    else:
-        importer = DataImporter(database, use_jravan_schema=standard)
-        assert all(
-            importer.import_single_record(record, auto_commit=auto_commit) for record in records
-        )
-        assert importer.get_statistics()["records_imported"] == len(records)
+def _import_records(database, records, *, standard, auto_commit):
+    result = DataImporter(
+        database,
+        batch_size=1,
+        use_jravan_schema=standard,
+    ).import_records(iter(records), auto_commit=auto_commit)
+    assert result["records_imported"] == len(records)
+    assert result["records_failed"] == 0
     if not auto_commit:
         database.commit()
 
@@ -233,14 +217,11 @@ def test_cs_status_zero_keeps_the_future_delete_body_opaque():
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
-def test_cs_status_zero_discards_opaque_body_before_sqlite_storage(
-    tmp_path, standard, entrypoint, auto_commit
-):
+def test_cs_status_zero_discards_opaque_body_before_sqlite_storage(tmp_path, standard, auto_commit):
     table_name = "COURSE" if standard else "NL_CS"
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"opaque-zero-{table_name}-{entrypoint}-{auto_commit}.db")}
+        {"path": str(tmp_path / f"opaque-zero-{table_name}-{auto_commit}.db")}
     )
     record = parsed_record(data_kubun="0", course_ex="ignored")
     record["CourseEx"] = "A" * 6801
@@ -250,7 +231,6 @@ def test_cs_status_zero_discards_opaque_body_before_sqlite_storage(
         database.commit()
         _import_records(
             database,
-            entrypoint,
             [record],
             standard=standard,
             auto_commit=auto_commit,
@@ -273,7 +253,6 @@ def test_cs_live_blank_body_remains_compatible_with_sqlite_not_null(tmp_path, st
         database.commit()
         _import_records(
             database,
-            "data-batch",
             [record],
             standard=standard,
             auto_commit=True,
@@ -296,21 +275,14 @@ def test_cs_native_standard_and_metadata_schemas_preserve_the_official_contract(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize(
-    "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
-)
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_cs_import_preserves_two_renovations_and_updates_one_exact_key(
     tmp_path,
     standard,
-    entrypoint,
     auto_commit,
 ):
     table_name = "COURSE" if standard else "NL_CS"
-    database = SQLiteDatabase(
-        {"path": str(tmp_path / f"{table_name}-{entrypoint}-{auto_commit}.db")}
-    )
+    database = SQLiteDatabase({"path": str(tmp_path / f"{table_name}-{auto_commit}.db")})
     records = [
         parsed_record(kaishu_date="20100101", course_ex=LONG_COURSE_EX),
         parsed_record(kaishu_date="20230422", course_ex="改修後"),
@@ -321,7 +293,6 @@ def test_cs_import_preserves_two_renovations_and_updates_one_exact_key(
         database.commit()
         _import_records(
             database,
-            entrypoint,
             records,
             standard=standard,
             auto_commit=auto_commit,
@@ -366,18 +337,13 @@ CREATE TABLE COURSE (
     ),
     ids=("native-three-part-key", "standard-keyless-no-body"),
 )
-@pytest.mark.parametrize(
-    "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
-)
 def test_cs_legacy_storage_is_rejected_before_schema_or_row_mutation(
     tmp_path,
     standard,
     table_name,
     schema_sql,
-    entrypoint,
 ):
-    database = SQLiteDatabase({"path": str(tmp_path / f"legacy-{table_name}-{entrypoint}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"legacy-{table_name}.db")})
     with database:
         database.execute(schema_sql)
         database.commit()
@@ -388,7 +354,6 @@ def test_cs_legacy_storage_is_rejected_before_schema_or_row_mutation(
         with pytest.raises(SchemaMigrationError):
             _import_records(
                 database,
-                entrypoint,
                 [parsed_record()],
                 standard=standard,
                 auto_commit=True,
@@ -432,15 +397,9 @@ def test_cs_dual_rejects_unsafe_identity_storage_on_either_backend(tmp_path, uns
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize(
-    "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
-)
-def test_cs_caller_built_invalid_key_is_rejected_before_mutation(tmp_path, standard, entrypoint):
+def test_cs_caller_built_invalid_key_is_rejected_before_mutation(tmp_path, standard):
     table_name = "COURSE" if standard else "NL_CS"
-    database = SQLiteDatabase(
-        {"path": str(tmp_path / f"caller-invalid-{table_name}-{entrypoint}.db")}
-    )
+    database = SQLiteDatabase({"path": str(tmp_path / f"caller-invalid-{table_name}.db")})
     record = parsed_record()
     record["KaishuDate"] = "20260230"
     with database:
@@ -449,7 +408,6 @@ def test_cs_caller_built_invalid_key_is_rejected_before_mutation(tmp_path, stand
         with pytest.raises(SchemaMigrationError, match="CS"):
             _import_records(
                 database,
-                entrypoint,
                 [record],
                 standard=standard,
                 auto_commit=True,
@@ -458,14 +416,13 @@ def test_cs_caller_built_invalid_key_is_rejected_before_mutation(tmp_path, stand
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_cs_caller_built_oversized_body_is_rejected_by_every_entrypoint(
-    tmp_path, standard, entrypoint, auto_commit
+    tmp_path, standard, auto_commit
 ):
     table_name = "COURSE" if standard else "NL_CS"
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"caller-body-{table_name}-{entrypoint}-{auto_commit}.db")}
+        {"path": str(tmp_path / f"caller-body-{table_name}-{auto_commit}.db")}
     )
     record = parsed_record(course_ex="x")
     record["CourseEx"] = "A" * 6801
@@ -475,7 +432,6 @@ def test_cs_caller_built_oversized_body_is_rejected_by_every_entrypoint(
         with pytest.raises(SchemaMigrationError, match="CourseEx"):
             _import_records(
                 database,
-                entrypoint,
                 [record],
                 standard=standard,
                 auto_commit=auto_commit,
@@ -484,12 +440,8 @@ def test_cs_caller_built_oversized_body_is_rejected_by_every_entrypoint(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize(
-    "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
-)
 @pytest.mark.parametrize("drift", ("extra-unique", "short-body", "wrong-key-type"))
-def test_cs_storage_drift_is_rejected_before_mutation(tmp_path, standard, entrypoint, drift):
+def test_cs_storage_drift_is_rejected_before_mutation(tmp_path, standard, drift):
     table_name = "COURSE" if standard else "NL_CS"
     schema_sql = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
     if drift == "extra-unique":
@@ -503,9 +455,7 @@ def test_cs_storage_drift_is_rejected_before_mutation(tmp_path, standard, entryp
         schema_sql = schema_sql.replace("Kyori                          SMALLINT", "Kyori TEXT")
     else:
         schema_sql = schema_sql.replace("Kyori INTEGER", "Kyori BLOB")
-    database = SQLiteDatabase(
-        {"path": str(tmp_path / f"drift-{drift}-{table_name}-{entrypoint}.db")}
-    )
+    database = SQLiteDatabase({"path": str(tmp_path / f"drift-{drift}-{table_name}.db")})
     with database:
         database.execute(schema_sql)
         expected_rows = 0
@@ -521,7 +471,6 @@ def test_cs_storage_drift_is_rejected_before_mutation(tmp_path, standard, entryp
         with pytest.raises(SchemaMigrationError):
             _import_records(
                 database,
-                entrypoint,
                 [parsed_record(course_ex="長い説明")],
                 standard=standard,
                 auto_commit=True,
@@ -532,23 +481,18 @@ def test_cs_storage_drift_is_rejected_before_mutation(tmp_path, standard, entryp
         )
 
 
-@pytest.mark.parametrize(
-    "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
-)
-def test_cs_standard_adds_only_a_missing_body_to_an_already_correct_key(tmp_path, entrypoint):
+def test_cs_standard_adds_only_a_missing_body_to_an_already_correct_key(tmp_path):
     schema_without_body = JRAVAN_SCHEMAS["COURSE"].replace(
         "            CourseEx                       VARCHAR(6800)        ,  -- コース説明\n",
         "",
     )
     assert "CourseEx" not in schema_without_body
-    database = SQLiteDatabase({"path": str(tmp_path / f"add-body-{entrypoint}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / "add-body.db")})
     with database:
         database.execute(schema_without_body)
         database.commit()
         _import_records(
             database,
-            entrypoint,
             [parsed_record(course_ex="追加済み")],
             standard=True,
             auto_commit=True,
@@ -557,9 +501,8 @@ def test_cs_standard_adds_only_a_missing_body_to_an_already_correct_key(tmp_path
         assert row["CourseEx"] == "追加済み"
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("drift", ("nonempty-missing-body", "missing-nonbody"))
-def test_cs_standard_additive_migration_rejects_unsafe_missing_columns(tmp_path, entrypoint, drift):
+def test_cs_standard_additive_migration_rejects_unsafe_missing_columns(tmp_path, drift):
     if drift == "nonempty-missing-body":
         schema_sql = JRAVAN_SCHEMAS["COURSE"].replace(
             "            CourseEx                       VARCHAR(6800)        ,  -- コース説明\n",
@@ -572,7 +515,7 @@ def test_cs_standard_additive_migration_rejects_unsafe_missing_columns(tmp_path,
         )
     expected_missing = "CourseEx" if drift == "nonempty-missing-body" else "DataKubun"
     assert expected_missing not in schema_sql
-    database = SQLiteDatabase({"path": str(tmp_path / f"unsafe-additive-{drift}-{entrypoint}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"unsafe-additive-{drift}.db")})
     with database:
         database.execute(schema_sql)
         if drift == "nonempty-missing-body":
@@ -589,7 +532,6 @@ def test_cs_standard_additive_migration_rejects_unsafe_missing_columns(tmp_path,
         with pytest.raises(SchemaMigrationError):
             _import_records(
                 database,
-                entrypoint,
                 [parsed_record(kaishu_date="20230422")],
                 standard=True,
                 auto_commit=True,
@@ -627,17 +569,12 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize(
-    "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
-)
-def test_cs_postgresql_preserves_the_full_key_and_body(postgresql_db, standard, entrypoint):
+def test_cs_postgresql_preserves_the_full_key_and_body(postgresql_db, standard):
     table_name = "COURSE" if standard else "NL_CS"
     postgresql_db.execute(JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name])
     postgresql_db.commit()
     _import_records(
         postgresql_db,
-        entrypoint,
         [
             parsed_record(kaishu_date="20100101", course_ex=LONG_COURSE_EX),
             parsed_record(kaishu_date="20230422", course_ex="更新前"),
@@ -657,10 +594,7 @@ def test_cs_postgresql_preserves_the_full_key_and_body(postgresql_db, standard, 
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
-def test_cs_postgresql_rejects_a_caller_body_over_the_physical_byte_width(
-    postgresql_db, standard, entrypoint
-):
+def test_cs_postgresql_rejects_a_caller_body_over_the_physical_byte_width(postgresql_db, standard):
     table_name = "COURSE" if standard else "NL_CS"
     postgresql_db.execute(JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name])
     postgresql_db.commit()
@@ -669,7 +603,6 @@ def test_cs_postgresql_rejects_a_caller_body_over_the_physical_byte_width(
     with pytest.raises(SchemaMigrationError, match="CourseEx"):
         _import_records(
             postgresql_db,
-            entrypoint,
             [record],
             standard=standard,
             auto_commit=True,
@@ -678,10 +611,9 @@ def test_cs_postgresql_rejects_a_caller_body_over_the_physical_byte_width(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_cs_postgresql_status_zero_discards_opaque_body_before_storage(
-    postgresql_db, standard, entrypoint, auto_commit
+    postgresql_db, standard, auto_commit
 ):
     table_name = "COURSE" if standard else "NL_CS"
     schema_sql = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -691,7 +623,6 @@ def test_cs_postgresql_status_zero_discards_opaque_body_before_storage(
     record["CourseEx"] = "A" * 6801
     _import_records(
         postgresql_db,
-        entrypoint,
         [record],
         standard=standard,
         auto_commit=auto_commit,
@@ -716,7 +647,6 @@ def test_cs_postgresql_live_blank_body_remains_compatible_with_not_null(
     record["CourseEx"] = ""
     _import_records(
         postgresql_db,
-        "data-batch",
         [record],
         standard=standard,
         auto_commit=True,

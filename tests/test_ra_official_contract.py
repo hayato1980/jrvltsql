@@ -14,7 +14,6 @@ from src.database.schema_types import (
 )
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.ra_parser import RAParser
 
 RA_OFFICIAL_LENGTH = 1272
@@ -372,14 +371,12 @@ def test_existing_keyless_standard_race_table_fails_closed_without_data_loss(tmp
         assert database.fetch_one("SELECT COUNT(*) AS count FROM RACE")["count"] == 1
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize(
     ("table_name", "use_jravan_schema"),
     (("NL_RA", False), ("RACE", True)),
 )
 def test_ra_all_business_fields_round_trip_without_null_or_text_loss(
     tmp_path,
-    importer_class,
     table_name,
     use_jravan_schema,
 ) -> None:
@@ -389,7 +386,7 @@ def test_ra_all_business_fields_round_trip_without_null_or_text_loss(
         database.create_table(table_name, schema)
         parsed = RAParser().parse(build_all_field_ra_record()[0])
         assert parsed is not None
-        stats = importer_class(
+        stats = DataImporter(
             database,
             use_jravan_schema=use_jravan_schema,
         ).import_records(iter([parsed]))
@@ -406,14 +403,12 @@ def test_ra_all_business_fields_round_trip_without_null_or_text_loss(
             assert str(row[name]) == parsed[name], name
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize(
     ("table_name", "use_jravan_schema"),
     (("NL_RA", False), ("RACE", True)),
 )
 def test_ra_full_record_round_trips_without_array_loss(
     tmp_path,
-    importer_class,
     table_name,
     use_jravan_schema,
 ) -> None:
@@ -423,7 +418,7 @@ def test_ra_full_record_round_trips_without_array_loss(
         database.create_table(table_name, schema)
         parsed = RAParser().parse(build_ra_record())
         assert parsed is not None
-        stats = importer_class(
+        stats = DataImporter(
             database,
             use_jravan_schema=use_jravan_schema,
         ).import_records(iter([parsed]))

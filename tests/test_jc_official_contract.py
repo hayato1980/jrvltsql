@@ -24,7 +24,6 @@ from src.importer.importer import (
     validate_import_record_header,
     verify_jc_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.jc_parser import JCParser
 from src.parser.status_domain import (
     CURRENT_ACCUMULATED_DATA_KUBUN,
@@ -156,24 +155,12 @@ def sdk_jc_parser_contract() -> list[tuple[str, int, int]]:
     return contract
 
 
-def import_records(database, entrypoint, records, *, standard, auto_commit, batch_size=1000):
-    if entrypoint == "data-batch":
-        result = DataImporter(
-            database, batch_size=batch_size, use_jravan_schema=standard
-        ).import_records(iter(records), auto_commit=auto_commit)
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
-    elif entrypoint == "optimized-batch":
-        result = OptimizedDataImporter(
-            database, batch_size=batch_size, use_jravan_schema=standard
-        ).import_records(iter(records), auto_commit=auto_commit)
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
-    else:
-        importer = DataImporter(database, use_jravan_schema=standard)
-        assert all(
-            importer.import_single_record(record, auto_commit=auto_commit) for record in records
-        )
+def import_records(database, records, *, standard, auto_commit, batch_size=1000):
+    result = DataImporter(
+        database, batch_size=batch_size, use_jravan_schema=standard
+    ).import_records(iter(records), auto_commit=auto_commit)
+    assert result["records_imported"] == len(records)
+    assert result["records_failed"] == 0
     if not auto_commit:
         database.commit()
 
@@ -287,14 +274,13 @@ def test_jc_caller_text_must_fit_the_official_cp932_span(changes: dict) -> None:
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_jc_storage_preserves_times_revises_and_exactly_erases(
-    tmp_path, standard: bool, entrypoint: str, auto_commit: bool
+    tmp_path, standard: bool, auto_commit: bool
 ) -> None:
     table_name = "KISYU_CHANGE" if standard else "NL_JC"
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
-    database = SQLiteDatabase({"path": str(tmp_path / f"{standard}-{entrypoint}-{auto_commit}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"{standard}-{auto_commit}.db")})
     with database:
         database.execute(schema)
         database.commit()
@@ -316,7 +302,6 @@ def test_jc_storage_preserves_times_revises_and_exactly_erases(
         )
         import_records(
             database,
-            entrypoint,
             [first, second, revision, delete],
             standard=standard,
             auto_commit=auto_commit,
@@ -336,7 +321,7 @@ def test_jc_weight_unit_is_kg_only_in_real_storage(tmp_path, standard: bool) -> 
     with database:
         database.execute(schema)
         database.commit()
-        import_records(database, "data-batch", [parsed_jc()], standard=standard, auto_commit=True)
+        import_records(database, [parsed_jc()], standard=standard, auto_commit=True)
         row = database.fetch_one(f"SELECT AtoFutan, MaeFutan FROM {table_name}")
     assert row == (
         {"AtoFutan": "550", "MaeFutan": "560"} if standard else {"AtoFutan": 55.0, "MaeFutan": 56.0}
@@ -540,10 +525,9 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_jc_postgresql_identity_revision_and_historical_exact_erase(
-    postgresql_db, standard: bool, entrypoint: str, auto_commit: bool
+    postgresql_db, standard: bool, auto_commit: bool
 ) -> None:
     table_name = "KISYU_CHANGE" if standard else "NL_JC"
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -563,7 +547,6 @@ def test_jc_postgresql_identity_revision_and_historical_exact_erase(
     )
     import_records(
         postgresql_db,
-        entrypoint,
         [first, second, revision, delete],
         standard=standard,
         auto_commit=auto_commit,

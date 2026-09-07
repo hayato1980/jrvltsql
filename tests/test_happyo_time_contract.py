@@ -12,7 +12,6 @@ from src.database.schema_jravan import JRAVAN_SCHEMAS
 from src.database.sqlite_handler import SQLiteDatabase
 from src.database.table_mappings import JLTSQL_TO_JRAVAN
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.av_parser import AVParser
 from src.parser.cc_parser import CCParser
 from src.parser.jc_parser import JCParser
@@ -175,16 +174,11 @@ def _assert_standard_storage(database, importer_class=DataImporter) -> None:
     assert tuple(weather.values()) == ("1", "1", "1", "0", "0", "0")
 
 
-@pytest.mark.parametrize(
-    "importer_class",
-    [DataImporter, OptimizedDataImporter],
-    ids=["regular", "optimized"],
-)
-def test_sqlite_standard_storage_preserves_official_mdhm_text(tmp_path, importer_class) -> None:
+def test_sqlite_standard_storage_preserves_official_mdhm_text(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "change-records.db")})
     database.connect()
     try:
-        _assert_standard_storage(database, importer_class)
+        _assert_standard_storage(database, DataImporter)
     finally:
         database.disconnect()
 

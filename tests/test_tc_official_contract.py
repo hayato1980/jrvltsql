@@ -22,11 +22,11 @@ from src.database.schema_types import (
 )
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter, validate_import_record_header
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.factory import ParserFactory
 from src.parser.status_domain import CURRENT_ACCUMULATED_DATA_KUBUN
 from src.parser.tc_parser import TCParser
 from src.realtime.updater import RealtimeUpdater
+from tests.importer_support import import_one
 
 FIXTURES = Path(__file__).parent / "fixtures" / "official_layout"
 CONTRACT = json.loads((FIXTURES / "tc_contract_4901.json").read_text(encoding="utf-8"))
@@ -79,19 +79,12 @@ def parsed_tc(**overrides: str) -> dict:
 
 def import_tc_records(
     database,
-    entrypoint: str,
     records: list[dict],
     *,
     standard: bool,
     auto_commit: bool,
 ) -> dict:
-    if entrypoint == "single":
-        importer = DataImporter(database, use_jravan_schema=standard)
-        for record in records:
-            assert importer.import_single_record(record, auto_commit=auto_commit)
-        return importer.get_statistics()
-    importer_class = DataImporter if entrypoint == "data-batch" else OptimizedDataImporter
-    return importer_class(
+    return DataImporter(
         database,
         batch_size=1000,
         use_jravan_schema=standard,
@@ -221,9 +214,7 @@ def test_tc_native_standard_and_realtime_schemas_encode_the_official_identity() 
     ("importer_class", "table_name", "standard"),
     [
         (DataImporter, "NL_TC", False),
-        (OptimizedDataImporter, "NL_TC", False),
         (DataImporter, "HASSOU_JIKOKU_CHANGE", True),
-        (OptimizedDataImporter, "HASSOU_JIKOKU_CHANGE", True),
     ],
 )
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
@@ -246,11 +237,10 @@ def test_tc_provider_revision_replaces_one_official_identity(
     assert rows == [{"HappyoTime": "08181205", "AtoJi": "12", "AtoFun": "20"}]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 @pytest.mark.parametrize("table_name,standard", [("NL_TC", False), ("HASSOU_JIKOKU_CHANGE", True)])
 def test_tc_caller_validation_precedes_coercion_and_mutation(
-    tmp_path, importer_class, auto_commit: bool, table_name: str, standard: bool
+    tmp_path, auto_commit: bool, table_name: str, standard: bool
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"invalid-{table_name}.db")})
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -276,7 +266,7 @@ def test_tc_caller_validation_precedes_coercion_and_mutation(
     with database:
         database.execute(schema)
         database.commit()
-        importer = importer_class(database, use_jravan_schema=standard)
+        importer = DataImporter(database, use_jravan_schema=standard)
         for invalid in invalid_rows:
             with pytest.raises(SchemaMigrationError):
                 importer.import_records(iter([invalid]), auto_commit=auto_commit)
@@ -406,10 +396,9 @@ def test_tc_schema_manager_preflights_before_an_additive_column_change(tmp_path)
         assert safe.fetch_one("SELECT COUNT(*) AS n FROM NL_TC") == {"n": 0}
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("legacy_target", ("primary", "secondary"))
 def test_tc_legacy_standard_alias_stops_dual_migration_before_any_alter(
-    tmp_path, importer_class, legacy_target: str
+    tmp_path, legacy_target: str
 ) -> None:
     race_without_youbi = JRAVAN_SCHEMAS["RACE"].replace(
         "            YoubiCD                        VARCHAR(1)          ,  -- 文字列(1)\n",
@@ -430,7 +419,7 @@ def test_tc_legacy_standard_alias_stops_dual_migration_before_any_alter(
         before_secondary = secondary.fetch_all('PRAGMA table_info("RACE")')
 
         with pytest.raises(SchemaMigrationError, match=r"COMMENT.*HASSOU_JIKOKU_CHANGE"):
-            importer_class(
+            DataImporter(
                 DualDatabase(primary, secondary),
                 use_jravan_schema=True,
             ).import_records(iter([]))
@@ -450,11 +439,11 @@ def test_tc_single_record_uses_the_same_fail_closed_validator(
         database.execute(schema)
         database.commit()
         importer = DataImporter(database, use_jravan_schema=standard)
-        assert importer.import_single_record(parsed_tc(), auto_commit=auto_commit)
+        assert import_one(importer, parsed_tc(), auto_commit=auto_commit)
         invalid = parsed_tc()
         invalid["AtoFun"] = "60"
         with pytest.raises(SchemaMigrationError):
-            importer.import_single_record(invalid, auto_commit=auto_commit)
+            import_one(importer, invalid, auto_commit=auto_commit)
         expected = 1 if auto_commit else 0
         assert database.fetch_one(f"SELECT COUNT(*) AS n FROM {table_name}") == {"n": expected}
 
@@ -527,13 +516,11 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("table_name,standard", [("NL_TC", False), ("HASSOU_JIKOKU_CHANGE", True)])
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_tc_postgresql_all_entrypoints_preserve_provider_revision_order(
     postgresql_db,
     table_name: str,
     standard: bool,
-    entrypoint: str,
     auto_commit: bool,
 ) -> None:
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -543,7 +530,6 @@ def test_tc_postgresql_all_entrypoints_preserve_provider_revision_order(
     revised = parsed_tc(HappyoTime="08181205", AtoJi="12", AtoFun="20")
     stats = import_tc_records(
         postgresql_db,
-        entrypoint,
         [first, revised],
         standard=standard,
         auto_commit=auto_commit,

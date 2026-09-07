@@ -16,7 +16,6 @@ from src.database.schema_types import (
 )
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hn_parser import HNParser
 from src.parser.ys_parser import YSParser
 from tests.fixtures.record_factory import make_hn_record
@@ -261,14 +260,12 @@ def test_ys_schemas_and_metadata_match_the_complete_contract() -> None:
     assert "開催スケジュール" in TABLE_METADATA["NL_YS"]["description"]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize(
     ("table_name", "use_jravan_schema"),
     (("NL_YS", False), ("SCHEDULE", True)),
 )
 def test_ys_round_trips_all_three_guidance_blocks(
     tmp_path,
-    importer_class,
     table_name,
     use_jravan_schema,
 ) -> None:
@@ -278,7 +275,7 @@ def test_ys_round_trips_all_three_guidance_blocks(
         database.create_table(table_name, schema)
         parsed = YSParser().parse(build_ys_record()[0])
         assert parsed is not None
-        stats = importer_class(database, use_jravan_schema=use_jravan_schema).import_records(
+        stats = DataImporter(database, use_jravan_schema=use_jravan_schema).import_records(
             iter([parsed])
         )
         row = database.fetch_one(
@@ -299,14 +296,12 @@ def test_ys_round_trips_all_three_guidance_blocks(
     assert str(row["Jyusyo3TrackCD"]) == "19"
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize(
     ("table_name", "use_jravan_schema"),
     (("NL_YS", False), ("SCHEDULE", True)),
 )
 def test_ys_status_upserts_cancellation_and_exact_deletion(
     tmp_path,
-    importer_class,
     table_name,
     use_jravan_schema,
 ) -> None:
@@ -327,7 +322,7 @@ def test_ys_status_upserts_cancellation_and_exact_deletion(
 
     with database:
         database.create_table(table_name, schema)
-        importer = importer_class(database, use_jravan_schema=use_jravan_schema)
+        importer = DataImporter(database, use_jravan_schema=use_jravan_schema)
         update_stats = importer.import_records(iter([plan, immediate, cancelled]))
         updated = database.fetch_all(
             f"SELECT DataKubun, Jyusyo1Hondai, Jyusyo3Hondai FROM {table_name}"
@@ -349,7 +344,6 @@ def test_ys_status_upserts_cancellation_and_exact_deletion(
     assert rows == [{"DataKubun": "3", "MonthDay": 817, "Jyusyo1Hondai": "OTHER1"}]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize(
     ("invalid_record", "message"),
     (
@@ -363,7 +357,6 @@ def test_ys_status_upserts_cancellation_and_exact_deletion(
 )
 def test_invalid_ys_row_aborts_the_whole_batch_before_mutation(
     tmp_path,
-    importer_class,
     invalid_record,
     message,
 ) -> None:
@@ -378,16 +371,14 @@ def test_invalid_ys_row_aborts_the_whole_batch_before_mutation(
     with database:
         database.create_table("NL_YS", SCHEMAS["NL_YS"])
         with pytest.raises(SchemaMigrationError, match=message):
-            importer_class(database).import_records(iter([valid, invalid]))
+            DataImporter(database).import_records(iter([valid, invalid]))
 
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_YS")["count"] == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_ys_batches_only_consecutive_upserts_around_ordered_deletes(
     tmp_path,
     monkeypatch,
-    importer_class,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "ordered-batches.db")})
     first = YSParser().parse(build_ys_record(guidance_prefix="FIRST")[0])
@@ -411,7 +402,7 @@ def test_ys_batches_only_consecutive_upserts_around_ordered_deletes(
             return original_insert_many(table_name, rows, use_replace=use_replace)
 
         monkeypatch.setattr(database, "insert_many", record_batch)
-        stats = importer_class(database).import_records(
+        stats = DataImporter(database).import_records(
             iter([first, second, delete_first, replacement])
         )
         rows = database.fetch_all("SELECT MonthDay, Jyusyo1Hondai FROM NL_YS ORDER BY MonthDay")
@@ -425,7 +416,6 @@ def test_ys_batches_only_consecutive_upserts_around_ordered_deletes(
     ]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize(
     ("table_name", "use_jravan_schema", "obsolete_schema"),
     (
@@ -435,7 +425,6 @@ def test_ys_batches_only_consecutive_upserts_around_ordered_deletes(
 )
 def test_obsolete_ys_storage_fails_closed_without_data_loss(
     tmp_path,
-    importer_class,
     table_name,
     use_jravan_schema,
     obsolete_schema,
@@ -452,18 +441,16 @@ def test_obsolete_ys_storage_fails_closed_without_data_loss(
         parsed = YSParser().parse(build_ys_record()[0])
         assert parsed is not None
         with pytest.raises(SchemaMigrationError):
-            importer_class(database, use_jravan_schema=use_jravan_schema).import_records(
+            DataImporter(database, use_jravan_schema=use_jravan_schema).import_records(
                 iter([parsed])
             )
 
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"] == 1
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_obsolete_standard_schedule_does_not_block_unrelated_standard_import(
     tmp_path,
     monkeypatch,
-    importer_class,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "unrelated-standard.db")})
     future_schedule_schema = """
@@ -485,7 +472,7 @@ def test_obsolete_standard_schedule_does_not_block_unrelated_standard_import(
         database.commit()
         monkeypatch.setitem(JRAVAN_SCHEMAS, "SCHEDULE", future_schedule_schema)
 
-        stats = importer_class(database, use_jravan_schema=True).import_records(iter([unrelated]))
+        stats = DataImporter(database, use_jravan_schema=True).import_records(iter([unrelated]))
 
         assert stats["records_imported"] == 1
         assert stats["records_failed"] == 0
@@ -495,10 +482,8 @@ def test_obsolete_standard_schedule_does_not_block_unrelated_standard_import(
         }
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_ys_postgresql_native_and_standard_preserve_status_and_deletion(
     postgresql_db,
-    importer_class,
 ) -> None:
     postgresql_db.execute(SCHEMAS["NL_YS"])
     postgresql_db.execute(JRAVAN_SCHEMAS["SCHEDULE"])
@@ -518,8 +503,8 @@ def test_ys_postgresql_native_and_standard_preserve_status_and_deletion(
     ]
     assert all(row is not None for row in rows)
 
-    native = importer_class(postgresql_db).import_records(iter(rows))
-    standard = importer_class(postgresql_db, use_jravan_schema=True).import_records(iter(rows))
+    native = DataImporter(postgresql_db).import_records(iter(rows))
+    standard = DataImporter(postgresql_db, use_jravan_schema=True).import_records(iter(rows))
 
     assert native["records_imported"] == standard["records_imported"] == 4
     assert native["records_failed"] == standard["records_failed"] == 0

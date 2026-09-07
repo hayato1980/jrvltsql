@@ -25,7 +25,6 @@ from src.importer.importer import (
     validate_import_record_header,
     verify_we_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.we_parser import WEParser
 from src.realtime.updater import RealtimeUpdater
 
@@ -100,24 +99,12 @@ def parsed_we(**overrides) -> dict:
     return parsed
 
 
-def import_records(database, entrypoint, records, *, standard, auto_commit):
-    if entrypoint == "data-batch":
-        result = DataImporter(database, batch_size=1, use_jravan_schema=standard).import_records(
-            iter(records), auto_commit=auto_commit
-        )
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
-    elif entrypoint == "optimized-batch":
-        result = OptimizedDataImporter(
-            database, batch_size=1, use_jravan_schema=standard
-        ).import_records(iter(records), auto_commit=auto_commit)
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
-    else:
-        importer = DataImporter(database, use_jravan_schema=standard)
-        assert all(
-            importer.import_single_record(record, auto_commit=auto_commit) for record in records
-        )
+def import_records(database, records, *, standard, auto_commit):
+    result = DataImporter(database, batch_size=1, use_jravan_schema=standard).import_records(
+        iter(records), auto_commit=auto_commit
+    )
+    assert result["records_imported"] == len(records)
+    assert result["records_failed"] == 0
     if not auto_commit:
         database.commit()
 
@@ -135,9 +122,7 @@ def lossless_strict_we_schema(standard: bool) -> tuple[str, str]:
         )
     else:
         schema = schema.replace("JyoCD TEXT NOT NULL", "JyoCD CHAR(2) NOT NULL", 1)
-        schema = schema.replace(
-            "HappyoTime TEXT NOT NULL", "HappyoTime VARCHAR(8) NOT NULL", 1
-        )
+        schema = schema.replace("HappyoTime TEXT NOT NULL", "HappyoTime VARCHAR(8) NOT NULL", 1)
         schema = schema.replace("TenkoState TEXT,", "TenkoState TEXT NOT NULL,", 1)
     return table_name, schema
 
@@ -182,9 +167,7 @@ def test_we_layout_and_all_storage_keys_match_the_pinned_official_sources() -> N
     ]
     assert WE_CONTRACT["record_length"] == 42
     assert tuple(WE_CONTRACT["primary_key"]) == WE_KEY
-    parser_contract = [
-        (field.name, field.start + 1, field.length) for field in WEParser()._fields
-    ]
+    parser_contract = [(field.name, field.start + 1, field.length) for field in WEParser()._fields]
     assert parser_contract == [tuple(field) for field in WE_CONTRACT["fields"]]
     assert parser_contract == sdk_we_parser_contract()
     assert OFFICIAL_MANIFEST["root_records"]["WE"] == {
@@ -269,14 +252,13 @@ def test_we_historical_status_boundary_is_explicit() -> None:
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_we_storage_keeps_distinct_times_and_exact_reimport_is_idempotent(
-    tmp_path, standard: bool, entrypoint: str, auto_commit: bool
+    tmp_path, standard: bool, auto_commit: bool
 ) -> None:
     table_name = "TENKO_BABA" if standard else "NL_WE"
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
-    database = SQLiteDatabase({"path": str(tmp_path / f"{standard}-{entrypoint}-{auto_commit}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"{standard}-{auto_commit}.db")})
     with database:
         database.execute(schema)
         database.commit()
@@ -287,7 +269,6 @@ def test_we_storage_keeps_distinct_times_and_exact_reimport_is_idempotent(
         revision["TenkoState"] = "2"
         import_records(
             database,
-            entrypoint,
             [first, second, revision],
             standard=standard,
             auto_commit=auto_commit,
@@ -304,16 +285,13 @@ def test_we_storage_keeps_distinct_times_and_exact_reimport_is_idempotent(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_we_historical_status_zero_exactly_erases_one_official_key(
-    tmp_path, standard: bool, entrypoint: str, auto_commit: bool
+    tmp_path, standard: bool, auto_commit: bool
 ) -> None:
     table_name = "TENKO_BABA" if standard else "NL_WE"
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
-    database = SQLiteDatabase(
-        {"path": str(tmp_path / f"erase-{standard}-{entrypoint}-{auto_commit}.db")}
-    )
+    database = SQLiteDatabase({"path": str(tmp_path / f"erase-{standard}-{auto_commit}.db")})
     with database:
         database.execute(schema)
         database.commit()
@@ -328,7 +306,6 @@ def test_we_historical_status_zero_exactly_erases_one_official_key(
         delete["AtoTenkoCD"] = "0"
         import_records(
             database,
-            entrypoint,
             [first, second, delete],
             standard=standard,
             auto_commit=auto_commit,
@@ -382,9 +359,7 @@ def test_we_unsafe_schema_is_rejected_before_mutation(tmp_path, defect: str) -> 
     elif defect == "wrong-key-type":
         schema = schema.replace("Year INTEGER NOT NULL", "Year TEXT NOT NULL", 1)
     elif defect == "short-key-text":
-        schema = schema.replace(
-            "HappyoTime TEXT NOT NULL", "HappyoTime VARCHAR(7) NOT NULL", 1
-        )
+        schema = schema.replace("HappyoTime TEXT NOT NULL", "HappyoTime VARCHAR(7) NOT NULL", 1)
     else:
         schema = schema.replace("PRIMARY KEY (", "UNIQUE (HenkoID),\n            PRIMARY KEY (", 1)
     database = SQLiteDatabase({"path": str(tmp_path / "unsafe.db")})
@@ -396,8 +371,7 @@ def test_we_unsafe_schema_is_rejected_before_mutation(tmp_path, defect: str) -> 
         assert database.fetch_one("SELECT COUNT(*) AS n FROM NL_WE") == {"n": 0}
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_first_we_rejection_stops_standard_migration(tmp_path, importer_class) -> None:
+def test_first_we_rejection_stops_standard_migration(tmp_path) -> None:
     race_schema = JRAVAN_SCHEMAS["RACE"].replace(
         "            YoubiCD                        VARCHAR(1)          ,  -- 文字列(1)\n",
         "",
@@ -411,7 +385,7 @@ def test_first_we_rejection_stops_standard_migration(tmp_path, importer_class) -
         invalid = parsed_we()
         invalid["HappyoTime"] = "99999999"
         with pytest.raises(SchemaMigrationError):
-            importer_class(database, use_jravan_schema=True).import_records(iter([invalid]))
+            DataImporter(database, use_jravan_schema=True).import_records(iter([invalid]))
         after = database.fetch_all('PRAGMA table_info("RACE")')
     assert after == before
 
@@ -429,11 +403,8 @@ def test_realtime_we_rejects_caller_malformed_row_before_mutation(tmp_path) -> N
         assert database.fetch_one("SELECT COUNT(*) AS n FROM RT_WE") == {"n": 0}
 
 
-@pytest.mark.parametrize("entrypoint", ("batch", "single"))
-def test_realtime_we_rejects_live_body_alias_conflict_but_keeps_delete_opaque(
-    tmp_path, entrypoint: str
-) -> None:
-    database = SQLiteDatabase({"path": str(tmp_path / f"alias-{entrypoint}.db")})
+def test_realtime_we_rejects_live_body_alias_conflict_but_keeps_delete_opaque(tmp_path) -> None:
+    database = SQLiteDatabase({"path": str(tmp_path / "alias.db")})
     with database:
         database.execute(SCHEMAS["RT_WE"])
         database.commit()
@@ -441,27 +412,18 @@ def test_realtime_we_rejects_live_body_alias_conflict_but_keeps_delete_opaque(
 
         conflict = parsed_we()
         conflict["AtoTenkoCD"] = "2"
-        if entrypoint == "batch":
-            rejected = updater.process_parsed_records_batch([conflict])
-        else:
-            rejected = updater.process_parsed_record(conflict)
+        rejected = updater.process_parsed_records_batch([conflict])
         assert rejected["success"] is False
         assert database.fetch_one("SELECT COUNT(*) AS n FROM RT_WE") == {"n": 0}
 
         consistent = parsed_we()
         consistent["AtoTenkoCD"] = consistent["TenkoState"]
-        if entrypoint == "batch":
-            accepted = updater.process_parsed_records_batch([consistent])
-        else:
-            accepted = updater.process_parsed_record(consistent)
+        accepted = updater.process_parsed_records_batch([consistent])
         assert accepted["success"] is True
 
         delete = parsed_we(data_kubun="0", make_date="20030710", body="1999999")
         delete["AtoTenkoCD"] = "2"
-        if entrypoint == "batch":
-            erased = updater.process_parsed_records_batch([delete])
-        else:
-            erased = updater.process_parsed_record(delete)
+        erased = updater.process_parsed_records_batch([delete])
         assert erased["success"] is True
         assert database.fetch_one("SELECT COUNT(*) AS n FROM RT_WE") == {"n": 0}
 
@@ -568,10 +530,9 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_we_postgresql_identity_update_and_historical_exact_erase(
-    postgresql_db, standard: bool, entrypoint: str, auto_commit: bool
+    postgresql_db, standard: bool, auto_commit: bool
 ) -> None:
     table_name = "TENKO_BABA" if standard else "NL_WE"
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -583,7 +544,6 @@ def test_we_postgresql_identity_update_and_historical_exact_erase(
     revision["TenkoState"] = "2"
     import_records(
         postgresql_db,
-        entrypoint,
         [first, second, revision],
         standard=standard,
         auto_commit=auto_commit,
@@ -600,7 +560,6 @@ def test_we_postgresql_identity_update_and_historical_exact_erase(
     )
     import_records(
         postgresql_db,
-        entrypoint,
         [delete],
         standard=standard,
         auto_commit=auto_commit,
@@ -618,9 +577,7 @@ def test_we_postgresql_rejects_unsafe_identity_schema(postgresql_db, defect: str
     if defect == "wrong-key-type":
         schema = schema.replace("Year INTEGER NOT NULL", "Year TEXT NOT NULL", 1)
     elif defect == "short-key-text":
-        schema = schema.replace(
-            "HappyoTime TEXT NOT NULL", "HappyoTime VARCHAR(7) NOT NULL", 1
-        )
+        schema = schema.replace("HappyoTime TEXT NOT NULL", "HappyoTime VARCHAR(7) NOT NULL", 1)
     elif defect == "extra-unique":
         schema = schema.replace("PRIMARY KEY (", "UNIQUE (HenkoID),\n            PRIMARY KEY (", 1)
     else:

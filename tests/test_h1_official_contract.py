@@ -28,9 +28,9 @@ from src.importer.importer import (
     validate_h1_record,
     verify_h1_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.h1_parser import H1Parser
 from src.realtime.updater import RealtimeUpdater
+from tests.importer_support import import_one
 
 STANDARD_TABLES = (
     "HYOSU",
@@ -91,8 +91,8 @@ def h1_raw(
             start = offset + len(kumi) + 11
             data[start : start + len(ninki)] = ninki
     for index in range(14):
-        data[28799 + index * 11 : 28810 + index * 11] = (
-            f"{total_start + index:011d}".encode("ascii")
+        data[28799 + index * 11 : 28810 + index * 11] = f"{total_start + index:011d}".encode(
+            "ascii"
         )
     data[-2:] = b"\r\n"
     return bytes(data)
@@ -173,11 +173,7 @@ def test_h1_status_nine_accepts_only_the_provider_blank_vote(tmp_path: Path) -> 
         tan_hyo=b" " * H1Parser.VOTE_WIDTH,
         tan_ninki=b"  ",
     )
-    cancelled = next(
-        row
-        for row in rows
-        if row.get("BetType") == "Tansyo"
-    )
+    cancelled = next(row for row in rows if row.get("BetType") == "Tansyo")
     assert cancelled["Kumi"] == "01"
     assert cancelled["Hyo"] == ""
     assert cancelled["Ninki"] == ""
@@ -186,13 +182,16 @@ def test_h1_status_nine_accepts_only_the_provider_blank_vote(tmp_path: Path) -> 
     # Only the official fixed-width initial value (11 ASCII spaces) may
     # become the canonical empty vote.  Other CP932 whitespace must not be
     # collapsed to the same caller-visible value by ``str.strip()``.
-    assert H1Parser().parse(
-        h1_raw(
-            data_kubun="9",
-            tan_hyo=b"\t" * H1Parser.VOTE_WIDTH,
-            tan_ninki=b"  ",
+    assert (
+        H1Parser().parse(
+            h1_raw(
+                data_kubun="9",
+                tan_hyo=b"\t" * H1Parser.VOTE_WIDTH,
+                tan_ninki=b"  ",
+            )
         )
-    ) is None
+        is None
+    )
 
     for live_status in ("2", "4", "5"):
         live = dict(cancelled, DataKubun=live_status)
@@ -209,8 +208,7 @@ def test_h1_status_nine_accepts_only_the_provider_blank_vote(tmp_path: Path) -> 
         stats = DataImporter(database).import_records(iter(rows))
         assert stats["records_failed"] == 0
         assert database.fetch_one(
-            "SELECT DataKubun, Hyo, Ninki FROM NL_H1 "
-            "WHERE BetType = 'Tansyo' AND Kumi = '01'"
+            "SELECT DataKubun, Hyo, Ninki FROM NL_H1 " "WHERE BetType = 'Tansyo' AND Kumi = '01'"
         ) == {"DataKubun": "9", "Hyo": None, "Ninki": ""}
 
 
@@ -267,21 +265,17 @@ def test_h1_official_favourite_markers_survive_storage(
         )
         assert stats["records_failed"] == 0
         if use_standard:
-            assert database.fetch_one("SELECT TanNinki FROM HYOSU_TANPUKU") == {
-                "TanNinki": marker
-            }
+            assert database.fetch_one("SELECT TanNinki FROM HYOSU_TANPUKU") == {"TanNinki": marker}
         else:
-            assert database.fetch_one(
-                "SELECT Ninki FROM NL_H1 WHERE BetType = 'Tansyo'"
-            ) == {"Ninki": marker}
+            assert database.fetch_one("SELECT Ninki FROM NL_H1 WHERE BetType = 'Tansyo'") == {
+                "Ninki": marker
+            }
 
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_h1_batch_erase_is_physical_and_provider_ordered(
     tmp_path: Path,
-    importer_class,
     auto_commit: bool,
     use_standard: bool,
 ) -> None:
@@ -289,11 +283,11 @@ def test_h1_batch_erase_is_physical_and_provider_ordered(
 
     tables = _tables(use_standard)
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"erase-{importer_class.__name__}-{use_standard}-{auto_commit}.db")}
+        {"path": str(tmp_path / f"erase-{DataImporter.__name__}-{use_standard}-{auto_commit}.db")}
     )
     with database:
         _create(database, tables)
-        importer = importer_class(database, batch_size=1, use_jravan_schema=use_standard)
+        importer = DataImporter(database, batch_size=1, use_jravan_schema=use_standard)
         records = [
             *h1_rows(data_kubun="2"),
             *h1_rows(data_kubun="4", race_num=b"12", total_start=2000),
@@ -323,9 +317,9 @@ def test_h1_single_record_erase_is_physical(
         _create(database, tables)
         importer = DataImporter(database, use_jravan_schema=use_standard)
         for row in h1_rows():
-            assert importer.import_single_record(row, auto_commit=auto_commit)
+            assert import_one(importer, row, auto_commit=auto_commit)
         for row in h1_erase():
-            assert importer.import_single_record(row, auto_commit=auto_commit)
+            assert import_one(importer, row, auto_commit=auto_commit)
         for table_name in tables:
             assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {
                 "count": 0
@@ -517,17 +511,15 @@ def test_h1_schema_verifier_rejects_each_unsafe_contract(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("defect", DEFECTS)
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_h1_importer_paths_reject_each_unsafe_contract_before_dml(
     tmp_path: Path,
-    importer_class,
     defect: str,
     use_standard: bool,
 ) -> None:
     tables = _tables(use_standard)
     unsafe_table = tables[0]
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"dml-{importer_class.__name__}-{unsafe_table}-{defect}.db")}
+        {"path": str(tmp_path / f"dml-{DataImporter.__name__}-{unsafe_table}-{defect}.db")}
     )
     with database:
         for table_name in tables:
@@ -536,7 +528,7 @@ def test_h1_importer_paths_reject_each_unsafe_contract_before_dml(
                 _defective_schema(defect, table_name) if table_name == unsafe_table else canonical
             )
         database.commit()
-        importer = importer_class(database, use_jravan_schema=use_standard)
+        importer = DataImporter(database, use_jravan_schema=use_standard)
         with pytest.raises(SchemaMigrationError):
             importer.import_records(iter(h1_rows()))
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {unsafe_table}") == {"count": 0}
@@ -555,7 +547,7 @@ def test_h1_single_record_path_rejects_each_unsafe_contract_before_dml(
         database.commit()
         importer = DataImporter(database)
         with pytest.raises(SchemaMigrationError):
-            importer.import_single_record(h1_row(), auto_commit=auto_commit)
+            import_one(importer, h1_row(), auto_commit=auto_commit)
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_H1") == {"count": 0}
 
 
@@ -660,17 +652,15 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_h1_postgresql_provider_order_and_exact_erase(
     postgresql_db,
-    importer_class,
     use_standard: bool,
 ) -> None:
     tables = _tables(use_standard)
     for table_name in tables:
         postgresql_db.execute(SCHEMAS.get(table_name) or JRAVAN_SCHEMAS[table_name])
     postgresql_db.commit()
-    importer = importer_class(postgresql_db, batch_size=1, use_jravan_schema=use_standard)
+    importer = DataImporter(postgresql_db, batch_size=1, use_jravan_schema=use_standard)
     stats = importer.import_records(
         iter(
             [
@@ -770,9 +760,7 @@ def test_h1_postgresql_standard_family_accepts_only_the_official_key_index(
         pytest.param("Sanrenpuku", "***", id="sanrenpuku-post-sale-cancel"),
     ),
 )
-def test_h1_cancel_markers_fill_the_official_field_width(
-    bet_type: str, marker: str
-) -> None:
+def test_h1_cancel_markers_fill_the_official_field_width(bet_type: str, marker: str) -> None:
     """A cancel marker occupies the whole 人気順 field, which is 2 or 3 wide.
 
     Live JV-Link RACE data carries '***' for the three-character bet types, so
@@ -822,20 +810,16 @@ def test_h1_three_character_cancel_markers_survive_storage(
     tables = _tables(use_standard)
     # '*' is not a portable filename character, so name the file by the marker.
     marker_name = "pre-sale" if marker.startswith("-") else "post-sale"
-    database = SQLiteDatabase(
-        {"path": str(tmp_path / f"wide-{use_standard}-{marker_name}.db")}
-    )
+    database = SQLiteDatabase({"path": str(tmp_path / f"wide-{use_standard}-{marker_name}.db")})
     with database:
         _create(database, tables)
-        stats = DataImporter(database, use_jravan_schema=use_standard).import_records(
-            iter(rows)
-        )
+        stats = DataImporter(database, use_jravan_schema=use_standard).import_records(iter(rows))
         assert stats["records_failed"] == 0
         if use_standard:
             assert database.fetch_one(
                 "SELECT UmarenNinki FROM HYOSU_UMARENWIDE WHERE Kumi = '0102'"
             ) == {"UmarenNinki": marker}
         else:
-            assert database.fetch_one(
-                "SELECT Ninki FROM NL_H1 WHERE BetType = 'Umaren'"
-            ) == {"Ninki": marker}
+            assert database.fetch_one("SELECT Ninki FROM NL_H1 WHERE BetType = 'Umaren'") == {
+                "Ninki": marker
+            }

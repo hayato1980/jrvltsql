@@ -26,9 +26,9 @@ from src.importer.importer import (
     validate_um_record,
     verify_um_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.um_parser import UMParser
 from src.realtime.updater import RealtimeUpdater
+from tests.importer_support import import_one
 from tests.test_um_parser_layout import FIELDS, build_record
 
 KETTO_NUM = "2019900001"
@@ -183,19 +183,17 @@ def test_um_official_blank_spans_remain_empty_provider_values(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_um_batch_erase_is_physical_and_provider_ordered(
     tmp_path: Path,
-    importer_class,
     auto_commit: bool,
     use_standard: bool,
 ) -> None:
     table_name, schema = _table(use_standard)
-    database = SQLiteDatabase({"path": str(tmp_path / f"{importer_class.__name__}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"{DataImporter.__name__}.db")})
     with database:
         database.execute(schema)
         database.commit()
-        importer = importer_class(database, batch_size=1, use_jravan_schema=use_standard)
+        importer = DataImporter(database, batch_size=1, use_jravan_schema=use_standard)
         stats = importer.import_records(
             iter(
                 [
@@ -231,9 +229,7 @@ def test_um_retirement_status_is_a_live_update_not_an_erase(
         database.commit()
         importer = DataImporter(database, use_jravan_schema=use_standard)
         importer.import_records(iter([um_record()]))
-        importer.import_records(
-            iter([um_record(data_kubun="9", DelKubun="1", DelDate="20260810")])
-        )
+        importer.import_records(iter([um_record(data_kubun="9", DelKubun="1", DelDate="20260810")]))
         assert database.fetch_all(f"SELECT DataKubun, DelKubun, DelDate FROM {table_name}") == [
             {"DataKubun": "9", "DelKubun": "1", "DelDate": "20260810"}
         ]
@@ -241,7 +237,7 @@ def test_um_retirement_status_is_a_live_update_not_an_erase(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-def test_um_single_record_erase_is_physical(
+def test_um_erase_is_physical(
     tmp_path: Path,
     auto_commit: bool,
     use_standard: bool,
@@ -252,17 +248,21 @@ def test_um_single_record_erase_is_physical(
         database.execute(schema)
         database.commit()
         importer = DataImporter(database, use_jravan_schema=use_standard)
-        assert importer.import_single_record(um_record(), auto_commit=auto_commit)
-        assert importer.import_single_record(
+        assert import_one(importer, um_record(), auto_commit=auto_commit)
+        assert import_one(
+            importer,
             um_record(data_kubun="2", Bamei="改名馬"),
             auto_commit=auto_commit,
         )
-        assert importer.import_single_record(um_erase(), auto_commit=auto_commit)
+        assert import_one(importer, um_erase(), auto_commit=auto_commit)
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {"count": 0}
         if not auto_commit:
             database.commit()
 
-    assert importer.get_statistics()["records_imported"] == 3
+    # `import_records` counts stored rows, not handled records: the data_kubun="2"
+    # revision is an in-place replace and the erase is a delete, so neither adds to
+    # records_imported. The removed `import_single_record` counted all three.
+    assert importer.get_statistics()["records_imported"] == 1
 
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
@@ -288,9 +288,7 @@ def test_um_same_key_update_replaces_body_and_caller_owned_rollback_holds(
         )
         assert stats["records_imported"] == 1
         database.rollback()
-        assert database.fetch_all(f"SELECT KettoNum FROM {table_name}") == [
-            {"KettoNum": KETTO_NUM}
-        ]
+        assert database.fetch_all(f"SELECT KettoNum FROM {table_name}") == [{"KettoNum": KETTO_NUM}]
 
 
 def _drop_not_null(schema: str, column: str) -> str:
@@ -371,10 +369,8 @@ def test_um_schema_verifier_rejects_each_unsafe_contract(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("defect", DEFECTS)
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_um_importer_paths_reject_each_unsafe_contract_before_dml(
     tmp_path: Path,
-    importer_class,
     defect: str,
     use_standard: bool,
 ) -> None:
@@ -386,7 +382,7 @@ def test_um_importer_paths_reject_each_unsafe_contract_before_dml(
         database.execute(_defective_schema(defect, use_standard))
         database.commit()
         before = database.fetch_all(f'PRAGMA table_xinfo("{table_name}")')
-        importer = importer_class(database, use_jravan_schema=use_standard)
+        importer = DataImporter(database, use_jravan_schema=use_standard)
         with pytest.raises(SchemaMigrationError):
             importer.import_records(iter([deepcopy(um_record())]))
         with pytest.raises(SchemaMigrationError):
@@ -410,9 +406,9 @@ def test_um_single_record_path_rejects_each_unsafe_contract_before_dml(
         before = database.fetch_all('PRAGMA table_xinfo("NL_UM")')
         importer = DataImporter(database)
         with pytest.raises(SchemaMigrationError):
-            importer.import_single_record(um_record(), auto_commit=auto_commit)
+            import_one(importer, um_record(), auto_commit=auto_commit)
         with pytest.raises(SchemaMigrationError):
-            importer.import_single_record(um_erase(), auto_commit=auto_commit)
+            import_one(importer, um_erase(), auto_commit=auto_commit)
         assert database.fetch_all('PRAGMA table_xinfo("NL_UM")') == before
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_UM") == {"count": 0}
 
@@ -485,17 +481,15 @@ def postgresql_db():
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_um_postgresql_provider_order_exact_erase_and_operation_statistics(
     postgresql_db,
-    importer_class,
     auto_commit: bool,
     use_standard: bool,
 ) -> None:
     table_name, schema = _table(use_standard)
     postgresql_db.execute(schema)
     postgresql_db.commit()
-    stats = importer_class(
+    stats = DataImporter(
         postgresql_db,
         batch_size=1000,
         use_jravan_schema=use_standard,

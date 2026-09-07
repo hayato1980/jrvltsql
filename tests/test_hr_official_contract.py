@@ -22,10 +22,10 @@ from src.importer.importer import (
     translate_standard_field_names,
     validate_import_record_header,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hr_parser import HRParser
 from src.parser.status_domain import CURRENT_ACCUMULATED_DATA_KUBUN
 from src.realtime.updater import RealtimeUpdater
+from tests.importer_support import import_one
 from tests.test_hr_parser_full_payouts import build_record
 
 FIXTURES = Path(__file__).parent / "fixtures" / "official_layout"
@@ -77,23 +77,10 @@ def parsed_hr(**changes: str) -> dict:
     return parsed
 
 
-def import_records(
-    database, entrypoint: str, records: list[dict], *, standard: bool, auto_commit: bool
-) -> dict:
-    if entrypoint == "data-batch":
-        result = DataImporter(database, use_jravan_schema=standard).import_records(
-            iter(records), auto_commit=auto_commit
-        )
-    elif entrypoint == "optimized-batch":
-        result = OptimizedDataImporter(database, use_jravan_schema=standard).import_records(
-            iter(records), auto_commit=auto_commit
-        )
-    else:
-        importer = DataImporter(database, use_jravan_schema=standard)
-        assert all(
-            importer.import_single_record(record, auto_commit=auto_commit) for record in records
-        )
-        result = importer.get_statistics()
+def import_records(database, records: list[dict], *, standard: bool, auto_commit: bool) -> dict:
+    result = DataImporter(database, use_jravan_schema=standard).import_records(
+        iter(records), auto_commit=auto_commit
+    )
     if not auto_commit:
         database.commit()
     return result
@@ -176,10 +163,7 @@ def test_hr_layout_status_key_and_all_reserved_repeats_match_official_sources() 
     # storage. Representative-value tests alone missed most HARAI fields in
     # the previous implementation.
     assert set(parsed) == set(get_table_column_types("NL_HR"))
-    assert all(
-        get_table_column_types("NL_HR")[f"Yobi{index}"] == "TEXT"
-        for index in range(1, 10)
-    )
+    assert all(get_table_column_types("NL_HR")[f"Yobi{index}"] == "TEXT" for index in range(1, 10))
     translated = translate_standard_field_names(clean_record_metadata(parsed), "HARAI")
     converted = convert_record_types(translated, "HARAI")
     assert set(converted) == set(get_table_column_types("HARAI"))
@@ -246,10 +230,8 @@ def test_hr_reserved_flag_slots_cannot_be_absent(value: object) -> None:
 
 @pytest.mark.parametrize("value", ("X", ""), ids=("opaque", "blank"))
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 def test_hr_reserved_flag_slots_survive_every_sqlite_import_path(
     tmp_path,
-    entrypoint: str,
     standard: bool,
     value: str,
 ) -> None:
@@ -268,7 +250,6 @@ def test_hr_reserved_flag_slots_survive_every_sqlite_import_path(
         database.commit()
         stats = import_records(
             database,
-            entrypoint,
             [record],
             standard=standard,
             auto_commit=True,
@@ -391,8 +372,8 @@ def test_hr_caller_built_status_nine_stores_only_key_and_state(tmp_path, standar
         database.execute(schema)
         database.commit()
         importer = DataImporter(database, use_jravan_schema=standard)
-        assert importer.import_single_record(parsed_hr()) is True
-        assert importer.import_single_record(key_and_state) is True
+        assert import_one(importer, parsed_hr()) is True
+        assert import_one(importer, key_and_state) is True
         if standard:
             row = database.fetch_one(
                 "SELECT DataKubun, PayFukusyoPay2 AS FukuPay2, "
@@ -451,14 +432,13 @@ def test_hr_storage_preserves_both_sides_of_the_same_length_2004_boundary(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hr_storage_preserves_payouts_provider_order_and_exact_erase(
-    tmp_path, standard: bool, entrypoint: str, auto_commit: bool
+    tmp_path, standard: bool, auto_commit: bool
 ) -> None:
     table_name = "HARAI" if standard else "NL_HR"
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
-    database = SQLiteDatabase({"path": str(tmp_path / f"{standard}-{entrypoint}-{auto_commit}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"{standard}-{auto_commit}.db")})
     with database:
         database.execute(schema)
         database.commit()
@@ -477,7 +457,6 @@ def test_hr_storage_preserves_payouts_provider_order_and_exact_erase(
             )
         result = import_records(
             database,
-            entrypoint,
             records,
             standard=standard,
             auto_commit=auto_commit,
@@ -533,7 +512,6 @@ def test_hr_storage_preserves_payouts_provider_order_and_exact_erase(
         cancellation_record["PayFukusyoPay2"] = "conflicting-opaque-body"
         cancelled = import_records(
             database,
-            entrypoint,
             [cancellation_record],
             standard=standard,
             auto_commit=auto_commit,
@@ -567,7 +545,6 @@ def test_hr_storage_preserves_payouts_provider_order_and_exact_erase(
         erase_record["OpaqueStatus9Body28_717Hex"] = "not-interpreted"
         erased = import_records(
             database,
-            entrypoint,
             [erase_record],
             standard=standard,
             auto_commit=auto_commit,
@@ -659,11 +636,7 @@ def test_hr_unsafe_schema_is_rejected_before_mutation(
         )
     elif defect == "reserved-integer":
         unsafe = unsafe.replace(
-            (
-                "FuseirituFlag6                 VARCHAR(255)"
-                if standard
-                else "FuseirituFlag6 TEXT"
-            ),
+            ("FuseirituFlag6                 VARCHAR(255)" if standard else "FuseirituFlag6 TEXT"),
             "FuseirituFlag6                 INTEGER" if standard else "FuseirituFlag6 INTEGER",
             1,
         )
@@ -752,10 +725,9 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hr_postgresql_provider_order_readback_and_statistics(
-    postgresql_db, standard: bool, entrypoint: str, auto_commit: bool
+    postgresql_db, standard: bool, auto_commit: bool
 ) -> None:
     table_name = "HARAI" if standard else "NL_HR"
     postgresql_db.execute(JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name])
@@ -779,7 +751,6 @@ def test_hr_postgresql_provider_order_readback_and_statistics(
     )
     result = import_records(
         postgresql_db,
-        entrypoint,
         records,
         standard=standard,
         auto_commit=auto_commit,
@@ -852,9 +823,7 @@ def test_hr_postgresql_resolves_a_visible_table_after_an_empty_search_path_schem
             iter([parsed_hr()])
         )
         assert result["records_imported"] == 1
-        assert postgresql_db.fetch_one(
-            f'SELECT COUNT(*) AS "n" FROM {table_name}'
-        ) == {"n": 1}
+        assert postgresql_db.fetch_one(f'SELECT COUNT(*) AS "n" FROM {table_name}') == {"n": 1}
     finally:
         postgresql_db.rollback()
         postgresql_db.execute(f"SET search_path TO {owner}")

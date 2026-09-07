@@ -19,6 +19,7 @@ from src.database.schema import SCHEMAS
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
 from src.parser.rc_parser import RCParser
+from tests.importer_support import import_one
 from tests.test_av_official_contract import parsed_av
 from tests.test_cc_official_contract import parsed_cc
 from tests.test_cs_official_contract import parsed_record as parsed_cs
@@ -91,7 +92,7 @@ def test_single_record_path_rejects_a_drifted_native_schema_before_dml(
         before_indexes = database.fetch_all(f'PRAGMA index_list("{table_name}")')
         importer = DataImporter(database)
         with pytest.raises(SchemaMigrationError, match="UNIQUE"):
-            importer.import_single_record(build_record(), auto_commit=auto_commit)
+            import_one(importer, build_record(), auto_commit=auto_commit)
         assert database.fetch_all(f'PRAGMA index_list("{table_name}")') == before_indexes
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {"count": 0}
         assert importer.get_statistics()["records_imported"] == 0

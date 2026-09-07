@@ -23,7 +23,6 @@ from src.importer.importer import (
     _verify_av_key_not_null_constraints,
     validate_import_record_header,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.av_parser import AVParser
 from src.parser.status_domain import (
     CURRENT_ACCUMULATED_DATA_KUBUN,
@@ -135,26 +134,12 @@ def sdk_av_parser_contract() -> list[tuple[str, int, int]]:
     return contract
 
 
-def import_records(
-    database, entrypoint, records, *, standard, auto_commit, batch_size=1000
-) -> None:
-    if entrypoint == "data-batch":
-        result = DataImporter(
-            database, batch_size=batch_size, use_jravan_schema=standard
-        ).import_records(iter(records), auto_commit=auto_commit)
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
-    elif entrypoint == "optimized-batch":
-        result = OptimizedDataImporter(
-            database, batch_size=batch_size, use_jravan_schema=standard
-        ).import_records(iter(records), auto_commit=auto_commit)
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
-    else:
-        importer = DataImporter(database, use_jravan_schema=standard)
-        assert all(
-            importer.import_single_record(record, auto_commit=auto_commit) for record in records
-        )
+def import_records(database, records, *, standard, auto_commit, batch_size=1000) -> None:
+    result = DataImporter(
+        database, batch_size=batch_size, use_jravan_schema=standard
+    ).import_records(iter(records), auto_commit=auto_commit)
+    assert result["records_imported"] == len(records)
+    assert result["records_failed"] == 0
     if not auto_commit:
         database.commit()
 
@@ -202,9 +187,7 @@ def test_av_preflight_allows_a_missing_non_key_column_to_be_added(
         database.execute(partial_schema)
         database.commit()
         create_all_tables(database)
-        columns = {
-            row["name"] for row in database.fetch_all(f'PRAGMA table_info("{table_name}")')
-        }
+        columns = {row["name"] for row in database.fetch_all(f'PRAGMA table_info("{table_name}")')}
 
     assert "Bamei" in columns
 
@@ -302,14 +285,13 @@ def test_av_historical_erase_has_an_opaque_body_and_an_exact_cutoff() -> None:
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_av_storage_revises_one_identity_and_exactly_erases_old_status_zero(
-    tmp_path, standard: bool, entrypoint: str, auto_commit: bool
+    tmp_path, standard: bool, auto_commit: bool
 ) -> None:
     table_name = "TORIKESI_JYOGAI" if standard else "NL_AV"
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
-    database = SQLiteDatabase({"path": str(tmp_path / f"{standard}-{entrypoint}-{auto_commit}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"{standard}-{auto_commit}.db")})
     with database:
         database.execute(schema)
         database.commit()
@@ -335,7 +317,6 @@ def test_av_storage_revises_one_identity_and_exactly_erases_old_status_zero(
         )
         import_records(
             database,
-            entrypoint,
             [first, revision, survivor],
             standard=standard,
             auto_commit=auto_commit,
@@ -345,7 +326,6 @@ def test_av_storage_revises_one_identity_and_exactly_erases_old_status_zero(
         ) == {"DataKubun": "2", "HappyoTime": "07090710", "JiyuKubun": "003"}
         import_records(
             database,
-            entrypoint,
             [delete],
             standard=standard,
             auto_commit=auto_commit,
@@ -429,10 +409,9 @@ def test_av_malformed_caller_is_rejected_before_mutation(tmp_path) -> None:
         assert database.fetch_one("SELECT COUNT(*) AS n FROM NL_AV") == {"n": 0}
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single-record"))
 @pytest.mark.parametrize("legacy_target", ("primary", "secondary"))
 def test_av_legacy_standard_alias_stops_dual_migration_before_any_alter(
-    tmp_path, legacy_target: str, entrypoint: str
+    tmp_path, legacy_target: str
 ) -> None:
     race_without_youbi = JRAVAN_SCHEMAS["RACE"].replace(
         "            YoubiCD                        VARCHAR(1)          ,  -- 文字列(1)\n",
@@ -454,12 +433,7 @@ def test_av_legacy_standard_alias_stops_dual_migration_before_any_alter(
 
         with pytest.raises(SchemaMigrationError, match=r"AVOIDENCE.*TORIKESI_JYOGAI"):
             dual = DualDatabase(primary, secondary)
-            if entrypoint == "data-batch":
-                DataImporter(dual, use_jravan_schema=True).import_records(iter([]))
-            elif entrypoint == "optimized-batch":
-                OptimizedDataImporter(dual, use_jravan_schema=True).import_records(iter([]))
-            else:
-                DataImporter(dual, use_jravan_schema=True).import_single_record(parsed_av())
+            DataImporter(dual, use_jravan_schema=True).import_records(iter([]))
 
         assert primary.fetch_all('PRAGMA table_info("RACE")') == before_primary
         assert secondary.fetch_all('PRAGMA table_info("RACE")') == before_secondary
@@ -474,7 +448,6 @@ def test_av_canonical_standard_table_takes_precedence_over_legacy_alias(tmp_path
         database.commit()
         import_records(
             database,
-            "data-batch",
             [parsed_av()],
             standard=True,
             auto_commit=True,
@@ -615,14 +588,11 @@ def test_av_postgresql_resolves_a_visible_table_after_an_empty_search_path_schem
     try:
         import_records(
             postgresql_db,
-            "data-batch",
             [parsed_av()],
             standard=standard,
             auto_commit=True,
         )
-        assert postgresql_db.fetch_one(
-            f'SELECT COUNT(*) AS "n" FROM {table_name}'
-        ) == {"n": 1}
+        assert postgresql_db.fetch_one(f'SELECT COUNT(*) AS "n" FROM {table_name}') == {"n": 1}
     finally:
         postgresql_db.rollback()
         postgresql_db.execute(f"SET search_path TO {owner}")
@@ -655,9 +625,7 @@ def test_av_postgresql_rejects_a_nullable_key_in_a_later_search_path_schema(
     try:
         with pytest.raises(SchemaMigrationError, match="Umaban"):
             _verify_av_key_not_null_constraints(postgresql_db, table_name)
-        assert postgresql_db.fetch_one(
-            f'SELECT COUNT(*) AS "n" FROM {table_name}'
-        ) == {"n": 0}
+        assert postgresql_db.fetch_one(f'SELECT COUNT(*) AS "n" FROM {table_name}') == {"n": 0}
     finally:
         postgresql_db.rollback()
         postgresql_db.execute(f"SET search_path TO {owner}")
@@ -666,10 +634,9 @@ def test_av_postgresql_rejects_a_nullable_key_in_a_later_search_path_schema(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_av_postgresql_identity_revision_and_historical_exact_erase(
-    postgresql_db, standard: bool, entrypoint: str, auto_commit: bool
+    postgresql_db, standard: bool, auto_commit: bool
 ) -> None:
     table_name = "TORIKESI_JYOGAI" if standard else "NL_AV"
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -690,7 +657,6 @@ def test_av_postgresql_identity_revision_and_historical_exact_erase(
     )
     import_records(
         postgresql_db,
-        entrypoint,
         [
             first,
             revision,
@@ -711,7 +677,6 @@ def test_av_postgresql_identity_revision_and_historical_exact_erase(
     ) == {"DataKubun": "2", "HappyoTime": "07090710", "JiyuKubun": "003"}
     import_records(
         postgresql_db,
-        entrypoint,
         [delete],
         standard=standard,
         auto_commit=auto_commit,

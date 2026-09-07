@@ -146,7 +146,7 @@ class DatabaseTester:
                     return False
 
                 # レコード読み込みとインポート
-                imported = 0
+                records = []
                 record_types = set()
 
                 for i in range(test_data_count):
@@ -162,11 +162,12 @@ class DatabaseTester:
                         if rec_type:
                             record_types.add(rec_type)
 
-                        # インポート
-                        if importer.import_single_record(record):
-                            imported += 1
+                        records.append(record)
 
                 jv.jv_close()
+
+                # インポート
+                imported = importer.import_records(iter(records))['records_imported']
 
                 self.results['data_imported'] = imported
 

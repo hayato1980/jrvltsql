@@ -19,6 +19,7 @@ from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
 from src.parser.factory import ParserFactory
 from tests.fixtures.record_factory import make_hr_record
+from tests.importer_support import import_one
 
 
 class TestIntegration:
@@ -31,7 +32,7 @@ class TestIntegration:
         Database is created in a temporary file and automatically cleaned up
         after the test completes.
         """
-        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
 
         db = SQLiteDatabase({"path": db_path})
@@ -92,17 +93,18 @@ class TestIntegration:
             test_tables = {
                 "NL_RA": 122,  # Official 1,272-byte race layout plus compatibility aliases
                 "NL_SE": 103,  # Results plus canonical-v2 and provider-raw audit fields
-                "NL_UM": 90,   # Horse master (incl. 項番34-62 着回数/脚質傾向/登録レース数)
-                "NL_KS": 67,   # Official jockey-master header; results are normalized
+                "NL_UM": 90,  # Horse master (incl. 項番34-62 着回数/脚質傾向/登録レース数)
+                "NL_KS": 67,  # Official jockey-master header; results are normalized
                 "NL_HR": 202,  # Official 200 fields plus two opaque compatibility spans
-                "NL_O1": 29,   # Odds table
+                "NL_O1": 29,  # Odds table
             }
 
             for table_name, expected_cols in test_tables.items():
                 columns = temp_db.get_table_info(table_name)
                 actual_cols = len(columns)
-                assert actual_cols == expected_cols, \
-                    f"{table_name}: expected {expected_cols} columns, got {actual_cols}"
+                assert (
+                    actual_cols == expected_cols
+                ), f"{table_name}: expected {expected_cols} columns, got {actual_cols}"
 
     def test_parse_and_import_ra_record(self, temp_db, importer, parser_factory):
         """Test parsing and importing a race details (RA) record.
@@ -138,13 +140,12 @@ class TestIntegration:
             }
 
             # Import record
-            success = importer.import_single_record(parsed_record, auto_commit=True)
+            success = import_one(importer, parsed_record, auto_commit=True)
             assert success is True, "Import should succeed"
 
             # Verify data in database
             row = temp_db.fetch_one(
-                "SELECT * FROM NL_RA WHERE Year = ? AND RaceNum = ?",
-                (2024, 11)
+                "SELECT * FROM NL_RA WHERE Year = ? AND RaceNum = ?", (2024, 11)
             )
 
             assert row is not None, "Record should exist in database"
@@ -175,23 +176,20 @@ class TestIntegration:
                 "Bamei": "テスト馬",
                 "SexCD": "1",
                 "Barei": "03",
-                "Futan": "550",      # Will be converted to 55.0
-                "BaTaijyu": "480",   # Provider kilograms stay 480
-                "Time": "1234",      # Will be converted to 123.4
-                "Odds": "0015",      # Will be converted to 1.5
+                "Futan": "550",  # Will be converted to 55.0
+                "BaTaijyu": "480",  # Provider kilograms stay 480
+                "Time": "1234",  # Will be converted to 123.4
+                "Odds": "0015",  # Will be converted to 1.5
                 "Ninki": "01",
                 "KakuteiJyuni": "01",
             }
 
             # Import record
-            success = importer.import_single_record(parsed_record, auto_commit=True)
+            success = import_one(importer, parsed_record, auto_commit=True)
             assert success is True
 
             # Verify in database
-            row = temp_db.fetch_one(
-                "SELECT * FROM NL_SE WHERE Year = ? AND Umaban = ?",
-                (2024, 1)
-            )
+            row = temp_db.fetch_one("SELECT * FROM NL_SE WHERE Year = ? AND Umaban = ?", (2024, 1))
 
             assert row is not None
             assert row["KettoNum"] == "2024012345"
@@ -225,13 +223,12 @@ class TestIntegration:
                 "Kyori": 2000,
             }
 
-            success = importer.import_single_record(record1, auto_commit=True)
+            success = import_one(importer, record1, auto_commit=True)
             assert success is True
 
             # Verify first record
             row = temp_db.fetch_one(
-                "SELECT * FROM NL_RA WHERE Year = ? AND RaceNum = ?",
-                (2024, 11)
+                "SELECT * FROM NL_RA WHERE Year = ? AND RaceNum = ?", (2024, 11)
             )
             assert row["Hondai"] == "初回データ"
 
@@ -251,13 +248,12 @@ class TestIntegration:
                 "Kyori": 2400,
             }
 
-            success = importer.import_single_record(record2, auto_commit=True)
+            success = import_one(importer, record2, auto_commit=True)
             assert success is True
 
             # Verify record was replaced (not duplicated)
             rows = temp_db.fetch_all(
-                "SELECT * FROM NL_RA WHERE Year = ? AND RaceNum = ?",
-                (2024, 11)
+                "SELECT * FROM NL_RA WHERE Year = ? AND RaceNum = ?", (2024, 11)
             )
             assert len(rows) == 1, "Should have exactly 1 record (not 2)"
             assert rows[0]["Hondai"] == "更新データ", "Record should be updated"
@@ -328,38 +324,42 @@ class TestIntegration:
 
             # Add 5 RA records
             for i in range(1, 6):
-                records.append({
-                    "headRecordSpec": "RA",
-                    "RecordSpec": "RA",
-                    "DataKubun": "1",
-                    "MakeDate": "20240601",
-                    "Year": 2024,
-                    "MonthDay": 601,
-                    "JyoCD": "06",
-                    "Kaiji": 3,
-                    "Nichiji": 8,
-                    "RaceNum": i,
-                    "Hondai": f"レース{i}",
-                })
+                records.append(
+                    {
+                        "headRecordSpec": "RA",
+                        "RecordSpec": "RA",
+                        "DataKubun": "1",
+                        "MakeDate": "20240601",
+                        "Year": 2024,
+                        "MonthDay": 601,
+                        "JyoCD": "06",
+                        "Kaiji": 3,
+                        "Nichiji": 8,
+                        "RaceNum": i,
+                        "Hondai": f"レース{i}",
+                    }
+                )
 
             # Add 10 SE records (2 horses per race)
             for race_num in range(1, 6):
                 for umaban in range(1, 3):
-                    records.append({
-                        "headRecordSpec": "SE",
-                        "RecordSpec": "SE",
-                        "DataKubun": "1",
-                        "MakeDate": "20240601",
-                        "Year": "2024",
-                        "MonthDay": "0601",
-                        "JyoCD": "06",
-                        "Kaiji": "03",
-                        "Nichiji": "08",
-                        "RaceNum": f"{race_num:02d}",
-                        "Umaban": f"{umaban:02d}",
-                        "KettoNum": f"202401{race_num:02d}{umaban:02d}",
-                        "Bamei": f"馬{race_num}-{umaban}",
-                    })
+                    records.append(
+                        {
+                            "headRecordSpec": "SE",
+                            "RecordSpec": "SE",
+                            "DataKubun": "1",
+                            "MakeDate": "20240601",
+                            "Year": "2024",
+                            "MonthDay": "0601",
+                            "JyoCD": "06",
+                            "Kaiji": "03",
+                            "Nichiji": "08",
+                            "RaceNum": f"{race_num:02d}",
+                            "Umaban": f"{umaban:02d}",
+                            "KettoNum": f"202401{race_num:02d}{umaban:02d}",
+                            "Bamei": f"馬{race_num}-{umaban}",
+                        }
+                    )
 
             # Add 5 HR records (refund)
             for i in range(1, 6):
@@ -411,32 +411,29 @@ class TestIntegration:
                 "RecordSpec": "SE",
                 "DataKubun": "1",
                 "MakeDate": "20240601",
-                "Year": "2024",          # STRING -> INTEGER
-                "MonthDay": "0601",      # PROVIDER WIDTH -> INTEGER
+                "Year": "2024",  # STRING -> INTEGER
+                "MonthDay": "0601",  # PROVIDER WIDTH -> INTEGER
                 "JyoCD": "06",
-                "Kaiji": "03",           # PROVIDER WIDTH -> INTEGER
-                "Nichiji": "08",         # PROVIDER WIDTH -> INTEGER
-                "RaceNum": "11",         # STRING -> INTEGER
-                "Umaban": "01",          # PROVIDER WIDTH -> INTEGER
+                "Kaiji": "03",  # PROVIDER WIDTH -> INTEGER
+                "Nichiji": "08",  # PROVIDER WIDTH -> INTEGER
+                "RaceNum": "11",  # STRING -> INTEGER
+                "Umaban": "01",  # PROVIDER WIDTH -> INTEGER
                 "KettoNum": "2024012345",
                 "Bamei": "テスト馬",
-                "Barei": "3",            # STRING -> INTEGER
-                "Futan": "550",          # STRING -> REAL (then /10 = 55.0)
-                "BaTaijyu": "480",       # STRING -> REAL (then /10 = 48.0)
-                "Time": "1234",          # STRING -> REAL (then /10 = 123.4)
-                "Odds": "0015",          # STRING -> REAL (then /10 = 1.5)
-                "Ninki": "1",            # STRING -> INTEGER
-                "KakuteiJyuni": "1",     # STRING -> INTEGER
+                "Barei": "3",  # STRING -> INTEGER
+                "Futan": "550",  # STRING -> REAL (then /10 = 55.0)
+                "BaTaijyu": "480",  # STRING -> REAL (then /10 = 48.0)
+                "Time": "1234",  # STRING -> REAL (then /10 = 123.4)
+                "Odds": "0015",  # STRING -> REAL (then /10 = 1.5)
+                "Ninki": "1",  # STRING -> INTEGER
+                "KakuteiJyuni": "1",  # STRING -> INTEGER
             }
 
-            success = importer.import_single_record(record, auto_commit=True)
+            success = import_one(importer, record, auto_commit=True)
             assert success is True
 
             # Verify conversions
-            row = temp_db.fetch_one(
-                "SELECT * FROM NL_SE WHERE Year = ? AND Umaban = ?",
-                (2024, 1)
-            )
+            row = temp_db.fetch_one("SELECT * FROM NL_SE WHERE Year = ? AND Umaban = ?", (2024, 1))
 
             assert row is not None
             # INTEGER conversions
@@ -528,7 +525,7 @@ class TestIntegration:
             temp_db.execute(
                 """INSERT INTO NL_RA (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, Hondai)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (2024, 601, "06", 3, 8, 11, "テスト1")
+                (2024, 601, "06", 3, 8, 11, "テスト1"),
             )
             temp_db.commit()
 
@@ -536,7 +533,7 @@ class TestIntegration:
             temp_db.execute(
                 """INSERT OR REPLACE INTO NL_RA (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, Hondai)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (2024, 601, "06", 3, 8, 11, "テスト2")
+                (2024, 601, "06", 3, 8, 11, "テスト2"),
             )
             temp_db.commit()
 
@@ -585,7 +582,7 @@ class TestIntegration:
                     "Umaban": "01",
                     "KettoNum": "2024010101",
                     "Bamei": "馬1",
-                }
+                },
             ]
 
             # Import records

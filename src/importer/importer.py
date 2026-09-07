@@ -865,146 +865,146 @@ _UM_BLANK_TEXT_FIELDS = frozenset(
     }
 )
 _UM_NATIVE_LOSSLESS_TEXT_WIDTHS = {
-        "RecordSpec": 2,
-        "DataKubun": 1,
-        "KettoNum": 10,
-        "DelKubun": 1,
-        "RegDate": 8,
-        "DelDate": 8,
-        "Bamei": 36,
-        "BameiKana": 36,
-        "BameiEng": 60,
-        "ZaikyuFlag": 1,
-        "Reserved": 19,
-        "UmaKigoCD": 2,
-        "SexCD": 1,
-        "HinsyuCD": 1,
-        "KeiroCD": 2,
-        "TozaiCD": 1,
-        "ChokyosiCode": 5,
-        "ChokyosiRyakusyo": 8,
-        "Syotai": 20,
-        "BreederCode": 8,
-        "BreederName": 72,
-        "SanchiName": 20,
-        "BanusiCode": 6,
-        "BanusiName": 64,
-        "TorokuRaceSu": 3,
-        "MakeDate": 8,
-        "Ketto3InfoHansyokuNum1": 10,
-        "Ketto3InfoBamei1": 36,
-        "Ketto3InfoHansyokuNum2": 10,
-        "Ketto3InfoBamei2": 36,
-        "Ketto3InfoHansyokuNum3": 10,
-        "Ketto3InfoBamei3": 36,
-        "Ketto3InfoHansyokuNum4": 10,
-        "Ketto3InfoBamei4": 36,
-        "Ketto3InfoHansyokuNum5": 10,
-        "Ketto3InfoBamei5": 36,
-        "Ketto3InfoHansyokuNum6": 10,
-        "Ketto3InfoBamei6": 36,
-        "Ketto3InfoHansyokuNum7": 10,
-        "Ketto3InfoBamei7": 36,
-        "Ketto3InfoHansyokuNum8": 10,
-        "Ketto3InfoBamei8": 36,
-        "Ketto3InfoHansyokuNum9": 10,
-        "Ketto3InfoBamei9": 36,
-        "Ketto3InfoHansyokuNum10": 10,
-        "Ketto3InfoBamei10": 36,
-        "Ketto3InfoHansyokuNum11": 10,
-        "Ketto3InfoBamei11": 36,
-        "Ketto3InfoHansyokuNum12": 10,
-        "Ketto3InfoBamei12": 36,
-        "Ketto3InfoHansyokuNum13": 10,
-        "Ketto3InfoBamei13": 36,
-        "Ketto3InfoHansyokuNum14": 10,
-        "Ketto3InfoBamei14": 36,
-        "SogoChaku": 18,
-        "ChuoGokeiChaku": 18,
-        "SibaChokuChaku": 18,
-        "SibaMigiChaku": 18,
-        "SibaHidariChaku": 18,
-        "DirtChokuChaku": 18,
-        "DirtMigiChaku": 18,
-        "DirtHidariChaku": 18,
-        "SyogaiChaku": 18,
-        "SibaRyoChaku": 18,
-        "SibaYayaomoChaku": 18,
-        "SibaOmoChaku": 18,
-        "SibaFuryoChaku": 18,
-        "DirtRyoChaku": 18,
-        "DirtYayaomoChaku": 18,
-        "DirtOmoChaku": 18,
-        "DirtFuryoChaku": 18,
-        "SyogaiRyoChaku": 18,
-        "SyogaiYayaomoChaku": 18,
-        "SyogaiOmoChaku": 18,
-        "SyogaiFuryoChaku": 18,
-        "SibaShortChaku": 18,
-        "SibaMiddleChaku": 18,
-        "SibaLongChaku": 18,
-        "DirtShortChaku": 18,
-        "DirtMiddleChaku": 18,
-        "DirtLongChaku": 18,
+    "RecordSpec": 2,
+    "DataKubun": 1,
+    "KettoNum": 10,
+    "DelKubun": 1,
+    "RegDate": 8,
+    "DelDate": 8,
+    "Bamei": 36,
+    "BameiKana": 36,
+    "BameiEng": 60,
+    "ZaikyuFlag": 1,
+    "Reserved": 19,
+    "UmaKigoCD": 2,
+    "SexCD": 1,
+    "HinsyuCD": 1,
+    "KeiroCD": 2,
+    "TozaiCD": 1,
+    "ChokyosiCode": 5,
+    "ChokyosiRyakusyo": 8,
+    "Syotai": 20,
+    "BreederCode": 8,
+    "BreederName": 72,
+    "SanchiName": 20,
+    "BanusiCode": 6,
+    "BanusiName": 64,
+    "TorokuRaceSu": 3,
+    "MakeDate": 8,
+    "Ketto3InfoHansyokuNum1": 10,
+    "Ketto3InfoBamei1": 36,
+    "Ketto3InfoHansyokuNum2": 10,
+    "Ketto3InfoBamei2": 36,
+    "Ketto3InfoHansyokuNum3": 10,
+    "Ketto3InfoBamei3": 36,
+    "Ketto3InfoHansyokuNum4": 10,
+    "Ketto3InfoBamei4": 36,
+    "Ketto3InfoHansyokuNum5": 10,
+    "Ketto3InfoBamei5": 36,
+    "Ketto3InfoHansyokuNum6": 10,
+    "Ketto3InfoBamei6": 36,
+    "Ketto3InfoHansyokuNum7": 10,
+    "Ketto3InfoBamei7": 36,
+    "Ketto3InfoHansyokuNum8": 10,
+    "Ketto3InfoBamei8": 36,
+    "Ketto3InfoHansyokuNum9": 10,
+    "Ketto3InfoBamei9": 36,
+    "Ketto3InfoHansyokuNum10": 10,
+    "Ketto3InfoBamei10": 36,
+    "Ketto3InfoHansyokuNum11": 10,
+    "Ketto3InfoBamei11": 36,
+    "Ketto3InfoHansyokuNum12": 10,
+    "Ketto3InfoBamei12": 36,
+    "Ketto3InfoHansyokuNum13": 10,
+    "Ketto3InfoBamei13": 36,
+    "Ketto3InfoHansyokuNum14": 10,
+    "Ketto3InfoBamei14": 36,
+    "SogoChaku": 18,
+    "ChuoGokeiChaku": 18,
+    "SibaChokuChaku": 18,
+    "SibaMigiChaku": 18,
+    "SibaHidariChaku": 18,
+    "DirtChokuChaku": 18,
+    "DirtMigiChaku": 18,
+    "DirtHidariChaku": 18,
+    "SyogaiChaku": 18,
+    "SibaRyoChaku": 18,
+    "SibaYayaomoChaku": 18,
+    "SibaOmoChaku": 18,
+    "SibaFuryoChaku": 18,
+    "DirtRyoChaku": 18,
+    "DirtYayaomoChaku": 18,
+    "DirtOmoChaku": 18,
+    "DirtFuryoChaku": 18,
+    "SyogaiRyoChaku": 18,
+    "SyogaiYayaomoChaku": 18,
+    "SyogaiOmoChaku": 18,
+    "SyogaiFuryoChaku": 18,
+    "SibaShortChaku": 18,
+    "SibaMiddleChaku": 18,
+    "SibaLongChaku": 18,
+    "DirtShortChaku": 18,
+    "DirtMiddleChaku": 18,
+    "DirtLongChaku": 18,
     "KyakusituKeiko": 12,
     "Reserved_1608": 2,
 }
 # 標準名 UMA は着回数と脚質傾向を 3 桁ずつの列へ展開し、``MakeDate`` を DATE
 # 型で持つため、無損失幅の対象はこの二つを除いた共通項目になる。
 _UM_STANDARD_LOSSLESS_TEXT_WIDTHS = {
-        "RecordSpec": 2,
-        "DataKubun": 1,
-        "KettoNum": 10,
-        "DelKubun": 1,
-        "RegDate": 8,
-        "DelDate": 8,
-        "Bamei": 36,
-        "BameiKana": 36,
-        "BameiEng": 60,
-        "ZaikyuFlag": 1,
-        "Reserved": 19,
-        "UmaKigoCD": 2,
-        "SexCD": 1,
-        "HinsyuCD": 1,
-        "KeiroCD": 2,
-        "TozaiCD": 1,
-        "ChokyosiCode": 5,
-        "ChokyosiRyakusyo": 8,
-        "Syotai": 20,
-        "BreederCode": 8,
-        "BreederName": 72,
-        "SanchiName": 20,
-        "BanusiCode": 6,
-        "BanusiName": 64,
-        "TorokuRaceSu": 3,
-        "Ketto3InfoHansyokuNum1": 10,
-        "Ketto3InfoBamei1": 36,
-        "Ketto3InfoHansyokuNum2": 10,
-        "Ketto3InfoBamei2": 36,
-        "Ketto3InfoHansyokuNum3": 10,
-        "Ketto3InfoBamei3": 36,
-        "Ketto3InfoHansyokuNum4": 10,
-        "Ketto3InfoBamei4": 36,
-        "Ketto3InfoHansyokuNum5": 10,
-        "Ketto3InfoBamei5": 36,
-        "Ketto3InfoHansyokuNum6": 10,
-        "Ketto3InfoBamei6": 36,
-        "Ketto3InfoHansyokuNum7": 10,
-        "Ketto3InfoBamei7": 36,
-        "Ketto3InfoHansyokuNum8": 10,
-        "Ketto3InfoBamei8": 36,
-        "Ketto3InfoHansyokuNum9": 10,
-        "Ketto3InfoBamei9": 36,
-        "Ketto3InfoHansyokuNum10": 10,
-        "Ketto3InfoBamei10": 36,
-        "Ketto3InfoHansyokuNum11": 10,
-        "Ketto3InfoBamei11": 36,
-        "Ketto3InfoHansyokuNum12": 10,
-        "Ketto3InfoBamei12": 36,
-        "Ketto3InfoHansyokuNum13": 10,
-        "Ketto3InfoBamei13": 36,
-        "Ketto3InfoHansyokuNum14": 10,
-        "Ketto3InfoBamei14": 36,
+    "RecordSpec": 2,
+    "DataKubun": 1,
+    "KettoNum": 10,
+    "DelKubun": 1,
+    "RegDate": 8,
+    "DelDate": 8,
+    "Bamei": 36,
+    "BameiKana": 36,
+    "BameiEng": 60,
+    "ZaikyuFlag": 1,
+    "Reserved": 19,
+    "UmaKigoCD": 2,
+    "SexCD": 1,
+    "HinsyuCD": 1,
+    "KeiroCD": 2,
+    "TozaiCD": 1,
+    "ChokyosiCode": 5,
+    "ChokyosiRyakusyo": 8,
+    "Syotai": 20,
+    "BreederCode": 8,
+    "BreederName": 72,
+    "SanchiName": 20,
+    "BanusiCode": 6,
+    "BanusiName": 64,
+    "TorokuRaceSu": 3,
+    "Ketto3InfoHansyokuNum1": 10,
+    "Ketto3InfoBamei1": 36,
+    "Ketto3InfoHansyokuNum2": 10,
+    "Ketto3InfoBamei2": 36,
+    "Ketto3InfoHansyokuNum3": 10,
+    "Ketto3InfoBamei3": 36,
+    "Ketto3InfoHansyokuNum4": 10,
+    "Ketto3InfoBamei4": 36,
+    "Ketto3InfoHansyokuNum5": 10,
+    "Ketto3InfoBamei5": 36,
+    "Ketto3InfoHansyokuNum6": 10,
+    "Ketto3InfoBamei6": 36,
+    "Ketto3InfoHansyokuNum7": 10,
+    "Ketto3InfoBamei7": 36,
+    "Ketto3InfoHansyokuNum8": 10,
+    "Ketto3InfoBamei8": 36,
+    "Ketto3InfoHansyokuNum9": 10,
+    "Ketto3InfoBamei9": 36,
+    "Ketto3InfoHansyokuNum10": 10,
+    "Ketto3InfoBamei10": 36,
+    "Ketto3InfoHansyokuNum11": 10,
+    "Ketto3InfoBamei11": 36,
+    "Ketto3InfoHansyokuNum12": 10,
+    "Ketto3InfoBamei12": 36,
+    "Ketto3InfoHansyokuNum13": 10,
+    "Ketto3InfoBamei13": 36,
+    "Ketto3InfoHansyokuNum14": 10,
+    "Ketto3InfoBamei14": 36,
 }
 _UM_LOSSLESS_TEXT_WIDTHS = {
     "NL_UM": _UM_NATIVE_LOSSLESS_TEXT_WIDTHS,
@@ -1354,9 +1354,7 @@ def _verify_strict_storage_column_contract(
             continue
         actual_row = actual[column]
         actual_type = str(actual_row.get("type") or "")
-        actual_not_null = bool(
-            actual_row.get("not_null", actual_row.get("notnull", 0))
-        )
+        actual_not_null = bool(actual_row.get("not_null", actual_row.get("notnull", 0)))
         generated = str(actual_row.get("generated") or "")
         identity = str(actual_row.get("identity") or "")
         hidden = int(actual_row.get("hidden") or 0)
@@ -1592,8 +1590,7 @@ def _verify_av_key_not_null_constraints(database: BaseDatabase, table_name: str)
             (table_name,),
         )
         not_null = {
-            str(row.get("column_name") or "").lower(): bool(row.get("not_null"))
-            for row in rows
+            str(row.get("column_name") or "").lower(): bool(row.get("not_null")) for row in rows
         }
     else:
         raise SchemaMigrationError(
@@ -1855,9 +1852,7 @@ def _verify_hs_current_layout_rows(
             f"HS storage {table_name} is missing required current columns "
             f"{unapproved_missing}; backup, rebuild, and reimport"
         )
-    row_count = int(
-        database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"]
-    )
+    row_count = int(database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"])
     if row_count and missing:
         raise SchemaMigrationError(
             f"HS storage {table_name} has existing rows without the complete current "
@@ -1946,8 +1941,7 @@ def _verify_hs_layout_marker_constraint(
                 )
             return
         normalized = {
-            re.sub(r'[\s"()]+', "", str(row.get("definition") or "").lower())
-            for row in rows
+            re.sub(r'[\s"()]+', "", str(row.get("definition") or "").lower()) for row in rows
         }
         accepted = {
             "checkcurrentlayoutversion=200",
@@ -1960,9 +1954,7 @@ def _verify_hs_layout_marker_constraint(
                 "CurrentLayoutVersion = 200 CHECK"
             )
         return
-    raise SchemaMigrationError(
-        f"HS layout marker cannot be verified for database type {db_type!r}"
-    )
+    raise SchemaMigrationError(f"HS layout marker cannot be verified for database type {db_type!r}")
 
 
 def _verify_hs_no_unapproved_constraints(
@@ -1996,13 +1988,10 @@ def _verify_hs_no_unapproved_constraints(
         )
         if unexpected:
             raise SchemaMigrationError(
-                f"HS storage {table_name} has unsupported additional constraints: "
-                f"{unexpected}"
+                f"HS storage {table_name} has unsupported additional constraints: " f"{unexpected}"
             )
         return
-    raise SchemaMigrationError(
-        f"HS constraints cannot be verified for database type {db_type!r}"
-    )
+    raise SchemaMigrationError(f"HS constraints cannot be verified for database type {db_type!r}")
 
 
 def _snapshot_validation_transactions(
@@ -2153,9 +2142,7 @@ def _verify_hc_no_unapproved_constraints(
         )
         definition = str((row or {}).get("sql") or "")
         if re.search(r"\bCHECK\s*\(", definition, flags=re.IGNORECASE):
-            raise SchemaMigrationError(
-                f"HC storage {table_name} has unsupported CHECK constraints"
-            )
+            raise SchemaMigrationError(f"HC storage {table_name} has unsupported CHECK constraints")
         return
     if db_type == "postgresql":
         unexpected = database.fetch_all(
@@ -2166,13 +2153,10 @@ def _verify_hc_no_unapproved_constraints(
         )
         if unexpected:
             raise SchemaMigrationError(
-                f"HC storage {table_name} has unsupported additional constraints: "
-                f"{unexpected}"
+                f"HC storage {table_name} has unsupported additional constraints: " f"{unexpected}"
             )
         return
-    raise SchemaMigrationError(
-        f"HC constraints cannot be verified for database type {db_type!r}"
-    )
+    raise SchemaMigrationError(f"HC constraints cannot be verified for database type {db_type!r}")
 
 
 def verify_hc_storage_schema(database: BaseDatabase, table_name: str) -> bool:
@@ -2533,9 +2517,7 @@ def _verify_tc_no_unapproved_constraints(
             _sqlite_schema_code(definition),
             flags=re.IGNORECASE,
         ):
-            raise SchemaMigrationError(
-                f"TC storage {table_name} has unsupported CHECK constraints"
-            )
+            raise SchemaMigrationError(f"TC storage {table_name} has unsupported CHECK constraints")
         return
     if db_type == "postgresql":
         unexpected = database.fetch_all(
@@ -2546,13 +2528,10 @@ def _verify_tc_no_unapproved_constraints(
         )
         if unexpected:
             raise SchemaMigrationError(
-                f"TC storage {table_name} has unsupported additional constraints: "
-                f"{unexpected}"
+                f"TC storage {table_name} has unsupported additional constraints: " f"{unexpected}"
             )
         return
-    raise SchemaMigrationError(
-        f"TC constraints cannot be verified for database type {db_type!r}"
-    )
+    raise SchemaMigrationError(f"TC constraints cannot be verified for database type {db_type!r}")
 
 
 def verify_tc_storage_schema(database: BaseDatabase, table_name: str) -> bool:
@@ -2641,9 +2620,7 @@ def _verify_cc_no_unapproved_constraints(
             _sqlite_schema_code(definition),
             flags=re.IGNORECASE,
         ):
-            raise SchemaMigrationError(
-                f"CC storage {table_name} has unsupported CHECK constraints"
-            )
+            raise SchemaMigrationError(f"CC storage {table_name} has unsupported CHECK constraints")
         return
     if db_type == "postgresql":
         unexpected = database.fetch_all(
@@ -2654,13 +2631,10 @@ def _verify_cc_no_unapproved_constraints(
         )
         if unexpected:
             raise SchemaMigrationError(
-                f"CC storage {table_name} has unsupported additional constraints: "
-                f"{unexpected}"
+                f"CC storage {table_name} has unsupported additional constraints: " f"{unexpected}"
             )
         return
-    raise SchemaMigrationError(
-        f"CC constraints cannot be verified for database type {db_type!r}"
-    )
+    raise SchemaMigrationError(f"CC constraints cannot be verified for database type {db_type!r}")
 
 
 def verify_cc_storage_schema(database: BaseDatabase, table_name: str) -> bool:
@@ -3469,9 +3443,7 @@ def _verify_odds_no_unapproved_constraints(
                 f"odds storage {table_name} has unsupported CHECK/FOREIGN KEY constraints"
             )
         return
-    raise SchemaMigrationError(
-        f"odds constraints cannot be verified for database type {db_type!r}"
-    )
+    raise SchemaMigrationError(f"odds constraints cannot be verified for database type {db_type!r}")
 
 
 def _odds_official_key_columns(table_name: str) -> tuple:
@@ -3555,9 +3527,7 @@ def _verify_odds_standard_replacement_key(
                 f"indexes: {sorted(unexpected)}"
             )
         return
-    raise SchemaMigrationError(
-        f"odds constraints cannot be verified for database type {db_type!r}"
-    )
+    raise SchemaMigrationError(f"odds constraints cannot be verified for database type {db_type!r}")
 
 
 def _odds_native_snapshot_rows(record: dict, table_name: str) -> list[dict] | None:
@@ -6318,9 +6288,7 @@ def _delete_official_record(database: BaseDatabase, record: dict, table_name: st
     converted = convert_record_types(key_record, table_name)
     # Some legacy standard schemas omit type metadata for an otherwise valid
     # race key. Preserve the raw key only for those columns.
-    key_values = {
-        column: converted.get(column, key_record.get(column)) for column in key_columns
-    }
+    key_values = {column: converted.get(column, key_record.get(column)) for column in key_columns}
     missing = [column for column, value in key_values.items() if value in (None, "")]
     if missing:
         raise ValueError(f"{record_type} record erase has incomplete key: {missing}")
@@ -8033,7 +8001,6 @@ class DataImporter:
         self._records_imported = 0
         self._records_failed = 0
         self._batches_processed = 0
-        self._single_record_stats_checkpoint: Optional[tuple[int, int, int, int]] = None
         self._jravan_tables_ready = not use_jravan_schema
         self._verified_mining_native_tables: set[str] = set()
         self._verified_hy_tables: set[str] = set()
@@ -9035,484 +9002,6 @@ class DataImporter:
             self._records_imported += success_count
             self._records_failed += fail_count
 
-    def _begin_single_record_transaction(self, *, auto_commit: bool) -> None:
-        """Start or join one single-record transaction and checkpoint counters."""
-        if auto_commit:
-            if not self.database.is_transaction_active():
-                self._single_record_stats_checkpoint = None
-            return
-        if not self.database.is_transaction_active():
-            self.database.begin_transaction()
-        generation = self.database.get_transaction_generation()
-        if generation is None:
-            raise DatabaseError("Database did not expose an active transaction generation")
-        checkpoint_generation = (
-            self._single_record_stats_checkpoint[0]
-            if self._single_record_stats_checkpoint is not None
-            else None
-        )
-        if checkpoint_generation != generation:
-            # The transaction may have been opened outside this importer. Its
-            # generation distinguishes that new caller transaction from a
-            # previously committed sequence whose checkpoint is still cached.
-            self._single_record_stats_checkpoint = (
-                generation,
-                self._records_imported,
-                self._records_failed,
-                self._batches_processed,
-            )
-
-    def _rollback_single_record_transaction(self, *, context: str) -> None:
-        """Rollback a failed single-record sequence and restore its counters."""
-        rollback_failed_import(self.database, context=context)
-        self._restore_single_record_statistics()
-
-    def _restore_single_record_statistics(self) -> None:
-        """Restore counters to the start of the current single-record sequence."""
-        if self._single_record_stats_checkpoint is not None:
-            (
-                _,
-                self._records_imported,
-                self._records_failed,
-                self._batches_processed,
-            ) = self._single_record_stats_checkpoint
-            self._single_record_stats_checkpoint = None
-
-    def import_single_record(
-        self,
-        record: dict,
-        auto_commit: bool = True,
-    ) -> bool:
-        """Import single record.
-
-        Args:
-            record: Parsed record dictionary
-            auto_commit: Whether to commit after insertion
-
-        Returns:
-            True if successful, False otherwise
-        """
-        # Header/domain validation must precede transaction ownership and
-        # standard-schema migration. It cannot be rolled back after an ALTER.
-        try:
-            record_type, _ = validate_import_record_header(record)
-            table_name = self._get_table_name(record_type)
-            if table_name is not None:
-                validate_se_record(record, table_name)
-                validate_we_record(record, table_name)
-                validate_av_record(record, table_name)
-                validate_hr_record(record, table_name)
-                validate_hs_record(record, table_name)
-                validate_hc_record(record, table_name)
-                validate_hn_record(record, table_name)
-                validate_sk_record(record, table_name)
-                validate_jc_record(record, table_name)
-        except SchemaMigrationError:
-            if not auto_commit:
-                checkpoint_generation = (
-                    self._single_record_stats_checkpoint[0]
-                    if self._single_record_stats_checkpoint is not None
-                    else None
-                )
-                active_generation = self.database.get_transaction_generation()
-                checkpoint_is_active = (
-                    checkpoint_generation is not None and checkpoint_generation == active_generation
-                )
-                try:
-                    pending_transaction = inspect_pending_transaction_or_invalidate(
-                        self.database,
-                        context="header failure in caller-owned single-record import",
-                    )
-                except TransactionRecoveryError:
-                    if not self.database.is_connected():
-                        if checkpoint_is_active:
-                            self._restore_single_record_statistics()
-                        else:
-                            self._single_record_stats_checkpoint = None
-                    raise
-                if pending_transaction:
-                    rollback_failed_import(
-                        self.database,
-                        context="header failure in caller-owned single-record import",
-                    )
-                    if checkpoint_is_active:
-                        self._restore_single_record_statistics()
-                    else:
-                        self._single_record_stats_checkpoint = None
-                elif not checkpoint_is_active:
-                    self._single_record_stats_checkpoint = None
-            raise
-        self._begin_single_record_transaction(auto_commit=auto_commit)
-        try:
-            self._ensure_jravan_tables_ready(auto_commit=auto_commit)
-        except Exception:
-            if not auto_commit:
-                self._rollback_single_record_transaction(
-                    context="standard-schema preflight in single-record import",
-                )
-            raise
-
-        if not table_name:
-            logger.warning(f"Unknown record type: {record_type}")
-            if not auto_commit:
-                self._rollback_single_record_transaction(
-                    context="unknown record type in single-record import",
-                )
-            return False
-
-        try:
-            if table_name not in self._verified_hy_tables:
-                if verify_hy_storage_schema(self.database, table_name):
-                    self._verified_hy_tables.add(table_name)
-            if table_name not in self._verified_bt_tables:
-                if verify_bt_storage_schema(self.database, table_name):
-                    self._verified_bt_tables.add(table_name)
-            if table_name not in self._verified_se_tables:
-                if verify_se_storage_schema(self.database, table_name):
-                    self._verified_se_tables.add(table_name)
-            validate_se_record(record, table_name)
-            if table_name not in self._verified_we_tables:
-                if verify_we_storage_schema(self.database, table_name):
-                    self._verified_we_tables.add(table_name)
-            validate_we_record(record, table_name)
-            if table_name not in self._verified_av_tables:
-                if verify_av_storage_schema(self.database, table_name):
-                    self._verified_av_tables.add(table_name)
-            validate_av_record(record, table_name)
-            if table_name not in self._verified_hr_tables:
-                if verify_hr_storage_schema(self.database, table_name):
-                    self._verified_hr_tables.add(table_name)
-            validate_hr_record(record, table_name)
-            if table_name not in self._verified_hs_tables:
-                if verify_hs_storage_schema(self.database, table_name):
-                    self._verified_hs_tables.add(table_name)
-            validate_hs_record(record, table_name)
-            if table_name not in self._verified_hc_tables:
-                if verify_hc_storage_schema(self.database, table_name):
-                    self._verified_hc_tables.add(table_name)
-            validate_hc_record(record, table_name)
-            if table_name not in self._verified_hn_tables:
-                if verify_hn_storage_schema(self.database, table_name):
-                    self._verified_hn_tables.add(table_name)
-            validate_hn_record(record, table_name)
-            if table_name not in self._verified_sk_tables:
-                if verify_sk_storage_schema(self.database, table_name):
-                    self._verified_sk_tables.add(table_name)
-            validate_sk_record(record, table_name)
-            if table_name not in self._verified_tc_tables:
-                if verify_tc_storage_schema(self.database, table_name):
-                    self._verified_tc_tables.add(table_name)
-            validate_tc_record(record, table_name)
-            if table_name not in self._verified_cc_tables:
-                if verify_cc_storage_schema(self.database, table_name):
-                    self._verified_cc_tables.add(table_name)
-            validate_cc_record(record, table_name)
-            if table_name not in self._verified_jc_tables:
-                if verify_jc_storage_schema(self.database, table_name):
-                    self._verified_jc_tables.add(table_name)
-            validate_jc_record(record, table_name)
-            if table_name not in self._verified_cs_tables:
-                if verify_cs_storage_schema(self.database, table_name):
-                    self._verified_cs_tables.add(table_name)
-            if table_name not in self._verified_um_tables:
-                if verify_um_storage_schema(self.database, table_name):
-                    self._verified_um_tables.add(table_name)
-            validate_um_record(record, table_name)
-            if table_name not in self._verified_h1_tables:
-                if verify_h1_storage_schema(self.database, table_name):
-                    self._verified_h1_tables.add(table_name)
-            validate_h1_record(record, table_name)
-            if table_name not in self._verified_h6_tables:
-                if verify_h6_storage_schema(self.database, table_name):
-                    self._verified_h6_tables.add(table_name)
-            validate_h6_record(record, table_name)
-            if table_name not in self._verified_odds_tables:
-                if verify_odds_storage_schema(self.database, table_name):
-                    self._verified_odds_tables.add(table_name)
-            validate_odds_record(record, table_name)
-            if table_name not in self._verified_jg_tables:
-                if verify_jg_storage_schema(self.database, table_name):
-                    self._verified_jg_tables.add(table_name)
-            validate_jg_record(record, table_name)
-            if table_name not in self._verified_wc_tables:
-                if verify_wc_storage_schema(self.database, table_name):
-                    self._verified_wc_tables.add(table_name)
-            validate_wc_record(record, table_name)
-            if table_name not in self._verified_wf_tables:
-                if verify_wf_storage_schema(self.database, table_name):
-                    self._verified_wf_tables.add(table_name)
-            validate_wf_record(record, table_name)
-            if table_name not in self._verified_rc_tables:
-                if verify_rc_storage_schema(self.database, table_name):
-                    self._verified_rc_tables.add(table_name)
-            if table_name not in self._verified_ys_tables:
-                if verify_ys_storage_schema(self.database, table_name):
-                    self._verified_ys_tables.add(table_name)
-            if table_name in _TK_CHILD_STORAGE_TABLES:
-                header_table = self._verified_tk_header_tables.get(table_name)
-                if header_table is None:
-                    verified = verify_tk_coupled_tables(self.database, table_name)
-                    if verified is None:
-                        raise SchemaMigrationError(
-                            f"TK import could not resolve header table for {table_name}"
-                        )
-                    header_table = verified
-                    self._verified_tk_header_tables[table_name] = header_table
-                prepared = prepare_tk_coupled_record(
-                    self.database,
-                    record,
-                    table_name,
-                    verified_header_table=header_table,
-                )
-                if prepared is None:
-                    raise SchemaMigrationError("TK single record lost its snapshot metadata")
-                succeeded, failed = insert_tk_coupled_batch(
-                    self.database,
-                    table_name,
-                    [prepared],
-                    commit_batch=auto_commit,
-                    optimized=False,
-                )
-                self._records_imported += succeeded
-                self._records_failed += failed
-                if succeeded:
-                    self._batches_processed += 1
-                return succeeded == 1
-            if table_name in _WF_STANDARD_STORAGE_TABLES:
-                succeeded, failed = insert_wf_standard_batch(
-                    self.database,
-                    [prepare_wf_standard_record(record)],
-                    commit_batch=auto_commit,
-                    optimized=False,
-                )
-                self._records_imported += succeeded
-                self._records_failed += failed
-                if succeeded:
-                    self._batches_processed += 1
-                return succeeded == 1
-            if table_name not in self._verified_mining_native_tables:
-                if verify_mining_native_schema(self.database, record, table_name):
-                    self._verified_mining_native_tables.add(table_name)
-            if _is_standard_vote_record_erase(record, table_name):
-                delete_standard_vote_record(
-                    self.database,
-                    record,
-                    table_name,
-                    commit_batch=auto_commit,
-                    verification_cache=self._verified_standard_vote_configs,
-                )
-                self._records_imported += 1
-                self._batches_processed += 1
-                return True
-            if _is_standard_odds_record_erase(record, table_name):
-                delete_standard_odds_record(
-                    self.database,
-                    record,
-                    table_name,
-                    commit_batch=auto_commit,
-                    verification_cache=self._verified_standard_odds_configs,
-                )
-                self._records_imported += 1
-                self._batches_processed += 1
-                return True
-            if _is_official_record_erase(record, table_name):
-                _delete_official_record(self.database, record, table_name)
-                self._records_imported += 1
-                self._batches_processed += 1
-                if auto_commit:
-                    self.database.commit()
-                return True
-            if _is_mining_race_delete(record, table_name):
-                _delete_mining_race_rows(self.database, record, table_name)
-                self._records_imported += 1
-                self._batches_processed += 1
-                if auto_commit:
-                    self.database.commit()
-                return True
-            if _mining_native_snapshot_rows(record, table_name) is not None:
-                if auto_commit:
-                    self.database.begin_transaction()
-                try:
-                    rows = replace_mining_native_snapshot(self.database, record, table_name)
-                    if auto_commit:
-                        self.database.commit()
-                except TransactionRecoveryError:
-                    raise
-                except Exception:
-                    self.database.rollback()
-                    raise
-                self._records_imported += rows
-                self._batches_processed += 1
-                return True
-            if _odds_native_snapshot_rows(record, table_name) is not None:
-                # 追従行も snapshot 全体を持つため、単独で渡されても完全な
-                # snapshot を適用する。件数は先頭行のみで数える。
-                follower = _is_odds_snapshot_follower(record, table_name)
-                if auto_commit:
-                    self.database.begin_transaction()
-                try:
-                    rows = replace_odds_native_snapshot(self.database, record, table_name)
-                    if auto_commit:
-                        self.database.commit()
-                except TransactionRecoveryError:
-                    raise
-                except Exception:
-                    self.database.rollback()
-                    raise
-                self._records_imported += 0 if follower else rows
-                self._batches_processed += 1
-                return True
-            if table_name in _STANDARD_VOTE_CONFIG_BY_OWNER:
-                rows = insert_standard_vote_batch(
-                    self.database,
-                    table_name,
-                    [record],
-                    commit_batch=auto_commit,
-                    verification_cache=self._verified_standard_vote_configs,
-                )
-                self._records_imported += rows
-                if rows:
-                    self._batches_processed += 1
-                return rows == 1
-            if table_name in _STANDARD_ODDS_CONFIG_BY_OWNER:
-                rows = insert_standard_odds_batch(
-                    self.database,
-                    table_name,
-                    [record],
-                    commit_batch=auto_commit,
-                    verification_cache=self._verified_standard_odds_configs,
-                )
-                self._records_imported += rows
-                if rows:
-                    self._batches_processed += 1
-                return rows == 1
-            clean_record = self._record_for_table(record, table_name)
-            converted_record = self._convert_record(clean_record, table_name)
-            if (
-                table_name not in _ORDERED_MASTER_STORAGE_TABLES
-                and not self._has_complete_primary_key(table_name, converted_record)
-            ):
-                self._records_failed += 1
-                logger.warning(
-                    "Skipping record with incomplete primary key",
-                    table=table_name,
-                    primary_key=get_table_primary_key_columns(table_name),
-                )
-                if not auto_commit:
-                    self._rollback_single_record_transaction(
-                        context="incomplete key in single-record import",
-                    )
-                return False
-            if table_name in _RC_STORAGE_TABLES:
-                rows = apply_rc_batch(
-                    self.database,
-                    table_name,
-                    [converted_record],
-                    commit_batch=auto_commit,
-                    optimized=False,
-                )
-                self._records_imported += rows
-                if rows:
-                    self._batches_processed += 1
-                return rows == 1
-            if table_name in _YS_STORAGE_TABLES:
-                rows = apply_ys_batch(
-                    self.database,
-                    table_name,
-                    [converted_record],
-                    commit_batch=auto_commit,
-                    optimized=False,
-                )
-                self._records_imported += rows
-                if rows:
-                    self._batches_processed += 1
-                return rows == 1
-            verified_ck = self._verified_ck_child_tables.get(table_name)
-            if _ck_child_tables(table_name) is not None and verified_ck is None:
-                verified_ck = verify_ck_coupled_tables(self.database, table_name)
-                if verified_ck is None:
-                    raise SchemaMigrationError(
-                        f"CK import could not resolve normalized children for {table_name}"
-                    )
-                self._verified_ck_child_tables[table_name] = verified_ck
-            ck_coupled = prepare_ck_coupled_rows(
-                self.database,
-                record,
-                table_name,
-                converted_record,
-                verified_child_tables=verified_ck,
-            )
-            if ck_coupled is not None:
-                chaku_table, chaku_rows, ruikei_table, ruikei_rows = ck_coupled
-                succeeded, failed = insert_ck_coupled_batch(
-                    self.database,
-                    table_name,
-                    [(converted_record, chaku_table, chaku_rows, ruikei_table, ruikei_rows)],
-                    commit_batch=auto_commit,
-                    optimized=False,
-                )
-                self._records_imported += succeeded
-                self._records_failed += failed
-                if succeeded:
-                    self._batches_processed += 1
-                return succeeded == 1
-            coupled = prepare_ch_coupled_rows(self.database, record, table_name)
-            if coupled is not None:
-                result_table, result_rows = coupled
-                succeeded, failed = insert_ch_coupled_batch(
-                    self.database,
-                    table_name,
-                    [(converted_record, result_table, result_rows)],
-                    commit_batch=auto_commit,
-                    optimized=False,
-                )
-                self._records_imported += succeeded
-                self._records_failed += failed
-                return succeeded == 1
-            ks_coupled = prepare_ks_coupled_rows(self.database, record, table_name)
-            if ks_coupled is not None:
-                result_table, result_rows = ks_coupled
-                succeeded, failed = insert_ks_coupled_batch(
-                    self.database,
-                    table_name,
-                    [(converted_record, result_table, result_rows)],
-                    commit_batch=auto_commit,
-                    optimized=False,
-                )
-                self._records_imported += succeeded
-                self._records_failed += failed
-                return succeeded == 1
-            self.database.insert(table_name, converted_record, use_replace=True)
-            self._records_imported += 1
-
-            if auto_commit:
-                self.database.commit()
-
-            return True
-
-        except TransactionRecoveryError:
-            raise
-        except SchemaMigrationError:
-            if not auto_commit:
-                self._rollback_single_record_transaction(
-                    context="validation/schema failure in single-record import",
-                )
-            raise
-        except DatabaseError as e:
-            if not auto_commit:
-                self._rollback_single_record_transaction(
-                    context="database failure in single-record import",
-                )
-            self._records_failed += 1
-            logger.error("Failed to insert record", error=str(e))
-            return False
-        except Exception:
-            if not auto_commit:
-                self._rollback_single_record_transaction(
-                    context="unexpected failure in single-record import",
-                )
-            raise
-
     def get_statistics(self) -> Dict[str, int]:
         """Get import statistics.
 
@@ -9530,7 +9019,6 @@ class DataImporter:
         self._records_imported = 0
         self._records_failed = 0
         self._batches_processed = 0
-        self._single_record_stats_checkpoint = None
 
     def add_table_mapping(self, record_type: str, table_name: str):
         """Add custom table mapping.

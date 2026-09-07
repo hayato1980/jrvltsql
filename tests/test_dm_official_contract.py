@@ -13,9 +13,9 @@ from src.database.schema_types import get_table_column_types, get_table_primary_
 from src.database.sqlite_handler import SQLiteDatabase
 from src.database.table_mappings import JLTSQL_TO_JRAVAN, JRAVAN_TO_JLTSQL
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.dm_parser import DMParser
 from src.realtime.updater import RealtimeUpdater
+from tests.importer_support import import_one
 
 RACE_KEY = ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum"]
 NATIVE_KEY = [*RACE_KEY, "Umaban"]
@@ -206,22 +206,21 @@ def test_dm_native_and_standard_schema_contracts_are_keyed() -> None:
 
 
 @pytest.mark.parametrize(
-    "importer_class,table_name,use_standard,expected_count",
+    "table_name,use_standard,expected_count",
     [
-        pytest.param(importer, table_name, standard, count, id=f"{importer.__name__}-{table_name}")
-        for importer in (DataImporter, OptimizedDataImporter)
+        pytest.param(table_name, standard, count, id=f"{table_name}")
         for table_name, standard, count in (("NL_DM", False, 18), ("MINING", True, 1))
     ],
 )
 def test_dm_importers_preserve_every_entry_and_replace_one_race_revision(
-    tmp_path, importer_class, table_name: str, use_standard: bool, expected_count: int
+    tmp_path, table_name: str, use_standard: bool, expected_count: int
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"{table_name}.db")})
     schema = JRAVAN_SCHEMAS[table_name] if use_standard else SCHEMAS[table_name]
     with database:
         database.execute(schema)
         database.commit()
-        importer = importer_class(database, batch_size=3, use_jravan_schema=use_standard)
+        importer = DataImporter(database, batch_size=3, use_jravan_schema=use_standard)
         first = DMParser().parse(_dm_record())
         corrected_entries = _official_entries(time_offset=500)
         corrected_entries[1] = _entry()
@@ -277,22 +276,21 @@ def test_dm_importers_preserve_every_entry_and_replace_one_race_revision(
 
 
 @pytest.mark.parametrize(
-    "importer_class,table_name,use_standard",
+    "table_name,use_standard",
     [
-        pytest.param(importer, table_name, standard, id=f"{importer.__name__}-{table_name}")
-        for importer in (DataImporter, OptimizedDataImporter)
+        pytest.param(table_name, standard, id=f"{table_name}")
         for table_name, standard in (("NL_DM", False), ("MINING", True))
     ],
 )
 def test_dm_accumulated_delete_removes_the_whole_race(
-    tmp_path, importer_class, table_name: str, use_standard: bool
+    tmp_path, table_name: str, use_standard: bool
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"delete-{table_name}.db")})
     schema = JRAVAN_SCHEMAS[table_name] if use_standard else SCHEMAS[table_name]
     with database:
         database.execute(schema)
         database.commit()
-        importer = importer_class(database, use_jravan_schema=use_standard)
+        importer = DataImporter(database, use_jravan_schema=use_standard)
         inserted = DMParser().parse(_dm_record())
         deleted = DMParser().parse(
             _dm_record(data_kubun="0", entries=[_entry() for _ in range(18)])
@@ -312,13 +310,12 @@ def test_dm_accumulated_delete_removes_the_whole_race(
     assert remaining == 0
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_dm_delete_respects_caller_owned_transaction(tmp_path, importer_class) -> None:
+def test_dm_delete_respects_caller_owned_transaction(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "delete-transaction.db")})
     with database:
         database.execute(SCHEMAS["NL_DM"])
         database.commit()
-        importer = importer_class(database)
+        importer = DataImporter(database)
         inserted = DMParser().parse(_dm_record())
         deleted = DMParser().parse(
             _dm_record(data_kubun="0", entries=[_entry() for _ in range(18)])
@@ -359,8 +356,8 @@ def test_dm_single_record_import_replaces_the_complete_native_snapshot(tmp_path)
         corrected = DMParser().parse(_dm_record(make_hm="0945", entries=corrected_entries))
         assert first is not None and corrected is not None
 
-        assert importer.import_single_record(first[-1]) is True
-        assert importer.import_single_record(corrected[0]) is True
+        assert import_one(importer, first[-1]) is True
+        assert import_one(importer, corrected[0]) is True
         rows = database.fetch_all("SELECT Umaban, MakeHM FROM NL_DM ORDER BY Umaban")
 
     assert len(rows) == 17
@@ -396,10 +393,8 @@ def test_dm_realtime_expansion_revision_and_race_delete(tmp_path) -> None:
     assert deleted[0]["success"] is True
     assert remaining == 0
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_dm_standard_import_refuses_keyless_mining_without_row_loss(
-    tmp_path, importer_class
-) -> None:
+
+def test_dm_standard_import_refuses_keyless_mining_without_row_loss(tmp_path) -> None:
     keyed_tail = (
         "            DMGosaM18                      VARCHAR(4)          ,  -- 文字列(4)\n"
         "            PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum)"
@@ -419,7 +414,7 @@ def test_dm_standard_import_refuses_keyless_mining_without_row_loss(
         database.commit()
 
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter(DMParser().parse(_dm_record()))
             )
         preserved = database.fetch_all("SELECT Year, RaceNum, MakeHM FROM MINING")
@@ -427,10 +422,7 @@ def test_dm_standard_import_refuses_keyless_mining_without_row_loss(
     assert preserved == [{"Year": 2000, "RaceNum": 1, "MakeHM": "0000"}]
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_dm_standard_import_refuses_numeric_time_columns_without_row_loss(
-    tmp_path, importer_class
-) -> None:
+def test_dm_standard_import_refuses_numeric_time_columns_without_row_loss(tmp_path) -> None:
     legacy = JRAVAN_SCHEMAS["MINING"]
     for index in range(1, 19):
         legacy = legacy.replace(
@@ -451,7 +443,7 @@ def test_dm_standard_import_refuses_numeric_time_columns_without_row_loss(
         database.commit()
 
         with pytest.raises(SchemaMigrationError, match="incompatible column types"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter(DMParser().parse(_dm_record()))
             )
         preserved = database.fetch_one("SELECT DMTime1 FROM MINING")
@@ -459,10 +451,7 @@ def test_dm_standard_import_refuses_numeric_time_columns_without_row_loss(
     assert preserved == {"DMTime1": 1234.5}
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_dm_standard_import_refuses_legacy_data_master_without_row_loss(
-    tmp_path, importer_class
-) -> None:
+def test_dm_standard_import_refuses_legacy_data_master_without_row_loss(tmp_path) -> None:
     legacy = JRAVAN_SCHEMAS["MINING"].replace(
         "CREATE TABLE IF NOT EXISTS MINING",
         "CREATE TABLE IF NOT EXISTS DATA_MASTER",
@@ -480,7 +469,7 @@ def test_dm_standard_import_refuses_legacy_data_master_without_row_loss(
         database.commit()
 
         with pytest.raises(SchemaMigrationError, match="DATA_MASTER.*MINING"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter(DMParser().parse(_dm_record()))
             )
         preserved = database.fetch_one("SELECT DMTime1 FROM DATA_MASTER")
@@ -488,8 +477,7 @@ def test_dm_standard_import_refuses_legacy_data_master_without_row_loss(
     assert preserved == {"DMTime1": "12345"}
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_dm_postgresql_native_and_standard_revision_delete(postgresql_db, importer_class) -> None:
+def test_dm_postgresql_native_and_standard_revision_delete(postgresql_db) -> None:
     postgresql_db.execute(SCHEMAS["NL_DM"])
     postgresql_db.execute(JRAVAN_SCHEMAS["MINING"])
     postgresql_db.commit()
@@ -500,8 +488,8 @@ def test_dm_postgresql_native_and_standard_revision_delete(postgresql_db, import
     deleted = DMParser().parse(_dm_record(data_kubun="0", entries=[_entry() for _ in range(18)]))
     assert first is not None and corrected is not None and deleted is not None
 
-    native = importer_class(postgresql_db)
-    standard = importer_class(postgresql_db, use_jravan_schema=True)
+    native = DataImporter(postgresql_db)
+    standard = DataImporter(postgresql_db, use_jravan_schema=True)
     native.import_records(iter(first))
     standard.import_records(iter(DMParser().parse(_dm_record())))
     native.import_records(iter(corrected))
@@ -587,24 +575,16 @@ def test_dm_postgresql_realtime_snapshot_revision_delete(postgresql_db) -> None:
     assert remaining == 0
 
     old_expansion = DMParser().parse(_dm_record())
-    corrected_expansion = DMParser().parse(
-        _dm_record(make_hm="0945", entries=corrected_entries)
-    )
+    corrected_expansion = DMParser().parse(_dm_record(make_hm="0945", entries=corrected_entries))
     assert old_expansion is not None and corrected_expansion is not None
-    batch = updater.process_parsed_records_batch(
-        [*old_expansion, *corrected_expansion]
-    )
+    batch = updater.process_parsed_records_batch([*old_expansion, *corrected_expansion])
     batch_rows = postgresql_db.fetch_all(
-        'SELECT Umaban AS "Umaban", MakeHM AS "MakeHM" '
-        "FROM RT_DM ORDER BY Umaban"
+        'SELECT Umaban AS "Umaban", MakeHM AS "MakeHM" ' "FROM RT_DM ORDER BY Umaban"
     )
     assert batch["success"] is True
     assert batch["inserted"] == 35
     assert len(batch_rows) == 17
-    assert all(
-        row["Umaban"] != 2 and row["MakeHM"] == "0945"
-        for row in batch_rows
-    )
+    assert all(row["Umaban"] != 2 and row["MakeHM"] == "0945" for row in batch_rows)
 
     postgresql_db.execute("DELETE FROM RT_DM")
     postgresql_db.commit()
@@ -615,9 +595,7 @@ def test_dm_postgresql_realtime_snapshot_revision_delete(postgresql_db) -> None:
         "Year": "2026",
         "MonthDay": "0817",
     }
-    validation_failure = updater.process_parsed_records_batch(
-        [invalid_wf, *old_expansion]
-    )
+    validation_failure = updater.process_parsed_records_batch([invalid_wf, *old_expansion])
     assert validation_failure["success"] is False
     assert validation_failure["inserted"] == 0
     assert postgresql_db.has_pending_transaction() is False
@@ -627,6 +605,4 @@ def test_dm_postgresql_realtime_snapshot_revision_delete(postgresql_db) -> None:
     assert following_success["inserted"] == 18
     assert postgresql_db.has_pending_transaction() is False
     postgresql_db.rollback()
-    assert postgresql_db.fetch_one("SELECT COUNT(*) AS count FROM RT_DM")[
-        "count"
-    ] == 18
+    assert postgresql_db.fetch_one("SELECT COUNT(*) AS count FROM RT_DM")["count"] == 18
