@@ -186,6 +186,14 @@ JYO_CODES = {
 # 時系列オッズである。後方互換の名前だけ残し、中身は空にする。
 JVRTOPEN_CHANGE_SPECS = {}
 
+# 速報系のうち、YYYYMMDD キーで JVRTOpen を開けるもの。
+# 0B16 は JVWatchEvent が返すイベントキーで開く種別なので、日付キーでは開けない。
+JVRTOPEN_DATE_KEYED_SPECS = {
+    code: name
+    for code, name in JVRTOPEN_SPEED_REPORT_SPECS.items()
+    if code != "0B16"
+}
+
 # 全JVRTOpenデータ種別 (後方互換性のため残す)
 JVRTOPEN_DATA_SPECS = (
     list(JVRTOPEN_SPEED_REPORT_SPECS.keys()) +
@@ -205,6 +213,11 @@ DATA_SPEC_RT_VOTES = "0B20"    # 時系列票数
 def is_speed_report_spec(data_spec: str) -> bool:
     """Check if data_spec is a speed report (速報系) specification."""
     return data_spec in JVRTOPEN_SPEED_REPORT_SPECS
+
+
+def is_date_keyed_spec(data_spec: str) -> bool:
+    """Check if data_spec is opened with a YYYYMMDD key."""
+    return data_spec in JVRTOPEN_DATE_KEYED_SPECS
 
 
 def is_time_series_spec(data_spec: str) -> bool:

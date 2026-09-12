@@ -2083,6 +2083,181 @@ def odds_sokuho_timeseries(ctx, from_date, to_date, db, db_path):
     )
 
 
+@realtime.command("speed-report")
+@click.option(
+    "--spec",
+    "spec",
+    required=True,
+    help="Comma-separated date-keyed speed-report specs (e.g. 0B11,0B14)",
+)
+@click.option(
+    "--from-date",
+    "--from",
+    "from_date",
+    default=None,
+    help="Start date YYYYMMDD (default: today)",
+)
+@click.option(
+    "--to-date",
+    "--to",
+    "to_date",
+    default=None,
+    help="End date YYYYMMDD (default: --from-date)",
+)
+@click.option(
+    "--db",
+    type=click.Choice(["sqlite", "postgresql"]),
+    default=None,
+    help="Database type (default: from config)",
+)
+@click.pass_context
+def speed_report(ctx, spec, from_date, to_date, db):
+    """Fetch date-keyed speed-report data in a single pass.
+
+    Opens, drains and closes one JVRTOpen stream per race date and then
+    returns, so a caller that wants periodic refresh schedules the pass
+    instead of leaving a process resident.
+
+    \b
+    Data specs (opened with a YYYYMMDD key):
+      0B11 - 速報馬体重: WH
+      0B12 - 速報レース情報・払戻: RA, SE, HR
+      0B13 - データマイニング予想: DM
+      0B14 - 速報開催情報・一括: WE, AV, JC, TC, CC
+      0B15 - 速報レース情報: RA, SE, HR
+      0B17 - 対戦型データマイニング予想: TM
+      0B51 - 速報重勝式(WIN5): WF
+
+    \b
+    0B14 returns the complete current snapshot for the date, so the previous
+    snapshot for that date is cleared before the replacement rows are written.
+    Withdrawn changes are omitted from later responses, and upserts alone
+    would leave them behind as stale rows.
+
+    \b
+    Odds specs (0B20, 0B30-0B36, 0B41/0B42) are opened per race with a
+    YYYYMMDDJJRR key and are not accepted here; use `realtime timeseries`.
+
+    \b
+    Examples:
+      jltsql realtime speed-report --spec 0B11,0B14 --from-date 20260912
+      jltsql realtime speed-report --spec 0B14 --from-date 20260911 --to-date 20260913
+    """
+    from datetime import datetime
+
+    from src.database import create_database_from_config, DatabaseError
+    from src.jvlink.constants import (
+        JVRTOPEN_DATE_KEYED_SPECS,
+        is_date_keyed_spec,
+        is_time_series_spec,
+    )
+    from src.realtime.speed_report import sync_date_keyed_spec
+
+    config = ctx.obj.get("config")
+
+    specs_list = [part.strip().upper() for part in spec.split(",") if part.strip()]
+    if not specs_list:
+        console.print("[red]Error:[/red] --spec requires at least one data spec")
+        sys.exit(2)
+    for code in specs_list:
+        if is_date_keyed_spec(code):
+            continue
+        if is_time_series_spec(code):
+            console.print(
+                f"[red]Error:[/red] {code} is opened per race with a YYYYMMDDJJRR "
+                "key; use `realtime timeseries` for it"
+            )
+        else:
+            console.print(
+                f"[red]Error:[/red] {code} is not a date-keyed speed-report spec. "
+                f"Accepted: {', '.join(sorted(JVRTOPEN_DATE_KEYED_SPECS))}"
+            )
+        sys.exit(2)
+
+    if not from_date:
+        from_date = datetime.now().strftime("%Y%m%d")
+    if not to_date:
+        to_date = from_date
+    for label, value in (("--from-date", from_date), ("--to-date", to_date)):
+        try:
+            datetime.strptime(value, "%Y%m%d")
+        except ValueError:
+            console.print(f"[red]Error:[/red] {label} must be YYYYMMDD (got {value!r})")
+            sys.exit(2)
+    if to_date < from_date:
+        console.print(
+            f"[red]Error:[/red] --to-date {to_date} is earlier than --from-date {from_date}"
+        )
+        sys.exit(2)
+
+    db_type = db or (config.get("database.type", "sqlite") if config else "sqlite")
+    sid = config.get("jvlink.sid", "JLTSQL") if config else "JLTSQL"
+
+    console.print("[bold cyan]Fetching date-keyed speed-report data...[/bold cyan]\n")
+    console.print(f"  Data specs:    {', '.join(specs_list)}")
+    console.print(f"  Date range:    {from_date} - {to_date}")
+    console.print()
+
+    try:
+        database = create_database_from_config(config, db_type_override=db_type)
+    except (ValueError, DatabaseError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        sys.exit(1)
+
+    totals = {
+        "records_fetched": 0,
+        "records_parsed": 0,
+        "records_imported": 0,
+        "records_failed": 0,
+    }
+    try:
+        with database:
+            # One JV-Link session covers every spec in this run: the session is
+            # opened here and handed to each pass, so the specs are not opened
+            # and closed one JV-Link session at a time.
+            from src.fetcher.realtime import RealtimeFetcher
+
+            jvlink = RealtimeFetcher(sid=sid).jvlink
+            jvlink.jv_init()
+            try:
+                for index, code in enumerate(specs_list):
+                    console.print(f"[bold]Processing {code}...[/bold]")
+                    stats = sync_date_keyed_spec(
+                        database=database,
+                        spec=code,
+                        from_date=from_date,
+                        to_date=to_date,
+                        sid=sid,
+                        jvlink=jvlink,
+                        # The schema is the same for every spec in the run, so
+                        # only the first pass has to establish it.
+                        ensure_tables=(index == 0),
+                    )
+                    for name in totals:
+                        totals[name] += int(stats.get(name, 0))
+                    console.print(
+                        f"  [green][OK][/green] {code}: "
+                        f"fetched={stats.get('records_fetched', 0):,} "
+                        f"imported={stats.get('records_imported', 0):,} "
+                        f"failed={stats.get('records_failed', 0):,}"
+                    )
+            finally:
+                try:
+                    jvlink.jv_close()
+                except Exception:
+                    pass
+    except Exception as e:
+        console.print(f"\n[red]Error:[/red] {e}", style="bold")
+        logger.error("Failed to fetch speed-report data", error=str(e), exc_info=True)
+        sys.exit(1)
+
+    console.print()
+    console.print("[bold green]Complete![/bold green]")
+    console.print(f"  Total fetched:  {totals['records_fetched']:,}")
+    console.print(f"  Imported:       {totals['records_imported']:,}")
+    console.print(f"  Failed:         {totals['records_failed']:,}")
+
+
 @realtime.command()
 def specs():
     """List available realtime data specification codes.
