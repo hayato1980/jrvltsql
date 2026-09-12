@@ -12,7 +12,6 @@ from src.database.schema_jravan import JRAVAN_SCHEMAS
 from src.database.sqlite_handler import SQLiteDatabase
 from src.database.table_mappings import JLTSQL_TO_JRAVAN, JRAVAN_TO_JLTSQL
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.wh_parser import WHParser
 from src.realtime.updater import RealtimeUpdater
 
@@ -378,12 +377,7 @@ def test_wh_latest_announcement_replaces_same_race_horse(tmp_path) -> None:
         database.disconnect()
 
 
-@pytest.mark.parametrize(
-    "importer_class",
-    [DataImporter, OptimizedDataImporter],
-    ids=["regular", "optimized"],
-)
-def test_wh_standard_schema_import_preserves_all_horse_slots(tmp_path, importer_class) -> None:
+def test_wh_standard_schema_import_preserves_all_horse_slots(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "wh-standard.db")})
     database.connect()
     try:
@@ -392,7 +386,7 @@ def test_wh_standard_schema_import_preserves_all_horse_slots(tmp_path, importer_
         rows = WHParser().parse(_wh_record())
         assert rows is not None
 
-        importer = importer_class(database, batch_size=1, use_jravan_schema=True)
+        importer = DataImporter(database, batch_size=1, use_jravan_schema=True)
         first_stats = importer.import_records(iter(rows))
         assert first_stats["records_imported"] == 1
         corrected = WHParser().parse(_wh_record(announcement="06150935", weight="486"))

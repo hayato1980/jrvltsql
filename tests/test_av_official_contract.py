@@ -23,7 +23,6 @@ from src.importer.importer import (
     _verify_av_key_not_null_constraints,
     validate_import_record_header,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.av_parser import AVParser
 from src.parser.status_domain import (
     CURRENT_ACCUMULATED_DATA_KUBUN,
@@ -141,12 +140,6 @@ def import_records(
 ) -> None:
     if entrypoint == "data-batch":
         result = DataImporter(
-            database, batch_size=batch_size, use_jravan_schema=standard
-        ).import_records(iter(records), auto_commit=auto_commit)
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
-    elif entrypoint == "optimized-batch":
-        result = OptimizedDataImporter(
             database, batch_size=batch_size, use_jravan_schema=standard
         ).import_records(iter(records), auto_commit=auto_commit)
         assert result["records_imported"] == len(records)
@@ -303,7 +296,7 @@ def test_av_historical_erase_has_an_opaque_body_and_an_exact_cutoff() -> None:
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_av_storage_revises_one_identity_and_exactly_erases_old_status_zero(
     tmp_path, standard: bool, entrypoint: str, auto_commit: bool
@@ -430,7 +423,7 @@ def test_av_malformed_caller_is_rejected_before_mutation(tmp_path) -> None:
         assert database.fetch_one("SELECT COUNT(*) AS n FROM NL_AV") == {"n": 0}
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single-record"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single-record"))
 @pytest.mark.parametrize("legacy_target", ("primary", "secondary"))
 def test_av_legacy_standard_alias_stops_dual_migration_before_any_alter(
     tmp_path, legacy_target: str, entrypoint: str
@@ -457,8 +450,6 @@ def test_av_legacy_standard_alias_stops_dual_migration_before_any_alter(
             dual = DualDatabase(primary, secondary)
             if entrypoint == "data-batch":
                 DataImporter(dual, use_jravan_schema=True).import_records(iter([]))
-            elif entrypoint == "optimized-batch":
-                OptimizedDataImporter(dual, use_jravan_schema=True).import_records(iter([]))
             else:
                 import_one(DataImporter(dual, use_jravan_schema=True), parsed_av())
 
@@ -667,7 +658,7 @@ def test_av_postgresql_rejects_a_nullable_key_in_a_later_search_path_schema(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_av_postgresql_identity_revision_and_historical_exact_erase(
     postgresql_db, standard: bool, entrypoint: str, auto_commit: bool

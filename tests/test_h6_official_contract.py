@@ -29,7 +29,6 @@ from src.importer.importer import (
     validate_h6_record,
     verify_h6_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.h6_parser import H6Parser
 from src.realtime.updater import RealtimeUpdater
 from tests.importer_support import import_one
@@ -381,10 +380,9 @@ def test_h6_totals_only_snapshot_is_stored_once_per_race(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_h6_batch_erase_is_physical_and_provider_ordered(
     tmp_path: Path,
-    importer_class,
+
     auto_commit: bool,
     use_standard: bool,
 ) -> None:
@@ -392,11 +390,11 @@ def test_h6_batch_erase_is_physical_and_provider_ordered(
 
     tables = _tables(use_standard)
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"erase-{importer_class.__name__}-{use_standard}-{auto_commit}.db")}
+        {"path": str(tmp_path / f"erase-{DataImporter.__name__}-{use_standard}-{auto_commit}.db")}
     )
     with database:
         _create(database, tables)
-        importer = importer_class(database, batch_size=1, use_jravan_schema=use_standard)
+        importer = DataImporter(database, batch_size=1, use_jravan_schema=use_standard)
         records = [
             *h6_rows(data_kubun="2"),
             *h6_rows(data_kubun="4", race_num=b"12"),
@@ -601,17 +599,16 @@ def test_h6_schema_verifier_rejects_each_unsafe_contract(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("defect", DEFECTS)
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_h6_importer_paths_reject_each_unsafe_contract_before_dml(
     tmp_path: Path,
-    importer_class,
+
     defect: str,
     use_standard: bool,
 ) -> None:
     tables = _tables(use_standard)
     unsafe_table = tables[0]
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"dml-{importer_class.__name__}-{unsafe_table}-{defect}.db")}
+        {"path": str(tmp_path / f"dml-{DataImporter.__name__}-{unsafe_table}-{defect}.db")}
     )
     with database:
         for table_name in tables:
@@ -621,7 +618,7 @@ def test_h6_importer_paths_reject_each_unsafe_contract_before_dml(
                 else _canonical(table_name)
             )
         database.commit()
-        importer = importer_class(database, use_jravan_schema=use_standard)
+        importer = DataImporter(database, use_jravan_schema=use_standard)
         with pytest.raises(SchemaMigrationError):
             importer.import_records(iter(h6_rows()))
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {unsafe_table}") == {"count": 0}
@@ -806,17 +803,16 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_h6_postgresql_provider_order_and_exact_erase(
     postgresql_db,
-    importer_class,
+
     use_standard: bool,
 ) -> None:
     tables = _tables(use_standard)
     for table_name in tables:
         postgresql_db.execute(_canonical(table_name))
     postgresql_db.commit()
-    importer = importer_class(postgresql_db, batch_size=1, use_jravan_schema=use_standard)
+    importer = DataImporter(postgresql_db, batch_size=1, use_jravan_schema=use_standard)
     stats = importer.import_records(
         iter(
             [

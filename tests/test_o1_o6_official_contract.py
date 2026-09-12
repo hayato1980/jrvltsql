@@ -25,7 +25,6 @@ from src.database.schema import SCHEMAS
 from src.database.schema_jravan import JRAVAN_SCHEMAS
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.realtime.updater import RealtimeUpdater
 from src.parser.o1_parser import O1Parser
 from src.parser.o2_parser import O2Parser
@@ -519,8 +518,6 @@ STANDARD_TABLES = {
     "O5": ("ODDS_SANREN_HEAD", "ODDS_SANREN"),
     "O6": ("ODDS_SANRENTAN_HEAD", "ODDS_SANRENTAN"),
 }
-IMPORTERS = (DataImporter, OptimizedDataImporter)
-
 
 def totals_only_rows(record_type: str) -> list[dict]:
     """One official snapshot whose odds part carries no combination."""
@@ -544,19 +541,17 @@ def _create(database, tables) -> None:
 
 
 @pytest.mark.parametrize("record_type", ("O1", *ALL_RECORD_TYPES))
-@pytest.mark.parametrize("importer_class", IMPORTERS)
 def test_sqlite_native_storage_keeps_the_totals_only_snapshot(
     tmp_path: Path,
     record_type: str,
-    importer_class: type,
 ) -> None:
     table_name = NATIVE_TABLES[record_type]
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"native-{record_type}-{importer_class.__name__}.db")}
+        {"path": str(tmp_path / f"native-{record_type}-{DataImporter.__name__}.db")}
     )
     with database:
         _create(database, (table_name,))
-        stats = importer_class(database, batch_size=1).import_records(
+        stats = DataImporter(database, batch_size=1).import_records(
             iter(totals_only_rows(record_type))
         )
         assert stats["records_failed"] == 0
@@ -566,21 +561,19 @@ def test_sqlite_native_storage_keeps_the_totals_only_snapshot(
 
 
 @pytest.mark.parametrize("record_type", ("O1", *ALL_RECORD_TYPES))
-@pytest.mark.parametrize("importer_class", IMPORTERS)
 def test_sqlite_standard_storage_keeps_totals_without_a_child_row(
     tmp_path: Path,
     record_type: str,
-    importer_class: type,
 ) -> None:
     """合計行は公式の子表に該当する組合せを持たないので header だけを残す。"""
 
     tables = STANDARD_TABLES[record_type]
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"standard-{record_type}-{importer_class.__name__}.db")}
+        {"path": str(tmp_path / f"standard-{record_type}-{DataImporter.__name__}.db")}
     )
     with database:
         _create(database, tables)
-        importer = importer_class(database, batch_size=1, use_jravan_schema=True)
+        importer = DataImporter(database, batch_size=1, use_jravan_schema=True)
         stats = importer.import_records(iter(totals_only_rows(record_type)))
         assert stats["records_failed"] == 0
         owner, *children = tables
@@ -680,12 +673,11 @@ def erase_rows(record_type: str) -> list[dict]:
 
 
 @pytest.mark.parametrize("record_type", ("O1", *ALL_RECORD_TYPES))
-@pytest.mark.parametrize("importer_class", IMPORTERS)
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 def test_sqlite_status_zero_erases_the_snapshot_without_a_tombstone(
     tmp_path: Path,
     record_type: str,
-    importer_class: type,
+
     use_standard: bool,
 ) -> None:
     """公式の削除指示は合計行 sentinel を残さず対象レースを物理削除する。"""
@@ -695,13 +687,13 @@ def test_sqlite_status_zero_erases_the_snapshot_without_a_tombstone(
         {
             "path": str(
                 tmp_path
-                / f"erase-{record_type}-{importer_class.__name__}-{use_standard}.db"
+                / f"erase-{record_type}-{DataImporter.__name__}-{use_standard}.db"
             )
         }
     )
     with database:
         _create(database, tables)
-        importer = importer_class(database, batch_size=1, use_jravan_schema=use_standard)
+        importer = DataImporter(database, batch_size=1, use_jravan_schema=use_standard)
         assert importer.import_records(iter(live_rows(record_type)))["records_failed"] == 0
         assert database.fetch_one(f"SELECT COUNT(*) AS cnt FROM {tables[-1]}")["cnt"] > 0
 
