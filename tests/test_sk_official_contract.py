@@ -18,7 +18,6 @@ from src.importer.importer import (
     validate_sk_record,
     verify_sk_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.sk_parser import SKParser
 from src.realtime.updater import RealtimeUpdater
 from tests.test_sk_parser_layout import PEDIGREE_FIELDS, build_current_record
@@ -169,19 +168,18 @@ def test_sk_blank_sanchi_name_remains_an_empty_provider_value(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_sk_batch_erase_is_physical_and_provider_ordered(
     tmp_path,
-    importer_class,
+
     auto_commit: bool,
     use_standard: bool,
 ) -> None:
     table_name, schema = _table(use_standard)
-    database = SQLiteDatabase({"path": str(tmp_path / f"{importer_class.__name__}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"{DataImporter.__name__}.db")})
     with database:
         database.execute(schema)
         database.commit()
-        importer = importer_class(database, batch_size=1, use_jravan_schema=use_standard)
+        importer = DataImporter(database, batch_size=1, use_jravan_schema=use_standard)
         stats = importer.import_records(
             iter(
                 [
@@ -261,10 +259,9 @@ def test_sk_single_record_erase_is_physical(
 
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_sk_unsafe_extra_required_column_is_rejected_before_dml(
     tmp_path,
-    importer_class,
+
     use_standard: bool,
 ) -> None:
     table_name, canonical = _table(use_standard)
@@ -278,7 +275,7 @@ def test_sk_unsafe_extra_required_column_is_rejected_before_dml(
         database.commit()
         before_columns = database.fetch_all(f'PRAGMA table_xinfo("{table_name}")')
         with pytest.raises(SchemaMigrationError):
-            importer_class(database, use_jravan_schema=use_standard).import_records(
+            DataImporter(database, use_jravan_schema=use_standard).import_records(
                 iter([deepcopy(sk_record())])
             )
         after_columns = database.fetch_all(f'PRAGMA table_xinfo("{table_name}")')
@@ -348,10 +345,9 @@ def test_sk_sqlite_schema_verifier_rejects_each_unsafe_contract(
         "extra-generated",
     ),
 )
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_sk_importer_paths_reject_each_unsafe_contract_before_dml(
     tmp_path: Path,
-    importer_class,
+
     defect: str,
 ) -> None:
     """Both batch entry points must reach the verifier for every unsafe schema.
@@ -365,7 +361,7 @@ def test_sk_importer_paths_reject_each_unsafe_contract_before_dml(
         database.execute(_defective_native_schema(defect))
         database.commit()
         before = database.fetch_all('PRAGMA table_xinfo("NL_SK")')
-        importer = importer_class(database)
+        importer = DataImporter(database)
         with pytest.raises(SchemaMigrationError):
             importer.import_records(iter([deepcopy(sk_record())]))
         with pytest.raises(SchemaMigrationError):
@@ -516,17 +512,16 @@ def postgresql_db():
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_sk_postgresql_provider_order_exact_erase_and_operation_statistics(
     postgresql_db,
-    importer_class,
+
     auto_commit: bool,
     use_standard: bool,
 ) -> None:
     table_name, schema = _table(use_standard)
     postgresql_db.execute(schema)
     postgresql_db.commit()
-    stats = importer_class(
+    stats = DataImporter(
         postgresql_db,
         batch_size=1000,
         use_jravan_schema=use_standard,

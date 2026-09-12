@@ -22,7 +22,6 @@ from src.importer.importer import (
     translate_standard_field_names,
     validate_import_record_header,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hr_parser import HRParser
 from src.parser.status_domain import CURRENT_ACCUMULATED_DATA_KUBUN
 from src.realtime.updater import RealtimeUpdater
@@ -83,10 +82,6 @@ def import_records(
 ) -> dict:
     if entrypoint == "data-batch":
         result = DataImporter(database, use_jravan_schema=standard).import_records(
-            iter(records), auto_commit=auto_commit
-        )
-    elif entrypoint == "optimized-batch":
-        result = OptimizedDataImporter(database, use_jravan_schema=standard).import_records(
             iter(records), auto_commit=auto_commit
         )
     else:
@@ -244,7 +239,7 @@ def test_hr_reserved_flag_slots_cannot_be_absent(value: object) -> None:
 
 @pytest.mark.parametrize("value", ("X", ""), ids=("opaque", "blank"))
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 def test_hr_reserved_flag_slots_survive_every_sqlite_import_path(
     tmp_path,
     entrypoint: str,
@@ -449,7 +444,7 @@ def test_hr_storage_preserves_both_sides_of_the_same_length_2004_boundary(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hr_storage_preserves_payouts_provider_order_and_exact_erase(
     tmp_path, standard: bool, entrypoint: str, auto_commit: bool
@@ -750,7 +745,7 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hr_postgresql_provider_order_readback_and_statistics(
     postgresql_db, standard: bool, entrypoint: str, auto_commit: bool

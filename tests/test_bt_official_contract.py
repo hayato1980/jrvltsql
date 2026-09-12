@@ -15,7 +15,6 @@ from src.database.schema_types import (
 from src.database.sqlite_handler import SQLiteDatabase
 from src.database.table_mappings import JLTSQL_TO_JRAVAN, JRAVAN_TO_JLTSQL
 from src.importer.importer import DataImporter, ImporterError
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.bt_parser import BTParser
 from tests.importer_support import import_one
 
@@ -159,18 +158,16 @@ def test_bt_standard_mapping_and_schema_are_complete() -> None:
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "table_name", "standard"),
+    ("table_name", "standard"),
     [
         pytest.param(
-            importer_class, table_name, standard, id=f"{importer_class.__name__}-{table_name}"
+            table_name, standard, id=table_name
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, standard in (("NL_BT", False), ("KEITO", True))
     ],
 )
 def test_bt_round_trips_and_upserts_every_official_business_field(
     tmp_path,
-    importer_class,
     table_name: str,
     standard: bool,
 ) -> None:
@@ -178,10 +175,10 @@ def test_bt_round_trips_and_upserts_every_official_business_field(
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
     with database:
         database.create_table(table_name, schema)
-        first = importer_class(database, use_jravan_schema=standard).import_records(
+        first = DataImporter(database, use_jravan_schema=standard).import_records(
             iter([parsed_record(keito_name="登録系統", keito_ex="登録時説明")])
         )
-        updated = importer_class(database, use_jravan_schema=standard).import_records(
+        updated = DataImporter(database, use_jravan_schema=standard).import_records(
             iter(
                 [
                     parsed_record(
@@ -216,18 +213,16 @@ def test_bt_round_trips_and_upserts_every_official_business_field(
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "table_name", "standard"),
+    ("table_name", "standard"),
     [
         pytest.param(
-            importer_class, table_name, standard, id=f"{importer_class.__name__}-{table_name}"
+            table_name, standard, id=table_name
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, standard in (("NL_BT", False), ("KEITO", True))
     ],
 )
 def test_bt_delete_is_physical_and_preserves_provider_order(
     tmp_path,
-    importer_class,
     table_name: str,
     standard: bool,
 ) -> None:
@@ -235,7 +230,7 @@ def test_bt_delete_is_physical_and_preserves_provider_order(
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
     with database:
         database.create_table(table_name, schema)
-        importer = importer_class(database, use_jravan_schema=standard)
+        importer = DataImporter(database, use_jravan_schema=standard)
         deleted = importer.import_records(
             iter(
                 [
@@ -269,18 +264,16 @@ def test_bt_delete_is_physical_and_preserves_provider_order(
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "table_name", "standard"),
+    ("table_name", "standard"),
     [
         pytest.param(
-            importer_class, table_name, standard, id=f"{importer_class.__name__}-{table_name}"
+            table_name, standard, id=table_name
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, standard in (("NL_BT", False), ("KEITO", True))
     ],
 )
 def test_bt_delete_with_incomplete_key_fails_without_row_loss(
     tmp_path,
-    importer_class,
     table_name: str,
     standard: bool,
 ) -> None:
@@ -288,7 +281,7 @@ def test_bt_delete_with_incomplete_key_fails_without_row_loss(
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
     with database:
         database.create_table(table_name, schema)
-        importer = importer_class(database, use_jravan_schema=standard)
+        importer = DataImporter(database, use_jravan_schema=standard)
         importer.import_records(iter([parsed_record(keito_name="保持対象")]))
 
         with pytest.raises(ImporterError, match="incomplete key"):
@@ -310,10 +303,8 @@ def test_bt_delete_with_incomplete_key_fails_without_row_loss(
     assert rows == [{"HansyokuNum": "0123456789", "KeitoName": "保持対象"}]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_bt_partial_keyless_keito_is_refused_without_schema_or_row_mutation(
     tmp_path,
-    importer_class,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "partial-keito.db")})
     with database:
@@ -331,7 +322,7 @@ def test_bt_partial_keyless_keito_is_refused_without_schema_or_row_mutation(
         before_race_columns = database.fetch_all("PRAGMA table_info(RACE)")
 
         with pytest.raises(SchemaMigrationError, match="Schema verification failed"):
-            importer_class(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
+            DataImporter(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
 
         after_columns = database.fetch_all("PRAGMA table_info(KEITO)")
         after_race_columns = database.fetch_all("PRAGMA table_info(RACE)")
@@ -402,23 +393,20 @@ def test_schema_verifier_accepts_exact_or_unbounded_bt_text_columns() -> None:
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "auto_commit", "single_record"),
+    ("auto_commit", "single_record"),
     [
         pytest.param(
-            importer_class,
             auto_commit,
             False,
-            id=f"{importer_class.__name__}-{auto_commit}-batch",
+            id=f"{auto_commit}-batch",
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for auto_commit in (True, False)
     ]
     + [
         pytest.param(
-            DataImporter,
             auto_commit,
             True,
-            id=f"DataImporter-{auto_commit}-single",
+            id=f"{auto_commit}-single",
         )
         for auto_commit in (True, False)
     ],
@@ -440,7 +428,6 @@ def test_schema_verifier_accepts_exact_or_unbounded_bt_text_columns() -> None:
 )
 def test_standard_preflight_rejects_before_any_additive_schema_mutation(
     tmp_path,
-    importer_class,
     auto_commit: bool,
     single_record: bool,
     table_name: str,
@@ -459,7 +446,7 @@ def test_standard_preflight_rejects_before_any_additive_schema_mutation(
         before_keito_rows = database.fetch_all("SELECT * FROM KEITO")
 
         with pytest.raises(SchemaMigrationError, match="column capacities"):
-            importer = importer_class(database, use_jravan_schema=True)
+            importer = DataImporter(database, use_jravan_schema=True)
             if single_record:
                 import_one(importer, parsed_record(), auto_commit=auto_commit)
             else:
@@ -477,10 +464,8 @@ def test_standard_preflight_rejects_before_any_additive_schema_mutation(
     assert after_keito_rows == before_keito_rows
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_bt_legacy_blood_only_storage_is_refused_without_row_loss(
     tmp_path,
-    importer_class,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "legacy-blood.db")})
     with database:
@@ -497,7 +482,7 @@ def test_bt_legacy_blood_only_storage_is_refused_without_row_loss(
             SchemaMigrationError,
             match=r"BLOOD.*KEITO|KEITO.*BLOOD",
         ):
-            importer_class(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
+            DataImporter(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
         rows = database.fetch_all("SELECT HansyokuNum, KeitoEx FROM BLOOD")
         after_race_columns = database.fetch_all("PRAGMA table_info(RACE)")
 
@@ -510,39 +495,37 @@ def test_bt_postgresql_roundtrip_delete_and_narrow_schema_rejection(postgresql_d
     postgresql_db.execute(JRAVAN_SCHEMAS["KEITO"])
     postgresql_db.commit()
 
-    for importer_class in (DataImporter, OptimizedDataImporter):
-        for table_name, standard in (("NL_BT", False), ("KEITO", True)):
-            importer = importer_class(postgresql_db, use_jravan_schema=standard)
-            stored = importer.import_records(
-                iter([parsed_record(keito_name="PostgreSQL系統", keito_ex="P" * 6800)])
+    for table_name, standard in (("NL_BT", False), ("KEITO", True)):
+        importer = DataImporter(postgresql_db, use_jravan_schema=standard)
+        stored = importer.import_records(
+            iter([parsed_record(keito_name="PostgreSQL系統", keito_ex="P" * 6800)])
+        )
+        row = postgresql_db.fetch_one(
+            f"SELECT HansyokuNum AS hansyoku_num, KeitoName AS keito_name, "
+            f"length(KeitoEx) AS explanation_length FROM {table_name}"
+        )
+        assert stored["records_imported"] == 1
+        assert dict(row) == {
+            "hansyoku_num": "0123456789",
+            "keito_name": "PostgreSQL系統",
+            "explanation_length": 6800,
+        }
+        deleted = importer.import_records(
+            iter(
+                [
+                    parsed_record(
+                        data_kubun="0",
+                        keito_id="",
+                        keito_name="",
+                        keito_ex="",
+                    )
+                ]
             )
-            row = postgresql_db.fetch_one(
-                f"SELECT HansyokuNum AS hansyoku_num, KeitoName AS keito_name, "
-                f"length(KeitoEx) AS explanation_length FROM {table_name}"
-            )
-            assert stored["records_imported"] == 1
-            assert dict(row) == {
-                "hansyoku_num": "0123456789",
-                "keito_name": "PostgreSQL系統",
-                "explanation_length": 6800,
-            }
-
-            deleted = importer.import_records(
-                iter(
-                    [
-                        parsed_record(
-                            data_kubun="0",
-                            keito_id="",
-                            keito_name="",
-                            keito_ex="",
-                        )
-                    ]
-                )
-            )
-            assert deleted["records_imported"] == 1
-            assert (
-                postgresql_db.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"] == 0
-            )
+        )
+        assert deleted["records_imported"] == 1
+        assert (
+            postgresql_db.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"] == 0
+        )
 
     postgresql_db.execute("DROP TABLE KEITO")
     postgresql_db.execute(
@@ -578,12 +561,9 @@ def test_bt_postgresql_roundtrip_delete_and_narrow_schema_rejection(postgresql_d
         postgresql_db.commit()
         before_columns = postgresql_db.fetch_all(column_query, (table_name.lower(),))
 
-        for importer_class, auto_commit in (
-            (DataImporter, True),
-            (OptimizedDataImporter, False),
-        ):
+        for auto_commit in (True, False):
             with pytest.raises(SchemaMigrationError, match="column capacities"):
-                importer_class(postgresql_db, use_jravan_schema=True).import_records(
+                DataImporter(postgresql_db, use_jravan_schema=True).import_records(
                     iter(()),
                     auto_commit=auto_commit,
                 )

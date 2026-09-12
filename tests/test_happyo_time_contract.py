@@ -12,7 +12,6 @@ from src.database.schema_jravan import JRAVAN_SCHEMAS
 from src.database.sqlite_handler import SQLiteDatabase
 from src.database.table_mappings import JLTSQL_TO_JRAVAN
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.av_parser import AVParser
 from src.parser.cc_parser import CCParser
 from src.parser.jc_parser import JCParser
@@ -152,12 +151,12 @@ def test_native_av_identity_does_not_include_announcement_time(tmp_path) -> None
     assert rows == [{"HappyoTime": "06151000"}]
 
 
-def _assert_standard_storage(database, importer_class=DataImporter) -> None:
+def _assert_standard_storage(database) -> None:
     for _, _, _, _, table_name, _ in CHANGE_RECORDS:
         database.execute(JRAVAN_SCHEMAS[table_name])
     database.commit()
 
-    importer = importer_class(database, batch_size=1, use_jravan_schema=True)
+    importer = DataImporter(database, batch_size=1, use_jravan_schema=True)
     for _, parsed in _parsed_records():
         stats = importer.import_records(iter([parsed]))
         assert stats["records_failed"] == 0
@@ -175,16 +174,11 @@ def _assert_standard_storage(database, importer_class=DataImporter) -> None:
     assert tuple(weather.values()) == ("1", "1", "1", "0", "0", "0")
 
 
-@pytest.mark.parametrize(
-    "importer_class",
-    [DataImporter, OptimizedDataImporter],
-    ids=["regular", "optimized"],
-)
-def test_sqlite_standard_storage_preserves_official_mdhm_text(tmp_path, importer_class) -> None:
+def test_sqlite_standard_storage_preserves_official_mdhm_text(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "change-records.db")})
     database.connect()
     try:
-        _assert_standard_storage(database, importer_class)
+        _assert_standard_storage(database)
     finally:
         database.disconnect()
 

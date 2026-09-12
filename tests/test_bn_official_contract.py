@@ -17,7 +17,6 @@ from src.database.schema_types import (
 )
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.bn_parser import BNParser
 
 
@@ -149,24 +148,23 @@ def test_bn_native_and_standard_schemas_match_the_business_contract() -> None:
 
 
 @pytest.mark.parametrize(
-    "importer_class,table_name,use_jravan_schema",
+    "table_name,use_jravan_schema",
     [
         pytest.param(
-            importer_class, table_name, standard, id=f"{importer_class.__name__}-{table_name}"
+            table_name, standard, id=table_name
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, standard in (("NL_BN", False), ("BANUSI", True))
     ],
 )
 def test_bn_round_trips_every_business_field(
-    tmp_path, importer_class, table_name: str, use_jravan_schema: bool
+    tmp_path, table_name: str, use_jravan_schema: bool
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"{table_name}.db")})
     schema = JRAVAN_SCHEMAS[table_name] if use_jravan_schema else SCHEMAS[table_name]
     with database:
         database.create_table(table_name, schema)
         parsed = BNParser().parse(build_record())
-        stats = importer_class(
+        stats = DataImporter(
             database,
             use_jravan_schema=use_jravan_schema,
         ).import_records(iter([parsed]))
@@ -238,16 +236,15 @@ def _distinct_key_provider_records() -> tuple[dict, dict]:
     return first, second
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_bn_same_key_provider_revisions_count_as_two_operations(
-    bn_statistics_database, importer_class
+    bn_statistics_database
 ) -> None:
     database = bn_statistics_database
     database.execute(SCHEMAS["NL_BN"])
     database.commit()
     first, second = _same_key_provider_revisions()
 
-    stats = importer_class(database).import_records(iter([first, second]), auto_commit=True)
+    stats = DataImporter(database).import_records(iter([first, second]), auto_commit=True)
     stored = database.fetch_all(
         'SELECT BanusiCode AS "BanusiCode", BanusiName AS "BanusiName" FROM NL_BN'
     )
@@ -269,9 +266,8 @@ class _TwoCommitFailuresSQLite(SQLiteDatabase):
         super().commit()
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_bn_commit_failures_count_only_durable_individual_retries(
-    tmp_path, importer_class
+    tmp_path
 ) -> None:
     database = _TwoCommitFailuresSQLite({"path": str(tmp_path / "bn-commit-failure.db")})
     with database:
@@ -280,7 +276,7 @@ def test_bn_commit_failures_count_only_durable_individual_retries(
         database.remaining_commit_failures = 2
         first, second = _distinct_key_provider_records()
 
-        stats = importer_class(database).import_records(iter([first, second]), auto_commit=True)
+        stats = DataImporter(database).import_records(iter([first, second]), auto_commit=True)
         stored = database.fetch_all(
             'SELECT BanusiCode AS "BanusiCode", BanusiName AS "BanusiName" FROM NL_BN'
         )
@@ -345,9 +341,8 @@ OBSOLETE_NATIVE_SCHEMA = """
 """
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 def test_native_migration_requires_and_supports_full_current_bn_reimport(
-    tmp_path, importer_class
+    tmp_path
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "obsolete-nl-bn.db")})
     with database:
@@ -366,7 +361,7 @@ def test_native_migration_requires_and_supports_full_current_bn_reimport(
             "H_SetYear, R_ChakuKaisu6 FROM NL_BN"
         )
 
-        importer = importer_class(database)
+        importer = DataImporter(database)
         first_stats = importer.import_records(iter([BNParser().parse(build_record())]))
         second_stats = importer.import_records(iter([BNParser().parse(build_record())]))
         completed = database.fetch_one("SELECT * FROM NL_BN")
@@ -388,9 +383,8 @@ def test_native_migration_requires_and_supports_full_current_bn_reimport(
     assert completed["R_ChakuKaisu6"] == int(EXPECTED["R_ChakuKaisu6"])
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 def test_standard_import_refuses_keyless_obsolete_schema_without_row_loss(
-    tmp_path, importer_class
+    tmp_path
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "obsolete-banusi.db")})
     with database:
@@ -403,7 +397,7 @@ def test_standard_import_refuses_keyless_obsolete_schema_without_row_loss(
         database.commit()
 
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([BNParser().parse(build_record())])
             )
 
