@@ -33,13 +33,16 @@ def _extract_record_date(record: dict) -> Optional[str]:
     return None
 
 
-def validate_date_range(from_date: str, to_date: str) -> None:
+def validate_date_range(from_date: str, to_date: Optional[str] = None) -> None:
     """Reject malformed, non-calendar, or inverted date ranges.
 
     JVOpen・キャッシュ・スキーマ作成のいずれに触れるよりも前に呼ぶこと。
     fromtime はここで検証済みの日付からしか組み立てない。
     """
-    for label, value in (("from_date", from_date), ("to_date", to_date)):
+    bounds = [("from_date", from_date)]
+    if to_date is not None:  # 上端なしの要求
+        bounds.append(("to_date", to_date))
+    for label, value in bounds:
         if not isinstance(value, str) or len(value) != 8 or not value.isdigit():
             raise ValueError(
                 f"{label} must be an 8-digit YYYYMMDD string, got {value!r}"
@@ -51,7 +54,7 @@ def validate_date_range(from_date: str, to_date: str) -> None:
                 f"{label} must be a real calendar date in YYYYMMDD format, "
                 f"got {value!r}"
             ) from None
-    if from_date > to_date:
+    if to_date is not None and from_date > to_date:
         raise ValueError(
             f"from_date must not be after to_date: {from_date} > {to_date}"
         )
@@ -75,13 +78,13 @@ def _jvopen_fromtime(from_date: str, option: int) -> str:
 def _jvopen_fromtimes(
     data_spec: str,
     from_date: str,
-    to_date: str,
+    to_date: Optional[str],
     option: int,
 ) -> list[str]:
     """Split one request into the fromtime of each JVOpen call.
 
     なぜ刻むかは RANGE_FROMTIME_DATA_SPECS のコメントを見ること。刻まない
-    dataspec と option 2 は、従来どおり開始のみの 1 回になる。
+    dataspec、option 2、上端の無い要求は、従来どおり開始のみの 1 回になる。
 
     境界は隣り合う chunk で同じ値を共有する。JVOpen の対象は「開始時刻より
     大きく、終了時刻まで」なので、その値のファイルは前の chunk に入り次の
@@ -92,7 +95,7 @@ def _jvopen_fromtimes(
         ``開始-終了``（14 桁 + "-" + 14 桁）。
     """
     start = _jvopen_fromtime(from_date, option)
-    if not uses_range_fromtime(data_spec, option):
+    if to_date is None or not uses_range_fromtime(data_spec, option):
         return [start]
 
     last_day = datetime.strptime(to_date, "%Y%m%d")
@@ -281,7 +284,7 @@ class HistoricalFetcher(BaseFetcher):
         data_spec: str,
         fromtime: str,
         option: int,
-        to_date: str,
+        to_date: Optional[str],
         chunk_label: str,
         cache: "_NlCacheWriteState",
     ) -> Iterator[dict]:
@@ -460,7 +463,7 @@ class HistoricalFetcher(BaseFetcher):
         self,
         data_spec: str,
         from_date: str,
-        to_date: str,
+        to_date: Optional[str] = None,
         option: int = 1,
     ) -> Iterator[dict]:
         """Fetch historical data.
@@ -468,7 +471,7 @@ class HistoricalFetcher(BaseFetcher):
         Args:
             data_spec: Data specification code (e.g., "RACE", "DIFN")
             from_date: Start date in YYYYMMDD format
-            to_date: End date in YYYYMMDD format (filters records up to this date)
+            to_date: End date in YYYYMMDD format, or None for no upper bound
             option: JVOpen option:
                     1=通常データ（差分データ取得、蓄積系メンテナンス用）
                     2=今週データ（直近のレースのみ、非蓄積系用）
@@ -523,8 +526,11 @@ class HistoricalFetcher(BaseFetcher):
         # option=2 uses fromtime only for continuity within current race-cycle
         # data; it cannot prove an arbitrary requested historical range
         # complete. Bypass both existing NL cache markers and write-through
-        # caching for that mode.
-        active_cache_manager = self.cache_manager if option != 2 else None
+        # caching for that mode. A request with no upper bound cannot
+        # enumerate the dates it covered, so it is bypassed for the same reason.
+        active_cache_manager = (
+            self.cache_manager if option != 2 and to_date is not None else None
+        )
         cache_write_committed = active_cache_manager is None
         cache = _NlCacheWriteState(manager=active_cache_manager)
 
@@ -682,14 +688,14 @@ class HistoricalFetcher(BaseFetcher):
 
         yield from self.fetch(data_spec, from_date, to_date, option)
 
-    def fetch_with_cache(self, cache_manager, data_spec: str, from_date: str, to_date: str, option: int = 1) -> Iterator[dict]:
+    def fetch_with_cache(self, cache_manager, data_spec: str, from_date: str, to_date: Optional[str] = None, option: int = 1) -> Iterator[dict]:
         """Fetch records: use cache if complete, else fetch from JV-Link and populate cache.
 
         Args:
             cache_manager: CacheManager instance
             data_spec: Data specification code (e.g., "RACE")
             from_date: Start date in YYYYMMDD format
-            to_date: End date in YYYYMMDD format
+            to_date: End date in YYYYMMDD format, or None for no upper bound
             option: JVOpen option (default: 1)
 
         Yields:
@@ -708,7 +714,7 @@ class HistoricalFetcher(BaseFetcher):
             # Do not trust old false-complete markers created by earlier
             # versions, and do not attach a manager that could create new ones.
             yield from self.fetch(data_spec, from_date, to_date, option)
-        elif cache_manager.has_nl_range(data_spec, from_date, to_date):
+        elif to_date is not None and cache_manager.has_nl_range(data_spec, from_date, to_date):
             # Full cache hit: yield from cache
             self.reset_statistics()
             for raw in cache_manager.read_nl(data_spec, from_date, to_date):

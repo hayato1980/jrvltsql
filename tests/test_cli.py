@@ -321,7 +321,8 @@ class TestFetchCommand(unittest.TestCase):
         """Test fetch command with missing arguments."""
         result = self.runner.invoke(cli, ['fetch'])
 
-        # Should fail due to missing required arguments (--from, --to, --spec)
+        # Should fail due to missing required arguments (--from, --spec).
+        # --to is optional: omitting it requests everything from --from on.
         self.assertNotEqual(result.exit_code, 0)
         # Check if error message contains missing required option
         self.assertTrue(

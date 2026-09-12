@@ -117,7 +117,7 @@ def _print_fetch_statistics(result: dict) -> None:
     console.print(f"  Batches:  {result.get('batches_processed', 0)}")
 
 
-def _print_fetch_guardrail_notes(jv_option: int, data_specs) -> None:
+def _print_fetch_guardrail_notes(jv_option: int, data_specs, to_date=None) -> None:
     """Emit option- and dataspec-dependent date-range caveats after validation.
 
     注記は実走に 1 回で、要求された dataspec 全体を見る。刻める dataspec と
@@ -128,6 +128,8 @@ def _print_fetch_guardrail_notes(jv_option: int, data_specs) -> None:
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_SETUP_MODE}")
     if jv_option == 2:
         err_console.print(f"[yellow]Note:[/yellow] {FETCH_NOTE_OPTION2_RANGE}")
+    if to_date is None:
+        return  # 以下はすべて --to の注記。渡されていないなら当てはまらない
 
     from src.jvlink.constants import uses_range_fromtime
 
@@ -450,9 +452,11 @@ def update(ctx, force):
 @click.option(
     "--to",
     "date_to",
-    required=True,
+    default=None,
     help=(
-        "End date (YYYYMMDD). Filters Year+MonthDay and HC/WC ChokyoDate "
+        "End date (YYYYMMDD). Omit it for no upper bound: no client-side "
+        "filter, no JVOpen end point, and no NL cache. Otherwise it "
+        "filters Year+MonthDay and HC/WC ChokyoDate "
         "client-side; records without either date are kept and prevent a "
         "complete-cache marker. For a dataspec that accepts a range fromtime "
         "(currently live-verified RACE, except option 2) it is also the "
@@ -527,7 +531,7 @@ def fetch(ctx, date_from, date_to, data_specs, jv_option, db, batch_size, progre
     option_names = {1: "通常データ", 2: "今週データ", 3: "セットアップ", 4: "分割セットアップ"}
     console.print(f"[bold cyan]Fetching historical data from JRA-VAN DataLab...[/bold cyan]\n")
     console.print(f"  Data source: JRA (中央競馬)")
-    console.print(f"  Date range: {date_from} -- {date_to}")
+    console.print(f"  Date range: {date_from} -- {date_to or '(なし)'}")
     # 単数形は「いま処理している dataspec」だけを指す。実走全体の一覧は複数形に
     # して、driver が見出し行を spec 名として読まないようにする。
     spec_label = "Data spec: " if len(data_specs) == 1 else "Data specs:"
@@ -547,7 +551,7 @@ def fetch(ctx, date_from, date_to, data_specs, jv_option, db, batch_size, progre
         console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
 
-    _print_fetch_guardrail_notes(jv_option, data_specs)
+    _print_fetch_guardrail_notes(jv_option, data_specs, date_to)
     console.print()
 
     try:
