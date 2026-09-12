@@ -14,6 +14,7 @@ schedules the pass rather than leaving a process resident.
 from __future__ import annotations
 
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 # JV-Link は未契約データ種別に対し購読エラーを返す (-111 契約無し / -114 未購読
@@ -37,6 +38,35 @@ def iter_date_keys(from_date: str, to_date: str) -> list[str]:
         (start + timedelta(days=offset)).strftime("%Y%m%d")
         for offset in range((end - start).days + 1)
     ]
+
+
+@contextmanager
+def open_jvlink_session(sid: str):
+    """Hold one JV-Link session open across several passes.
+
+    Each pass opens and closes its own JVRTOpen stream per date key; this is the
+    session those streams live inside. A caller running several dataspecs in one
+    go takes this once and hands the wrapper to each pass, instead of starting
+    and ending a JV-Link session per dataspec.
+
+    Args:
+        sid: JV-Link session ID.
+
+    Yields:
+        The JV-Link wrapper to pass as ``sync_date_keyed_spec(jvlink=...)``.
+    """
+
+    from src.fetcher.realtime import RealtimeFetcher
+
+    jvlink = RealtimeFetcher(sid=sid).jvlink
+    jvlink.jv_init()
+    try:
+        yield jvlink
+    finally:
+        try:
+            jvlink.jv_close()
+        except Exception:
+            pass
 
 
 def sync_date_keyed_spec(

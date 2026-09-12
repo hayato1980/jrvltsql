@@ -14,7 +14,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.database import create_database_from_config
 from src.importer.batch import BatchProcessor
-from src.realtime import speed_report
+from src.realtime.speed_report import SUBSCRIPTION_ERROR_CODES, sync_date_keyed_spec
 from src.utils.config import load_config
 
 UPDATE_SPECS = [
@@ -51,22 +51,15 @@ UPDATE_SPECS = [
 
 REALTIME_SPEC_PREFIX = "0B"
 
-# 購読エラー(-111/-114/-115)の扱いは速報系の 1 周実装と同じものを使う。MING 等の
-# 任意契約スペックが未購読でも日次同期を止めないよう、これらは
+# 購読エラー(-111/-114/-115)の扱いは速報系の 1 周実装と同じものを使う(import 済み)。
+# MING 等の任意契約スペックが未購読でも日次同期を止めないよう、これらは
 # --ignore-jvopen-error-codes の指定に関わらず警告してスキップする。
-SUBSCRIPTION_ERROR_CODES = speed_report.SUBSCRIPTION_ERROR_CODES
 
 
 def _is_realtime_spec(spec: str) -> bool:
     """Return True for JVRTOpen speed-report specs (e.g., 0B12, 0B15)."""
 
     return spec.upper().startswith(REALTIME_SPEC_PREFIX)
-
-
-# 日付キーの速報系を 1 周で取り切る実装は src/realtime/speed_report.py が持つ。
-# 日次同期と、1 周だけ回したい呼び出し側の両方が同じ drain ループを使う。
-_iter_date_keys = speed_report.iter_date_keys
-_sync_realtime_spec = speed_report.sync_date_keyed_spec
 
 
 def _select_update_specs(specs: str | None) -> list[tuple[str, int]]:
@@ -179,7 +172,7 @@ def main() -> int:
             if _is_realtime_spec(spec):
                 print(f"[daily-sync] {spec} {from_date}..{to_date} (realtime)")
                 try:
-                    stats = _sync_realtime_spec(
+                    stats = sync_date_keyed_spec(
                         database=database,
                         spec=spec,
                         from_date=from_date,

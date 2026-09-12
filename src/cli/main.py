@@ -2151,7 +2151,7 @@ def speed_report(ctx, spec, from_date, to_date, db):
         is_date_keyed_spec,
         is_time_series_spec,
     )
-    from src.realtime.speed_report import sync_date_keyed_spec
+    from src.realtime.speed_report import open_jvlink_session, sync_date_keyed_spec
 
     config = ctx.obj.get("config")
 
@@ -2211,41 +2211,30 @@ def speed_report(ctx, spec, from_date, to_date, db):
         "records_failed": 0,
     }
     try:
-        with database:
-            # One JV-Link session covers every spec in this run: the session is
-            # opened here and handed to each pass, so the specs are not opened
-            # and closed one JV-Link session at a time.
-            from src.fetcher.realtime import RealtimeFetcher
-
-            jvlink = RealtimeFetcher(sid=sid).jvlink
-            jvlink.jv_init()
-            try:
-                for index, code in enumerate(specs_list):
-                    console.print(f"[bold]Processing {code}...[/bold]")
-                    stats = sync_date_keyed_spec(
-                        database=database,
-                        spec=code,
-                        from_date=from_date,
-                        to_date=to_date,
-                        sid=sid,
-                        jvlink=jvlink,
-                        # The schema is the same for every spec in the run, so
-                        # only the first pass has to establish it.
-                        ensure_tables=(index == 0),
-                    )
-                    for name in totals:
-                        totals[name] += int(stats.get(name, 0))
-                    console.print(
-                        f"  [green][OK][/green] {code}: "
-                        f"fetched={stats.get('records_fetched', 0):,} "
-                        f"imported={stats.get('records_imported', 0):,} "
-                        f"failed={stats.get('records_failed', 0):,}"
-                    )
-            finally:
-                try:
-                    jvlink.jv_close()
-                except Exception:
-                    pass
+        # One JV-Link session covers every spec in this run, so the specs are
+        # not opened and closed one JV-Link session at a time.
+        with database, open_jvlink_session(sid) as jvlink:
+            for index, code in enumerate(specs_list):
+                console.print(f"[bold]Processing {code}...[/bold]")
+                stats = sync_date_keyed_spec(
+                    database=database,
+                    spec=code,
+                    from_date=from_date,
+                    to_date=to_date,
+                    sid=sid,
+                    jvlink=jvlink,
+                    # The schema is the same for every spec in the run, so only
+                    # the first pass has to establish it.
+                    ensure_tables=(index == 0),
+                )
+                for name in totals:
+                    totals[name] += int(stats.get(name, 0))
+                console.print(
+                    f"  [green][OK][/green] {code}: "
+                    f"fetched={stats.get('records_fetched', 0):,} "
+                    f"imported={stats.get('records_imported', 0):,} "
+                    f"failed={stats.get('records_failed', 0):,}"
+                )
     except Exception as e:
         console.print(f"\n[red]Error:[/red] {e}", style="bold")
         logger.error("Failed to fetch speed-report data", error=str(e), exc_info=True)
@@ -2312,6 +2301,11 @@ def specs():
         console.print()
 
     console.print("[dim]Use these codes with: jltsql realtime start --specs <code>[/dim]")
+    console.print(
+        "[dim]One pass instead of a resident monitor: "
+        "`realtime speed-report --spec <date-keyed code>` (0B11, 0B14, ...), "
+        "`realtime timeseries --spec <race-keyed code>` (0B30, 0B41, ...)[/dim]"
+    )
 
 
 if __name__ == "__main__":
