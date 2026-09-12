@@ -15,7 +15,6 @@ from src.database.schema_types import (
 from src.database.sqlite_handler import SQLiteDatabase
 from src.database.table_mappings import JLTSQL_TO_JRAVAN, JRAVAN_TO_JLTSQL
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.br_parser import BRParser
 
 
@@ -160,24 +159,23 @@ def test_br_native_and_standard_schemas_match_the_business_contract() -> None:
 
 
 @pytest.mark.parametrize(
-    "importer_class,table_name,use_jravan_schema",
+    "table_name,use_jravan_schema",
     [
         pytest.param(
-            importer_class, table_name, standard, id=f"{importer_class.__name__}-{table_name}"
+            table_name, standard, id=table_name
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, standard in (("NL_BR", False), ("SEISAN", True))
     ],
 )
 def test_br_round_trips_every_business_field(
-    tmp_path, importer_class, table_name: str, use_jravan_schema: bool
+    tmp_path, table_name: str, use_jravan_schema: bool
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"{table_name}.db")})
     schema = JRAVAN_SCHEMAS[table_name] if use_jravan_schema else SCHEMAS[table_name]
     with database:
         database.create_table(table_name, schema)
         parsed = BRParser().parse(build_record())
-        stats = importer_class(
+        stats = DataImporter(
             database,
             use_jravan_schema=use_jravan_schema,
         ).import_records(iter([parsed]))
@@ -215,9 +213,8 @@ OBSOLETE_NATIVE_SCHEMA = """
 """
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 def test_native_migration_requires_and_supports_full_current_br_reimport(
-    tmp_path, importer_class
+    tmp_path
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "obsolete-nl-br.db")})
     with database:
@@ -236,7 +233,7 @@ def test_native_migration_requires_and_supports_full_current_br_reimport(
             "H_SetYear, R_ChakuKaisu6 FROM NL_BR"
         )
 
-        importer = importer_class(database)
+        importer = DataImporter(database)
         first_stats = importer.import_records(iter([BRParser().parse(build_record())]))
         second_stats = importer.import_records(iter([BRParser().parse(build_record())]))
         completed = database.fetch_one("SELECT * FROM NL_BR")
@@ -289,9 +286,8 @@ OBSOLETE_STANDARD_SCHEMA = """
 """
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 def test_standard_import_refuses_keyless_obsolete_schema_without_row_loss(
-    tmp_path, importer_class
+    tmp_path
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "obsolete-seisan.db")})
     with database:
@@ -304,7 +300,7 @@ def test_standard_import_refuses_keyless_obsolete_schema_without_row_loss(
         database.commit()
 
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([BRParser().parse(build_record())])
             )
 
@@ -313,9 +309,8 @@ def test_standard_import_refuses_keyless_obsolete_schema_without_row_loss(
     assert rows == [{"RecordSpec": "ZZ", "BreederName": "preserve-me"}]
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 def test_standard_import_refuses_legacy_breeder_alias_without_row_loss(
-    tmp_path, importer_class
+    tmp_path
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "legacy-breeder.db")})
     with database:
@@ -330,7 +325,7 @@ def test_standard_import_refuses_legacy_breeder_alias_without_row_loss(
         database.commit()
 
         with pytest.raises(SchemaMigrationError, match="BREEDER"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([BRParser().parse(build_record())])
             )
 

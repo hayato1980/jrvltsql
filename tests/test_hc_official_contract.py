@@ -22,7 +22,6 @@ from src.database.schema_types import (
 )
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hc_parser import HCParser
 from src.realtime.updater import RealtimeUpdater
 from tests.importer_support import import_one
@@ -316,23 +315,20 @@ def test_hc_native_and_standard_schemas_are_executable_official_contracts() -> N
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "table_name", "standard", "auto_commit"),
+    ("table_name", "standard", "auto_commit"),
     [
         pytest.param(
-            importer_class,
             table_name,
             standard,
             auto_commit,
-            id=f"{importer_class.__name__}-{table_name}-{auto_commit}",
+            id=f"{table_name}-{auto_commit}",
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, standard in (("NL_HC", False), ("HANRO", True))
         for auto_commit in (True, False)
     ],
 )
 def test_hc_provider_order_update_exact_delete_and_durable_units(
     tmp_path,
-    importer_class,
     table_name: str,
     standard: bool,
     auto_commit: bool,
@@ -342,7 +338,7 @@ def test_hc_provider_order_update_exact_delete_and_durable_units(
     with database:
         database.execute(schema)
         database.commit()
-        importer = importer_class(database, use_jravan_schema=standard)
+        importer = DataImporter(database, use_jravan_schema=standard)
         stats = importer.import_records(iter(provider_order_records()), auto_commit=auto_commit)
         assert {
             key: stats[key] for key in ("records_imported", "records_failed", "batches_processed")
@@ -529,26 +525,25 @@ def test_hc_postgresql_provider_order_and_wrong_key_gate(postgresql_db) -> None:
         schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
         postgresql_db.execute(schema)
         postgresql_db.commit()
-        for importer_class in (DataImporter, OptimizedDataImporter):
-            for auto_commit in (True, False):
-                stats = importer_class(postgresql_db, use_jravan_schema=standard).import_records(
-                    iter(provider_order_records()),
-                    auto_commit=auto_commit,
+        for auto_commit in (True, False):
+            stats = DataImporter(postgresql_db, use_jravan_schema=standard).import_records(
+                iter(provider_order_records()),
+                auto_commit=auto_commit,
+            )
+            assert stats["records_imported"] == 7
+            assert (
+                postgresql_db.fetch_all(
+                    'SELECT TresenKubun AS "TresenKubun", '
+                    'ChokyoDate AS "ChokyoDate", ChokyoTime AS "ChokyoTime", '
+                    'KettoNum AS "KettoNum", HaronTime4 AS "HaronTime4", '
+                    'LapTime1 AS "LapTime1" '
+                    f"FROM {table_name} "
+                    "ORDER BY TresenKubun, ChokyoDate, ChokyoTime, KettoNum"
                 )
-                assert stats["records_imported"] == 7
-                assert (
-                    postgresql_db.fetch_all(
-                        'SELECT TresenKubun AS "TresenKubun", '
-                        'ChokyoDate AS "ChokyoDate", ChokyoTime AS "ChokyoTime", '
-                        'KettoNum AS "KettoNum", HaronTime4 AS "HaronTime4", '
-                        'LapTime1 AS "LapTime1" '
-                        f"FROM {table_name} "
-                        "ORDER BY TresenKubun, ChokyoDate, ChokyoTime, KettoNum"
-                    )
-                    == EXPECTED_SURVIVORS
-                )
-                postgresql_db.execute(f"DELETE FROM {table_name}")
-                postgresql_db.commit()
+                == EXPECTED_SURVIVORS
+            )
+            postgresql_db.execute(f"DELETE FROM {table_name}")
+            postgresql_db.commit()
         postgresql_db.execute(f"DROP TABLE {table_name}")
         postgresql_db.commit()
 

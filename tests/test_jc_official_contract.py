@@ -24,7 +24,6 @@ from src.importer.importer import (
     validate_import_record_header,
     verify_jc_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.jc_parser import JCParser
 from src.parser.status_domain import (
     CURRENT_ACCUMULATED_DATA_KUBUN,
@@ -164,12 +163,6 @@ def import_records(database, entrypoint, records, *, standard, auto_commit, batc
         ).import_records(iter(records), auto_commit=auto_commit)
         assert result["records_imported"] == len(records)
         assert result["records_failed"] == 0
-    elif entrypoint == "optimized-batch":
-        result = OptimizedDataImporter(
-            database, batch_size=batch_size, use_jravan_schema=standard
-        ).import_records(iter(records), auto_commit=auto_commit)
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
     else:
         importer = DataImporter(database, use_jravan_schema=standard)
         assert all(
@@ -288,7 +281,7 @@ def test_jc_caller_text_must_fit_the_official_cp932_span(changes: dict) -> None:
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_jc_storage_preserves_times_revises_and_exactly_erases(
     tmp_path, standard: bool, entrypoint: str, auto_commit: bool
@@ -541,7 +534,7 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_jc_postgresql_identity_revision_and_historical_exact_erase(
     postgresql_db, standard: bool, entrypoint: str, auto_commit: bool

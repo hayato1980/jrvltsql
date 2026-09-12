@@ -25,7 +25,6 @@ from src.importer.importer import (
     validate_import_record_header,
     verify_we_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.we_parser import WEParser
 from src.realtime.updater import RealtimeUpdater
 from tests.importer_support import import_one
@@ -106,12 +105,6 @@ def import_records(database, entrypoint, records, *, standard, auto_commit):
         result = DataImporter(database, batch_size=1, use_jravan_schema=standard).import_records(
             iter(records), auto_commit=auto_commit
         )
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
-    elif entrypoint == "optimized-batch":
-        result = OptimizedDataImporter(
-            database, batch_size=1, use_jravan_schema=standard
-        ).import_records(iter(records), auto_commit=auto_commit)
         assert result["records_imported"] == len(records)
         assert result["records_failed"] == 0
     else:
@@ -270,7 +263,7 @@ def test_we_historical_status_boundary_is_explicit() -> None:
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_we_storage_keeps_distinct_times_and_exact_reimport_is_idempotent(
     tmp_path, standard: bool, entrypoint: str, auto_commit: bool
@@ -305,7 +298,7 @@ def test_we_storage_keeps_distinct_times_and_exact_reimport_is_idempotent(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_we_historical_status_zero_exactly_erases_one_official_key(
     tmp_path, standard: bool, entrypoint: str, auto_commit: bool
@@ -397,8 +390,7 @@ def test_we_unsafe_schema_is_rejected_before_mutation(tmp_path, defect: str) -> 
         assert database.fetch_one("SELECT COUNT(*) AS n FROM NL_WE") == {"n": 0}
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_first_we_rejection_stops_standard_migration(tmp_path, importer_class) -> None:
+def test_first_we_rejection_stops_standard_migration(tmp_path) -> None:
     race_schema = JRAVAN_SCHEMAS["RACE"].replace(
         "            YoubiCD                        VARCHAR(1)          ,  -- 文字列(1)\n",
         "",
@@ -412,7 +404,7 @@ def test_first_we_rejection_stops_standard_migration(tmp_path, importer_class) -
         invalid = parsed_we()
         invalid["HappyoTime"] = "99999999"
         with pytest.raises(SchemaMigrationError):
-            importer_class(database, use_jravan_schema=True).import_records(iter([invalid]))
+            DataImporter(database, use_jravan_schema=True).import_records(iter([invalid]))
         after = database.fetch_all('PRAGMA table_info("RACE")')
     assert after == before
 
@@ -569,7 +561,7 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_we_postgresql_identity_update_and_historical_exact_erase(
     postgresql_db, standard: bool, entrypoint: str, auto_commit: bool

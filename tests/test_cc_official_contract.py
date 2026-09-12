@@ -22,7 +22,6 @@ from src.database.schema_types import (
 )
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter, validate_import_record_header
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.cc_parser import CCParser
 from src.parser.factory import ParserFactory
 from src.parser.status_domain import CURRENT_ACCUMULATED_DATA_KUBUN
@@ -202,9 +201,8 @@ def test_cc_explicit_initial_values_remain_accepted_and_lossless() -> None:
     ) == ("00000000", "0000", "00", "0000", "00", "0")
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_cc_standard_normalizes_caller_integer_distances_to_four_digits(
-    tmp_path, importer_class
+    tmp_path
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "integer-distances.db")})
     row = parsed_cc()
@@ -213,7 +211,7 @@ def test_cc_standard_normalizes_caller_integer_distances_to_four_digits(
     with database:
         database.execute(JRAVAN_SCHEMAS["COURSE_CHANGE"])
         database.commit()
-        result = importer_class(database, use_jravan_schema=True).import_records(iter([row]))
+        result = DataImporter(database, use_jravan_schema=True).import_records(iter([row]))
         stored = database.fetch_one("SELECT AtoKyori, MaeKyori FROM COURSE_CHANGE")
     assert result["records_imported"] == 1
     assert result["records_failed"] == 0
@@ -373,11 +371,10 @@ def test_cc_dual_rejects_an_unsafe_target_before_either_database_changes(
         assert secondary.fetch_one("SELECT COUNT(*) AS n FROM NL_CC") == {"n": 0}
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 @pytest.mark.parametrize("table_name,standard", [("NL_CC", False), ("COURSE_CHANGE", True)])
 def test_cc_provider_revision_replaces_one_official_identity(
-    tmp_path, importer_class, auto_commit: bool, table_name: str, standard: bool
+    tmp_path,  auto_commit: bool, table_name: str, standard: bool
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"revision-{table_name}.db")})
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -386,7 +383,7 @@ def test_cc_provider_revision_replaces_one_official_identity(
     with database:
         database.execute(schema)
         database.commit()
-        result = importer_class(database, batch_size=1, use_jravan_schema=standard).import_records(
+        result = DataImporter(database, batch_size=1, use_jravan_schema=standard).import_records(
             iter([first, revised]), auto_commit=auto_commit
         )
         rows = database.fetch_all(f"SELECT HappyoTime, AtoKyori, AtoTruckCD FROM {table_name}")
@@ -397,11 +394,10 @@ def test_cc_provider_revision_replaces_one_official_identity(
     ]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 @pytest.mark.parametrize("table_name,standard", [("NL_CC", False), ("COURSE_CHANGE", True)])
 def test_cc_caller_validation_precedes_coercion_and_mutation(
-    tmp_path, importer_class, auto_commit: bool, table_name: str, standard: bool
+    tmp_path,  auto_commit: bool, table_name: str, standard: bool
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"invalid-{table_name}.db")})
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
@@ -419,7 +415,7 @@ def test_cc_caller_validation_precedes_coercion_and_mutation(
     with database:
         database.execute(schema)
         database.commit()
-        importer = importer_class(database, use_jravan_schema=standard)
+        importer = DataImporter(database, use_jravan_schema=standard)
         for invalid in invalid_rows:
             with pytest.raises(SchemaMigrationError):
                 importer.import_records(iter([invalid]), auto_commit=auto_commit)
@@ -520,15 +516,14 @@ def postgresql_db():
         database.disconnect()
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("table_name,standard", [("NL_CC", False), ("COURSE_CHANGE", True)])
 def test_cc_postgresql_counts_both_same_key_provider_operations(
-    postgresql_db, importer_class, table_name: str, standard: bool
+    postgresql_db,  table_name: str, standard: bool
 ) -> None:
     schema = JRAVAN_SCHEMAS[table_name] if standard else SCHEMAS[table_name]
     postgresql_db.execute(schema)
     postgresql_db.commit()
-    result = importer_class(postgresql_db, use_jravan_schema=standard).import_records(
+    result = DataImporter(postgresql_db, use_jravan_schema=standard).import_records(
         iter([parsed_cc(), parsed_cc(HappyoTime="08181205")]),
         auto_commit=True,
     )

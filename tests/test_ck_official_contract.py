@@ -20,7 +20,6 @@ from src.database.schema_types import (
 )
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.ck_parser import CKParser
 from tests.importer_support import import_one
 
@@ -383,11 +382,10 @@ def _create_ck_tables(database: SQLiteDatabase) -> None:
         database.create_table(table_name, SCHEMAS[table_name])
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 def test_ck_importers_store_update_delete_in_provider_order_and_reconnect(
-    tmp_path, importer_class
+    tmp_path
 ) -> None:
-    path = tmp_path / f"{importer_class.__name__}.db"
+    path = tmp_path / f"{DataImporter.__name__}.db"
     initial = CKParser().parse(build_record()[0])
     updated_record = build_record(
         data_kubun="2",
@@ -399,7 +397,7 @@ def test_ck_importers_store_update_delete_in_provider_order_and_reconnect(
     database = SQLiteDatabase({"path": str(path)})
     with database:
         _create_ck_tables(database)
-        stats = importer_class(database).import_records(iter([initial, deletion, updated]))
+        stats = DataImporter(database).import_records(iter([initial, deletion, updated]))
     assert stats["records_imported"] == 3
     assert stats["records_failed"] == 0
 
@@ -421,19 +419,18 @@ def test_ck_importers_store_update_delete_in_provider_order_and_reconnect(
         assert summaries["count"] == 8
         assert count_sentinel == {"Count1": int(updated_record[2][0]["Count1"])}
         assert summary_sentinel == {"HonSyokinHeichi": int(updated_record[3][0]["HonSyokinHeichi"])}
-        deleted = importer_class(reopened).import_records(iter([deletion]))
+        deleted = DataImporter(reopened).import_records(iter([deletion]))
         assert deleted["records_imported"] == 1
         for table_name in ("NL_CK", *CHILD_TABLES):
             assert reopened.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"] == 0
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ck_import_refuses_missing_child_before_parent_mutation(tmp_path, importer_class) -> None:
+def test_ck_import_refuses_missing_child_before_parent_mutation(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "missing-child.db")})
     with database:
         database.create_table("NL_CK", SCHEMAS["NL_CK"])
         with pytest.raises(SchemaMigrationError, match="NL_CK_CHAKU"):
-            importer_class(database).import_records(iter([CKParser().parse(build_record()[0])]))
+            DataImporter(database).import_records(iter([CKParser().parse(build_record()[0])]))
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_CK")["count"] == 0
 
 
@@ -471,35 +468,32 @@ def test_ck_single_record_api_uses_the_same_coupled_contract(tmp_path) -> None:
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_CK")["count"] == 0
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ck_standard_schema_mode_is_explicitly_unsupported(tmp_path, importer_class) -> None:
+def test_ck_standard_schema_mode_is_explicitly_unsupported(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "standard.db")})
     with database:
         with pytest.raises(SchemaMigrationError, match="CHOKYO_DETAIL"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([CKParser().parse(build_record()[0])])
             )
         assert not database.table_exists("CHOKYO_DETAIL")
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
-def test_ck_delete_rejects_forged_child_payload_before_mutation(tmp_path, importer_class) -> None:
+def test_ck_delete_rejects_forged_child_payload_before_mutation(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "delete-payload.db")})
     initial = CKParser().parse(build_record()[0])
     deletion = CKParser().parse(build_record(data_kubun="0")[0])
     deletion["_ck_chaku_rows"] = deepcopy(initial["_ck_chaku_rows"])
     with database:
         _create_ck_tables(database)
-        importer_class(database).import_records(iter([initial]))
+        DataImporter(database).import_records(iter([initial]))
         with pytest.raises(SchemaMigrationError, match="must not carry"):
-            importer_class(database).import_records(iter([deletion]))
+            DataImporter(database).import_records(iter([deletion]))
         assert database.fetch_one("SELECT CKStorageVersion FROM NL_CK") == {"CKStorageVersion": 1}
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 @pytest.mark.parametrize("defect", ["reordered", "missing", "parent-key"])
 def test_ck_metadata_defects_fail_before_replacing_a_complete_row(
-    tmp_path, importer_class, defect
+    tmp_path,  defect
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"metadata-{defect}.db")})
     initial = CKParser().parse(build_record()[0])
@@ -515,13 +509,13 @@ def test_ck_metadata_defects_fail_before_replacing_a_complete_row(
         broken["_ck_chaku_rows"][0]["Year"] = "2025"
     with database:
         _create_ck_tables(database)
-        importer_class(database).import_records(iter([initial]))
+        DataImporter(database).import_records(iter([initial]))
         before = database.fetch_one(
             "SELECT Count1 FROM NL_CK_CHAKU WHERE EntityKubun = 'UMA' "
             "AND MetricKubun = 'ChakuSogo'"
         )
         with pytest.raises(SchemaMigrationError):
-            importer_class(database).import_records(iter([broken]))
+            DataImporter(database).import_records(iter([broken]))
         after = database.fetch_one(
             "SELECT Count1 FROM NL_CK_CHAKU WHERE EntityKubun = 'UMA' "
             "AND MetricKubun = 'ChakuSogo'"
@@ -638,9 +632,8 @@ def test_ck_create_all_tables_reports_malformed_child_contract(tmp_path) -> None
         assert results["NL_CK_RUIKEI"] is False
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 def test_ck_sqlite_disabled_foreign_keys_fail_before_parent_mutation(
-    tmp_path, importer_class
+    tmp_path
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "disabled-foreign-keys.db")})
     with database:
@@ -655,19 +648,18 @@ def test_ck_sqlite_disabled_foreign_keys_fail_before_parent_mutation(
         database.execute("PRAGMA foreign_keys = OFF")
         assert database.fetch_one("PRAGMA foreign_keys") == {"foreign_keys": 0}
         with pytest.raises(SchemaMigrationError):
-            importer_class(database).import_records(iter([CKParser().parse(build_record()[0])]))
+            DataImporter(database).import_records(iter([CKParser().parse(build_record()[0])]))
         assert database.fetch_all("SELECT Bamei, CKStorageVersion FROM NL_CK") == [
             {"Bamei": "preserve", "CKStorageVersion": None}
         ]
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 @pytest.mark.parametrize(
     "defect",
     ["check-true", "restrict-fk", "nullable-dimension", "wrong-pk", "extra-column"],
 )
 def test_ck_malformed_child_schema_fails_closed_and_preserves_legacy_parent(
-    tmp_path, importer_class, defect
+    tmp_path,  defect
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"schema-{defect}.db")})
     with database:
@@ -682,7 +674,7 @@ def test_ck_malformed_child_schema_fails_closed_and_preserves_legacy_parent(
         )
         database.commit()
         with pytest.raises(SchemaMigrationError):
-            importer_class(database).import_records(iter([CKParser().parse(build_record()[0])]))
+            DataImporter(database).import_records(iter([CKParser().parse(build_record()[0])]))
         assert database.fetch_all("SELECT Bamei, CKStorageVersion FROM NL_CK") == [
             {"Bamei": "preserve", "CKStorageVersion": None}
         ]
@@ -712,9 +704,8 @@ def test_ck_database_constraints_reject_orphan_invalid_dimension_and_null_count(
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_CK_CHAKU")["count"] == 278
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 def test_ck_postgresql_complete_roundtrip_reconnect_update_delete(
-    postgresql_db, importer_class
+    postgresql_db
 ) -> None:
     database, schema_name = postgresql_db
     database.execute(SCHEMAS["NL_CK"])
@@ -729,7 +720,7 @@ def test_ck_postgresql_complete_roundtrip_reconnect_update_delete(
     )
     updated = CKParser().parse(updated_record[0])
     deletion = CKParser().parse(build_record(data_kubun="0")[0])
-    stats = importer_class(database).import_records(iter([initial, deletion, updated]))
+    stats = DataImporter(database).import_records(iter([initial, deletion, updated]))
     assert stats["records_imported"] == 3
     assert stats["records_failed"] == 0
 
@@ -758,13 +749,12 @@ def test_ck_postgresql_complete_roundtrip_reconnect_update_delete(
     with pytest.raises(DatabaseError):
         database.insert("NL_CK_CHAKU", orphan)
     database.rollback()
-    deleted = importer_class(database).import_records(iter([deletion]))
+    deleted = DataImporter(database).import_records(iter([deletion]))
     assert deleted["records_imported"] == 1
     for table_name in ("NL_CK", *CHILD_TABLES):
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")["count"] == 0
 
 
-@pytest.mark.parametrize("importer_class", [DataImporter, OptimizedDataImporter])
 @pytest.mark.parametrize(
     "defect",
     [
@@ -783,7 +773,7 @@ def test_ck_postgresql_complete_roundtrip_reconnect_update_delete(
     ],
 )
 def test_ck_postgresql_malformed_constraints_fail_before_parent_mutation(
-    postgresql_db, importer_class, defect
+    postgresql_db,  defect
 ) -> None:
     database, _ = postgresql_db
     database.execute(SCHEMAS["NL_CK"])
@@ -808,7 +798,7 @@ def test_ck_postgresql_malformed_constraints_fail_before_parent_mutation(
     )
     database.commit()
     with pytest.raises(SchemaMigrationError):
-        importer_class(database).import_records(iter([CKParser().parse(build_record()[0])]))
+        DataImporter(database).import_records(iter([CKParser().parse(build_record()[0])]))
     assert database.fetch_one(
         'SELECT Bamei AS "Bamei", CKStorageVersion AS "CKStorageVersion" FROM NL_CK'
     ) == {"Bamei": "preserve", "CKStorageVersion": None}

@@ -26,7 +26,6 @@ from src.importer.importer import (
     validate_import_record_header,
     verify_hs_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hs_parser import HSParser
 from src.realtime.updater import RealtimeUpdater
 from tests.importer_support import import_each, import_one
@@ -233,10 +232,6 @@ def _import(
         stats = DataImporter(database, use_jravan_schema=standard).import_records(
             iter(records), auto_commit=auto_commit
         )
-    elif entrypoint == "optimized":
-        stats = OptimizedDataImporter(database, use_jravan_schema=standard).import_records(
-            iter(records), auto_commit=auto_commit
-        )
     else:
         importer = DataImporter(database, use_jravan_schema=standard)
         stats = import_each(importer, records, auto_commit=auto_commit)
@@ -256,11 +251,7 @@ def _assert_hs_failure_transaction_boundary(
     good = parsed_hs()
     malformed = parsed_hs(ketto_num="2022100106")
     malformed["Price"] = "9X"
-    importer = (
-        OptimizedDataImporter(database, batch_size=1, use_jravan_schema=standard)
-        if entrypoint == "optimized"
-        else DataImporter(database, batch_size=1, use_jravan_schema=standard)
-    )
+    importer = DataImporter(database, batch_size=1, use_jravan_schema=standard)
     with pytest.raises(SchemaMigrationError):
         if entrypoint == "single":
             assert import_one(importer, good, auto_commit=auto_commit)
@@ -668,7 +659,7 @@ def test_hs_actual_pre_2_0_empty_storage_requires_explicit_rebuild(
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}") == {"count": 0}
 
 
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
+@pytest.mark.parametrize("entrypoint", ("data", "single"))
 def test_hs_invalid_first_record_precedes_standard_additive_migration(
     tmp_path: Path,
     entrypoint: str,
@@ -688,10 +679,6 @@ def test_hs_invalid_first_record_precedes_standard_additive_migration(
         with pytest.raises(SchemaMigrationError):
             if entrypoint == "data":
                 DataImporter(database, use_jravan_schema=True).import_records(iter([malformed]))
-            elif entrypoint == "optimized":
-                OptimizedDataImporter(database, use_jravan_schema=True).import_records(
-                    iter([malformed])
-                )
             else:
                 import_one(DataImporter(database, use_jravan_schema=True), malformed)
         assert database.fetch_all('PRAGMA table_info("RACE")') == before
@@ -732,7 +719,7 @@ def test_hs_dual_rejects_one_unsafe_target_before_either_changes(tmp_path: Path)
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
+@pytest.mark.parametrize("entrypoint", ("data", "single"))
 def test_hs_all_current_fields_round_trip(
     tmp_path: Path,
     standard: bool,
@@ -770,7 +757,7 @@ def test_hs_all_current_fields_round_trip(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
+@pytest.mark.parametrize("entrypoint", ("data", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hs_provider_order_exact_erase_and_operation_statistics(
     tmp_path: Path,
@@ -809,7 +796,7 @@ def test_hs_provider_order_exact_erase_and_operation_statistics(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
+@pytest.mark.parametrize("entrypoint", ("data", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hs_sqlite_failure_rollback_and_incremental_commit_statistics(
     tmp_path: Path,
@@ -860,7 +847,7 @@ def postgresql_db():
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
+@pytest.mark.parametrize("entrypoint", ("data", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hs_postgresql_provider_order_exact_erase_and_operation_statistics(
     postgresql_db,
@@ -891,7 +878,7 @@ def test_hs_postgresql_provider_order_exact_erase_and_operation_statistics(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
+@pytest.mark.parametrize("entrypoint", ("data", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_hs_postgresql_failure_rollback_and_incremental_commit_statistics(
     postgresql_db,
@@ -986,7 +973,7 @@ def test_hs_postgresql_schema_verifier_rejects_unusable_or_untrusted_storage(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data", "optimized", "single"))
+@pytest.mark.parametrize("entrypoint", ("data", "single"))
 def test_hs_postgresql_idle_schema_rejection_closes_implicit_transaction(
     postgresql_db,
     standard: bool,
@@ -1001,11 +988,7 @@ def test_hs_postgresql_idle_schema_rejection_closes_implicit_transaction(
     )
     postgresql_db.execute(unsafe)
     postgresql_db.commit()
-    importer = (
-        OptimizedDataImporter(postgresql_db, use_jravan_schema=standard)
-        if entrypoint == "optimized"
-        else DataImporter(postgresql_db, use_jravan_schema=standard)
-    )
+    importer = DataImporter(postgresql_db, use_jravan_schema=standard)
     assert postgresql_db.has_pending_transaction() is False
     with pytest.raises(SchemaMigrationError):
         if entrypoint == "single":
@@ -1069,16 +1052,15 @@ def test_hs_dual_postgresql_schema_rejection_closes_only_call_created_transactio
         postgresql_db.rollback()
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-mode"))
 def test_hs_postgresql_empty_standard_import_respects_transaction_mode(
     postgresql_db,
-    importer_class,
+
     auto_commit: bool,
 ) -> None:
     postgresql_db.execute(JRAVAN_SCHEMAS["SALE"])
     postgresql_db.commit()
-    importer = importer_class(postgresql_db, use_jravan_schema=True)
+    importer = DataImporter(postgresql_db, use_jravan_schema=True)
     stats = importer.import_records(iter(()), auto_commit=auto_commit)
     assert stats["records_imported"] == 0
     assert stats["records_failed"] == 0

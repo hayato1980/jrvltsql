@@ -16,7 +16,6 @@ from src.database.schema_types import (
 from src.database.sqlite_handler import SQLiteDatabase
 from src.database.table_mappings import JLTSQL_TO_JRAVAN, JRAVAN_TO_JLTSQL
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hy_parser import HYParser
 
 
@@ -133,21 +132,18 @@ def test_hy_standard_mapping_selects_bameiorigin_and_keeps_legacy_alias() -> Non
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "table_name", "use_jravan_schema"),
+    ("table_name", "use_jravan_schema"),
     [
         pytest.param(
-            importer_class,
             table_name,
             standard,
-            id=f"{importer_class.__name__}-{table_name}",
+            id=table_name,
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, standard in (("NL_HY", False), ("BAMEIORIGIN", True))
     ],
 )
 def test_hy_round_trips_and_upserts_by_registration_number(
     tmp_path,
-    importer_class,
     table_name: str,
     use_jravan_schema: bool,
 ) -> None:
@@ -157,11 +153,11 @@ def test_hy_round_trips_and_upserts_by_registration_number(
         database.create_table(table_name, schema)
         first = HYParser().parse(build_record())
         updated = HYParser().parse(build_record(bamei="更新馬名", origin="更新後の馬名由来"))
-        first_stats = importer_class(
+        first_stats = DataImporter(
             database,
             use_jravan_schema=use_jravan_schema,
         ).import_records(iter([first]))
-        updated_stats = importer_class(
+        updated_stats = DataImporter(
             database,
             use_jravan_schema=use_jravan_schema,
         ).import_records(iter([updated]))
@@ -181,21 +177,18 @@ def test_hy_round_trips_and_upserts_by_registration_number(
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "table_name", "use_jravan_schema"),
+    ("table_name", "use_jravan_schema"),
     [
         pytest.param(
-            importer_class,
             table_name,
             standard,
-            id=f"{importer_class.__name__}-{table_name}",
+            id=table_name,
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, standard in (("NL_HY", False), ("BAMEIORIGIN", True))
     ],
 )
 def test_hy_deletion_removes_the_registration_number_in_provider_order(
     tmp_path,
-    importer_class,
     table_name: str,
     use_jravan_schema: bool,
 ) -> None:
@@ -205,7 +198,7 @@ def test_hy_deletion_removes_the_registration_number_in_provider_order(
         database.create_table(table_name, schema)
         created = HYParser().parse(build_record())
         deleted = HYParser().parse(build_record(data_kubun="0", bamei="", origin=""))
-        stats = importer_class(
+        stats = DataImporter(
             database,
             use_jravan_schema=use_jravan_schema,
         ).import_records(iter([created, deleted]))
@@ -225,10 +218,8 @@ OBSOLETE_NATIVE_SCHEMA = """
 """
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_hy_native_schema_change_fails_closed_without_row_loss(
     tmp_path,
-    importer_class,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "obsolete-native.db")})
     with database:
@@ -249,7 +240,7 @@ def test_hy_native_schema_change_fails_closed_without_row_loss(
 
         assert SchemaManager(database).create_table("NL_HY") is False
         with pytest.raises(SchemaMigrationError, match="Schema verification failed"):
-            importer_class(database).import_records(iter([HYParser().parse(build_record())]))
+            DataImporter(database).import_records(iter([HYParser().parse(build_record())]))
         row = database.fetch_one("SELECT * FROM NL_HY")
 
     assert row == {
@@ -263,10 +254,8 @@ def test_hy_native_schema_change_fails_closed_without_row_loss(
     }
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_hy_native_wrong_primary_key_is_refused_without_row_loss(
     tmp_path,
-    importer_class,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "wrong-native-key.db")})
     with database:
@@ -282,7 +271,7 @@ def test_hy_native_wrong_primary_key_is_refused_without_row_loss(
         database.commit()
 
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database).import_records(iter([HYParser().parse(build_record())]))
+            DataImporter(database).import_records(iter([HYParser().parse(build_record())]))
         rows = database.fetch_all("SELECT * FROM NL_HY")
 
     assert rows == [
@@ -297,8 +286,7 @@ def test_hy_native_wrong_primary_key_is_refused_without_row_loss(
     ]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_hy_standard_keyless_schema_is_refused_without_row_loss(tmp_path, importer_class) -> None:
+def test_hy_standard_keyless_schema_is_refused_without_row_loss(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "obsolete-standard.db")})
     with database:
         database.execute(
@@ -312,7 +300,7 @@ def test_hy_standard_keyless_schema_is_refused_without_row_loss(tmp_path, import
         database.commit()
 
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([HYParser().parse(build_record())])
             )
         rows = database.fetch_all("SELECT * FROM BAMEIORIGIN")
@@ -327,8 +315,7 @@ def test_hy_standard_keyless_schema_is_refused_without_row_loss(tmp_path, import
     ]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_hy_legacy_meaning_alias_is_refused_without_row_loss(tmp_path, importer_class) -> None:
+def test_hy_legacy_meaning_alias_is_refused_without_row_loss(tmp_path) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "legacy-alias.db")})
     with database:
         database.execute("CREATE TABLE MEANING (Bamei TEXT PRIMARY KEY)")
@@ -339,7 +326,7 @@ def test_hy_legacy_meaning_alias_is_refused_without_row_loss(tmp_path, importer_
             SchemaMigrationError,
             match=r"MEANING.*BAMEIORIGIN|BAMEIORIGIN.*MEANING",
         ):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([HYParser().parse(build_record())])
             )
         rows = database.fetch_all("SELECT * FROM MEANING")
@@ -353,13 +340,13 @@ def test_hy_postgresql_native_and_standard_upsert(postgresql_db) -> None:
     postgresql_db.commit()
 
     updates = (
-        (DataImporter, "PostgreSQL馬名1", "PostgreSQL由来1"),
-        (OptimizedDataImporter, "PostgreSQL馬名2", "PostgreSQL由来2"),
+        ("PostgreSQL馬名1", "PostgreSQL由来1"),
+        ("PostgreSQL馬名2", "PostgreSQL由来2"),
     )
-    for importer_class, bamei, origin in updates:
+    for bamei, origin in updates:
         record = HYParser().parse(build_record(bamei=bamei, origin=origin))
-        native = importer_class(postgresql_db).import_records(iter([record]))
-        standard = importer_class(postgresql_db, use_jravan_schema=True).import_records(
+        native = DataImporter(postgresql_db).import_records(iter([record]))
+        standard = DataImporter(postgresql_db, use_jravan_schema=True).import_records(
             iter([record])
         )
         assert native["records_imported"] == 1
@@ -381,17 +368,16 @@ def test_hy_postgresql_native_and_standard_upsert(postgresql_db) -> None:
     assert dict(standard_row) == dict(native_row)
 
     deleted = HYParser().parse(build_record(data_kubun="0", bamei="", origin=""))
-    for importer_class in (DataImporter, OptimizedDataImporter):
-        for table_name, standard in (("NL_HY", False), ("BAMEIORIGIN", True)):
-            created = HYParser().parse(build_record())
-            importer = importer_class(postgresql_db, use_jravan_schema=standard)
-            created_stats = importer.import_records(iter([created]))
-            deleted_stats = importer.import_records(iter([deleted]))
-            row_count = postgresql_db.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")[
-                "count"
-            ]
-            assert created_stats["records_imported"] == 1
-            assert created_stats["records_failed"] == 0
-            assert deleted_stats["records_imported"] == 1
-            assert deleted_stats["records_failed"] == 0
-            assert row_count == 0
+    for table_name, standard in (("NL_HY", False), ("BAMEIORIGIN", True)):
+        created = HYParser().parse(build_record())
+        importer = DataImporter(postgresql_db, use_jravan_schema=standard)
+        created_stats = importer.import_records(iter([created]))
+        deleted_stats = importer.import_records(iter([deleted]))
+        row_count = postgresql_db.fetch_one(f"SELECT COUNT(*) AS count FROM {table_name}")[
+            "count"
+        ]
+        assert created_stats["records_imported"] == 1
+        assert created_stats["records_failed"] == 0
+        assert deleted_stats["records_imported"] == 1
+        assert deleted_stats["records_failed"] == 0
+        assert row_count == 0
