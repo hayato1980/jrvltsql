@@ -857,7 +857,7 @@ class PostgreSQLDatabase(BaseDatabase):
         Returns:
             Number of rows sent to PostgreSQL, after in-batch deduplication.
             Not the driver rowcount: callers bind this value
-            (importer.py, importer_optimized.py).
+            (importer.py).
 
         Raises:
             DatabaseError: If insert fails
