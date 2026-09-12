@@ -1,0 +1,431 @@
+"""The one-pass JVRTOpen drain loop for date-keyed speed-report dataspecs.
+
+These tests followed the implementation out of ``scripts/daily_update.py``: the
+daily sync and ``jltsql realtime speed-report`` now run the same loop, so it is
+covered here rather than under either caller.
+"""
+
+import pytest
+
+from src.realtime.speed_report import (
+    SUBSCRIPTION_ERROR_CODES,
+    iter_date_keys,
+    sync_date_keyed_spec,
+)
+
+
+def test_iter_date_keys_is_inclusive_and_ordered():
+    assert iter_date_keys("20260606", "20260608") == [
+        "20260606",
+        "20260607",
+        "20260608",
+    ]
+    assert iter_date_keys("20260607", "20260607") == ["20260607"]
+    assert iter_date_keys("20260608", "20260607") == []
+
+
+class FakeJVLink:
+    """Minimal JV-Link double for the speed-report drain loop."""
+
+    def __init__(self, records_by_key):
+        self.records_by_key = records_by_key
+        self.opened_keys = []
+        self.close_count = 0
+        self.init_count = 0
+        self._pending = []
+
+    def jv_init(self):
+        self.init_count += 1
+        return 0
+
+    def jv_rt_open(self, data_spec, key):
+        self.opened_keys.append((data_spec, key))
+        self._pending = list(self.records_by_key.get(key, []))
+        if not self._pending:
+            return -1, 0
+        return 0, len(self._pending)
+
+    def jv_read(self):
+        if self._pending:
+            buff = self._pending.pop(0)
+            return len(buff), buff, "RT"
+        return 0, None, None
+
+    def jv_close(self):
+        self.close_count += 1
+        return 0
+
+
+def _build_rt_ra_record() -> bytes:
+    """Full-layout RA record with corner data for RT_RA import tests."""
+    data = bytearray(b" " * 1272)
+    data[0:2] = b"RA"
+    data[2:3] = b"1"  # DataKubun: new
+    data[3:11] = b"20260607"
+    data[11:15] = b"2026"
+    data[15:19] = b"0607"
+    data[19:21] = b"05"
+    data[21:23] = b"03"
+    data[23:25] = b"01"
+    data[25:27] = b"11"
+    data[873:877] = b"1545"  # extended-layout HassoTime
+    corner_sets = [
+        (b"1", b"1", b"   02,04,06"),
+        (b"2", b"1", b"04,02,06"),
+        (b"3", b"1", b"06,02,04"),
+        (b"4", b"1", b"01,02,03"),
+    ]
+    for idx, (corner, syukaisu, jyuni) in enumerate(corner_sets):
+        base = 981 + idx * 72
+        data[base : base + 1] = corner
+        data[base + 1 : base + 2] = syukaisu
+        data[base + 2 : base + 2 + len(jyuni)] = jyuni
+    data[1270:1272] = b"\r\n"
+    return bytes(data)
+
+
+@pytest.fixture
+def rt_database(tmp_path):
+    from src.database.schema import SCHEMAS
+    from src.database.sqlite_handler import SQLiteDatabase
+
+    database = SQLiteDatabase({"path": str(tmp_path / "daily_rt.db")})
+    with database:
+        database.execute(SCHEMAS["RT_RA"])
+        database.commit()
+        yield database
+
+
+def test_sync_date_keyed_spec_imports_speed_report_records(rt_database):
+    record = _build_rt_ra_record()
+    jvlink = FakeJVLink({"20260607": [record]})
+
+    stats = sync_date_keyed_spec(
+        database=rt_database,
+        spec="0B12",
+        from_date="20260606",
+        to_date="20260608",
+        sid="JLTSQL",
+        jvlink=jvlink,
+    )
+
+    assert stats["records_fetched"] == 1
+    assert stats["records_imported"] == 1
+    assert stats["records_failed"] == 0
+    assert [key for _, key in jvlink.opened_keys] == [
+        "20260606",
+        "20260607",
+        "20260608",
+    ]
+
+    rows = rt_database.fetch_all("SELECT * FROM RT_RA")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["Jyuni1"] == "   02,04,06"
+    assert row["TsukaJyuni"] == "   02,04,06"
+    assert row["Corner4"] == "4"
+    assert row["TsukaJyuni4"] == "01,02,03"
+    assert row["HassoTime"] == "1545"
+
+
+def test_sync_date_keyed_spec_is_idempotent_across_reruns(rt_database):
+    record = _build_rt_ra_record()
+
+    for _ in range(2):
+        jvlink = FakeJVLink({"20260607": [record]})
+        stats = sync_date_keyed_spec(
+            database=rt_database,
+            spec="0B12",
+            from_date="20260607",
+            to_date="20260607",
+            sid="JLTSQL",
+            jvlink=jvlink,
+        )
+        assert stats["records_imported"] == 1
+
+    rows = rt_database.fetch_all("SELECT COUNT(*) AS cnt FROM RT_RA")
+    assert rows[0]["cnt"] == 1
+
+
+@pytest.mark.parametrize("error_code", sorted(SUBSCRIPTION_ERROR_CODES))
+def test_sync_date_keyed_spec_stops_after_subscription_error(rt_database, error_code):
+    """未購読の速報 spec は後続日を再照会せず spec 単位で終了する。"""
+    from src.jvlink.wrapper import JVLinkError
+
+    class UnsubscribedJVLink(FakeJVLink):
+        def jv_rt_open(self, data_spec, key):
+            self.opened_keys.append((data_spec, key))
+            raise JVLinkError("not subscribed", error_code=error_code)
+
+    jvlink = UnsubscribedJVLink({})
+
+    stats = sync_date_keyed_spec(
+        database=rt_database,
+        spec="0B12",
+        from_date="20260606",
+        to_date="20260608",
+        sid="JLTSQL",
+        jvlink=jvlink,
+    )
+
+    assert stats == {
+        "records_fetched": 0,
+        "records_parsed": 0,
+        "records_imported": 0,
+        "records_failed": 0,
+    }
+    assert jvlink.opened_keys == [("0B12", "20260606")]
+
+
+@pytest.mark.parametrize("error_code", sorted(SUBSCRIPTION_ERROR_CODES))
+def test_sync_date_keyed_spec_stops_after_external_bridge_subscription_error(
+    rt_database, error_code
+):
+    """External bridge subscription errors are skipped per data spec."""
+    from src.jvlink.bridge import JVLinkBridgeError
+
+    class UnsubscribedBridge(FakeJVLink):
+        def jv_rt_open(self, data_spec, key):
+            self.opened_keys.append((data_spec, key))
+            raise JVLinkBridgeError("not subscribed", error_code=error_code)
+
+    jvlink = UnsubscribedBridge({})
+
+    stats = sync_date_keyed_spec(
+        database=rt_database,
+        spec="0B51",
+        from_date="20260606",
+        to_date="20260608",
+        sid="JLTSQL",
+        jvlink=jvlink,
+    )
+
+    assert stats["records_failed"] == 0
+    assert jvlink.opened_keys == [("0B51", "20260606")]
+
+
+def test_sync_date_keyed_spec_stops_before_open_when_schema_setup_fails(rt_database, monkeypatch):
+    jvlink = FakeJVLink({"20260607": [_build_rt_ra_record()]})
+
+    def fail_schema_setup(_database):
+        raise RuntimeError("unsafe RT_SE schema")
+
+    monkeypatch.setattr(
+        "src.database.schema.create_all_tables",
+        fail_schema_setup,
+    )
+
+    with pytest.raises(RuntimeError, match="unsafe RT_SE schema"):
+        sync_date_keyed_spec(
+            database=rt_database,
+            spec="0B12",
+            from_date="20260607",
+            to_date="20260607",
+            sid="JLTSQL",
+            jvlink=jvlink,
+        )
+    assert jvlink.opened_keys == []
+
+
+def test_sync_date_keyed_spec_starts_transaction_before_import(rt_database):
+    record = _build_rt_ra_record()
+    jvlink = FakeJVLink({"20260607": [record]})
+    original = rt_database.begin_transaction
+    calls = []
+
+    def tracked_begin():
+        calls.append("begin")
+        return original()
+
+    rt_database.begin_transaction = tracked_begin
+    try:
+        sync_date_keyed_spec(
+            database=rt_database,
+            spec="0B12",
+            from_date="20260607",
+            to_date="20260607",
+            sid="JLTSQL",
+            jvlink=jvlink,
+        )
+    finally:
+        rt_database.begin_transaction = original
+
+    assert calls == ["begin"]
+
+
+def test_sync_date_keyed_spec_fails_when_any_record_is_rejected(rt_database):
+    jvlink = FakeJVLink({"20260607": [_build_rt_ra_record()]})
+
+    class RejectingUpdater:
+        def process_record(self, _record):
+            return {
+                "operation": "insert",
+                "table": "RT_SE",
+                "success": False,
+                "error": "obsolete schema",
+            }
+
+    with pytest.raises(RuntimeError, match="rejected 1 record"):
+        sync_date_keyed_spec(
+            database=rt_database,
+            spec="0B12",
+            from_date="20260607",
+            to_date="20260607",
+            sid="JLTSQL",
+            jvlink=jvlink,
+            updater=RejectingUpdater(),
+        )
+
+
+def test_sync_date_keyed_spec_fails_on_transport_error(rt_database):
+    class ReadFailingJVLink(FakeJVLink):
+        def jv_read(self):
+            return -202, None, None
+
+    jvlink = ReadFailingJVLink({"20260607": [b"placeholder"]})
+
+    with pytest.raises(RuntimeError, match="JVRead failed: -202"):
+        sync_date_keyed_spec(
+            database=rt_database,
+            spec="0B12",
+            from_date="20260607",
+            to_date="20260607",
+            sid="JLTSQL",
+            jvlink=jvlink,
+        )
+
+
+def test_sync_date_keyed_spec_rolls_back_rows_before_transport_error(rt_database):
+    class PartialReadFailingJVLink(FakeJVLink):
+        def __init__(self):
+            super().__init__({"20260607": [_build_rt_ra_record()]})
+            self.read_count = 0
+
+        def jv_read(self):
+            self.read_count += 1
+            if self.read_count == 1:
+                return 1, _build_rt_ra_record(), "RT"
+            return -202, None, None
+
+    with pytest.raises(RuntimeError, match="JVRead failed: -202"):
+        sync_date_keyed_spec(
+            database=rt_database,
+            spec="0B12",
+            from_date="20260607",
+            to_date="20260607",
+            sid="JLTSQL",
+            jvlink=PartialReadFailingJVLink(),
+        )
+
+    assert rt_database.fetch_all("SELECT * FROM RT_RA") == []
+
+
+def test_sync_date_keyed_spec_counts_list_results_per_subrecord(rt_database):
+    """複数行レコードはサブレコード単位で parsed/imported を集計する。"""
+    jvlink = FakeJVLink({"20260607": [b"x", b"y"]})
+
+    class ListUpdater:
+        results = iter(
+            [
+                [{"success": True}, {"success": True}, {"success": True}],
+                [{"success": True}],
+            ]
+        )
+
+        def process_record(self, _record):
+            return next(self.results)
+
+        def replace_date_snapshot(self, date_key):
+            assert date_key == "20260607"
+
+    stats = sync_date_keyed_spec(
+        database=rt_database,
+        spec="0B14",
+        from_date="20260607",
+        to_date="20260607",
+        sid="JLTSQL",
+        jvlink=jvlink,
+        updater=ListUpdater(),
+    )
+
+    assert stats["records_fetched"] == 2
+    assert stats["records_parsed"] == 4
+    assert stats["records_imported"] == 4
+    assert stats["records_failed"] == 0
+
+
+def test_sync_0b14_replaces_stale_date_snapshot(rt_database):
+    from src.database.schema import create_all_tables
+    from src.realtime.updater import RealtimeUpdater
+
+    create_all_tables(rt_database)
+    updater = RealtimeUpdater(rt_database)
+    rt_database.execute(
+        "INSERT INTO RT_TC "
+        "(RecordSpec, DataKubun, MakeDate, Year, MonthDay, JyoCD, Kaiji, "
+        "Nichiji, RaceNum, HappyoTime, AtoJi, AtoFun, MaeJi, MaeFun) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "TC", "1", "20260607", "2026", "0607", "05", "1", "1", "1",
+            "06071200", "12", "10", "12", "00",
+        ),
+    )
+    rt_database.commit()
+
+    class EmptySnapshotJVLink(FakeJVLink):
+        def jv_rt_open(self, data_spec, key):
+            self.opened_keys.append((data_spec, key))
+            self._pending = []
+            return 0, 0
+
+    stats = sync_date_keyed_spec(
+        database=rt_database,
+        spec="0B14",
+        from_date="20260607",
+        to_date="20260607",
+        sid="JLTSQL",
+        jvlink=EmptySnapshotJVLink({}),
+        updater=updater,
+    )
+
+    assert stats["records_imported"] == 0
+    assert rt_database.fetch_all(
+        "SELECT * FROM RT_TC WHERE Year = ? AND MonthDay = ?",
+        ("2026", "0607"),
+    ) == []
+
+
+def test_sync_0b14_keeps_snapshot_when_no_data_is_published(rt_database):
+    from src.database.schema import create_all_tables
+    from src.realtime.updater import RealtimeUpdater
+
+    create_all_tables(rt_database)
+    updater = RealtimeUpdater(rt_database)
+    rt_database.execute(
+        "INSERT INTO RT_TC "
+        "(RecordSpec, DataKubun, MakeDate, Year, MonthDay, JyoCD, Kaiji, "
+        "Nichiji, RaceNum, HappyoTime, AtoJi, AtoFun, MaeJi, MaeFun) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "TC", "1", "20260607", "2026", "0607", "05", "1", "1", "1",
+            "06071200", "12", "10", "12", "00",
+        ),
+    )
+    rt_database.commit()
+
+    sync_date_keyed_spec(
+        database=rt_database,
+        spec="0B14",
+        from_date="20260607",
+        to_date="20260607",
+        sid="JLTSQL",
+        jvlink=FakeJVLink({}),
+        updater=updater,
+    )
+
+    assert len(
+        rt_database.fetch_all(
+            "SELECT * FROM RT_TC WHERE Year = ? AND MonthDay = ?",
+            ("2026", "0607"),
+        )
+    ) == 1
