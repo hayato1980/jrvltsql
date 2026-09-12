@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `fetch` の `--to` を省略可能にする。省くとclient-side dateフィルタをかけず、`JVOpen` へ
+  終了時刻も渡さず（暦年で刻まず開始のみ 1 回）、NL cacheも使わない
+- 再開cursorを起点に「そこから先を全部」と要求する経路には上端の概念が無く、終端を渡すと
+  作成日基準で正当に降ってくるレコードがfilterで落ちていた
+- `--to` を渡したときの振る舞いは変えない
+
 ### Fixed
 
 - 発走時刻windowの既定1年date rangeでは、まず所有ソースを選んだ後、live
