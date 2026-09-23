@@ -42,6 +42,13 @@ start-onlyの場合の `--to` は取得後の client-side filterです。option 
 複数年setupは数時間かかり得るため、配備側では監視可能な有限の
 `JVLINK_OPEN_TIMEOUT_SECONDS`（1〜86,400秒、既定120秒）を指定できます。
 
+`--to` は省略できます。省くとclient-side filterはかからず、`JVOpen` へ終了時刻も渡しません
+（暦年で刻まず、開始のみ 1 回）。NL cacheも使いません。
+
+```bat
+jltsql fetch --from 20260101 --spec RACE --option 1
+```
+
 主な `spec`:
 
 | spec | 用途 |

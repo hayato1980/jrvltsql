@@ -5,7 +5,7 @@ This module provides utilities for batch processing of JV-Data.
 
 from datetime import datetime, timedelta
 from itertools import islice
-from typing import Iterator, List
+from typing import Iterator, List, Optional
 
 from src.database.base import BaseDatabase
 from src.database.schema import create_all_tables
@@ -118,7 +118,7 @@ class BatchProcessor:
         self,
         data_spec: str,
         from_date: str,
-        to_date: str,
+        to_date: Optional[str] = None,
         option: int = 1,
         auto_commit: bool = True,
         ensure_tables: bool = True,
@@ -128,7 +128,7 @@ class BatchProcessor:
         Args:
             data_spec: Data specification code
             from_date: Start date (YYYYMMDD)
-            to_date: End date (YYYYMMDD) - records are filtered to this date
+            to_date: End date (YYYYMMDD), or None for no upper bound
             option: JVOpen option:
                     1=通常データ（差分データ取得）
                     2=今週データ（直近のレースのみ）
