@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import json
 import os
-from collections.abc import Iterator
 from pathlib import Path
 from uuid import uuid4
 
@@ -24,7 +23,6 @@ from src.importer.importer import (
     validate_import_record_header,
     validate_se_record,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.canonical import canonicalize_se_fields
 from src.parser.se_parser import SEParser
 from src.realtime.updater import RealtimeUpdater
@@ -168,11 +166,6 @@ def _parsed_se(
     return parsed
 
 
-def _importer_classes() -> Iterator[type[DataImporter]]:
-    yield DataImporter
-    yield OptimizedDataImporter
-
-
 def _import_records(
     database,
     entrypoint: str,
@@ -183,10 +176,6 @@ def _import_records(
 ) -> None:
     if entrypoint == "data-batch":
         DataImporter(database, use_jravan_schema=standard).import_records(
-            iter(records), auto_commit=auto_commit
-        )
-    elif entrypoint == "optimized-batch":
-        OptimizedDataImporter(database, use_jravan_schema=standard).import_records(
             iter(records), auto_commit=auto_commit
         )
     else:
@@ -262,13 +251,12 @@ def test_se_all_storage_schemas_use_the_official_ordered_key() -> None:
         assert tuple(get_table_primary_key_columns(table_name)) == SE_KEY_COLUMNS
 
 
-@pytest.mark.parametrize("importer_class", list(_importer_classes()))
-def test_native_se_keeps_records_that_differ_only_by_ketto_num(tmp_path, importer_class) -> None:
-    database = SQLiteDatabase({"path": str(tmp_path / f"{importer_class.__name__}.db")})
+def test_native_se_keeps_records_that_differ_only_by_ketto_num(tmp_path) -> None:
+    database = SQLiteDatabase({"path": str(tmp_path / f"{DataImporter.__name__}.db")})
     with database:
         database.execute(SCHEMAS["NL_SE"])
         database.commit()
-        stats = importer_class(database).import_records(
+        stats = DataImporter(database).import_records(
             iter(
                 [
                     _parsed_se(ketto_num="2020000001"),
@@ -305,15 +293,14 @@ def test_native_se_erase_targets_one_complete_official_key(tmp_path) -> None:
     assert stored == [{"KettoNum": "2020000002", "DataKubun": "1"}]
 
 
-@pytest.mark.parametrize("importer_class", list(_importer_classes()))
 def test_standard_se_is_idempotent_and_preserves_all_reserved_fields(
-    tmp_path, importer_class
+    tmp_path
 ) -> None:
-    database = SQLiteDatabase({"path": str(tmp_path / f"std-{importer_class.__name__}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"std-{DataImporter.__name__}.db")})
     with database:
         database.execute(JRAVAN_SCHEMAS["UMA_RACE"])
         database.commit()
-        importer = importer_class(database, use_jravan_schema=True)
+        importer = DataImporter(database, use_jravan_schema=True)
         first = _parsed_se(ketto_num="2020000001", reserved=True)
         second = _parsed_se(ketto_num="2020000002")
         importer.import_records(iter([first, second]))
@@ -684,7 +671,7 @@ def test_data_importer_fallback_counts_only_durable_se_rows(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_se_postgresql_full_key_update_erase_and_readback(
     postgresql_db, standard: bool, entrypoint: str, auto_commit: bool
@@ -803,7 +790,7 @@ def test_se_postgresql_rejects_fixed_char_for_variable_text(postgresql_db) -> No
     assert postgresql_db.fetch_one("SELECT COUNT(*) AS n FROM UMA_RACE") == {"n": 0}
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 def test_se_postgresql_dual_rejects_overwidth_body_before_any_write(
     tmp_path, postgresql_db, entrypoint: str
 ) -> None:
@@ -820,10 +807,6 @@ def test_se_postgresql_dual_rejects_overwidth_body_before_any_write(
         with pytest.raises(SchemaMigrationError):
             if entrypoint == "data-batch":
                 DataImporter(dual, use_jravan_schema=True).import_records(iter([record]))
-            elif entrypoint == "optimized-batch":
-                OptimizedDataImporter(dual, use_jravan_schema=True).import_records(
-                    iter([record])
-                )
             else:
                 import_one(DataImporter(dual, use_jravan_schema=True), record)
 

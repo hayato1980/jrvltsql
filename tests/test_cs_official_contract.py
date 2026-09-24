@@ -19,7 +19,6 @@ from src.database.schema_types import (
 )
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter, validate_import_record_header
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.cs_parser import CSParser
 from tests.importer_support import import_each
 
@@ -85,14 +84,6 @@ def parsed_record(**overrides) -> dict:
 def _import_records(database, entrypoint, records, *, standard, auto_commit):
     if entrypoint == "data-batch":
         result = DataImporter(
-            database,
-            batch_size=1,
-            use_jravan_schema=standard,
-        ).import_records(iter(records), auto_commit=auto_commit)
-        assert result["records_imported"] == len(records)
-        assert result["records_failed"] == 0
-    elif entrypoint == "optimized-batch":
-        result = OptimizedDataImporter(
             database,
             batch_size=1,
             use_jravan_schema=standard,
@@ -233,7 +224,7 @@ def test_cs_status_zero_keeps_the_future_delete_body_opaque():
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_cs_status_zero_discards_opaque_body_before_sqlite_storage(
     tmp_path, standard, entrypoint, auto_commit
@@ -298,7 +289,7 @@ def test_cs_native_standard_and_metadata_schemas_preserve_the_official_contract(
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize(
     "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
+    ("data-batch", "single"),
 )
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_cs_import_preserves_two_renovations_and_updates_one_exact_key(
@@ -368,7 +359,7 @@ CREATE TABLE COURSE (
 )
 @pytest.mark.parametrize(
     "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
+    ("data-batch", "single"),
 )
 def test_cs_legacy_storage_is_rejected_before_schema_or_row_mutation(
     tmp_path,
@@ -434,7 +425,7 @@ def test_cs_dual_rejects_unsafe_identity_storage_on_either_backend(tmp_path, uns
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize(
     "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
+    ("data-batch", "single"),
 )
 def test_cs_caller_built_invalid_key_is_rejected_before_mutation(tmp_path, standard, entrypoint):
     table_name = "COURSE" if standard else "NL_CS"
@@ -458,7 +449,7 @@ def test_cs_caller_built_invalid_key_is_rejected_before_mutation(tmp_path, stand
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_cs_caller_built_oversized_body_is_rejected_by_every_entrypoint(
     tmp_path, standard, entrypoint, auto_commit
@@ -486,7 +477,7 @@ def test_cs_caller_built_oversized_body_is_rejected_by_every_entrypoint(
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize(
     "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
+    ("data-batch", "single"),
 )
 @pytest.mark.parametrize("drift", ("extra-unique", "short-body", "wrong-key-type"))
 def test_cs_storage_drift_is_rejected_before_mutation(tmp_path, standard, entrypoint, drift):
@@ -534,7 +525,7 @@ def test_cs_storage_drift_is_rejected_before_mutation(tmp_path, standard, entryp
 
 @pytest.mark.parametrize(
     "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
+    ("data-batch", "single"),
 )
 def test_cs_standard_adds_only_a_missing_body_to_an_already_correct_key(tmp_path, entrypoint):
     schema_without_body = JRAVAN_SCHEMAS["COURSE"].replace(
@@ -557,7 +548,7 @@ def test_cs_standard_adds_only_a_missing_body_to_an_already_correct_key(tmp_path
         assert row["CourseEx"] == "追加済み"
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("drift", ("nonempty-missing-body", "missing-nonbody"))
 def test_cs_standard_additive_migration_rejects_unsafe_missing_columns(tmp_path, entrypoint, drift):
     if drift == "nonempty-missing-body":
@@ -629,7 +620,7 @@ def postgresql_db():
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize(
     "entrypoint",
-    ("data-batch", "optimized-batch", "single"),
+    ("data-batch", "single"),
 )
 def test_cs_postgresql_preserves_the_full_key_and_body(postgresql_db, standard, entrypoint):
     table_name = "COURSE" if standard else "NL_CS"
@@ -657,7 +648,7 @@ def test_cs_postgresql_preserves_the_full_key_and_body(postgresql_db, standard, 
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 def test_cs_postgresql_rejects_a_caller_body_over_the_physical_byte_width(
     postgresql_db, standard, entrypoint
 ):
@@ -678,7 +669,7 @@ def test_cs_postgresql_rejects_a_caller_body_over_the_physical_byte_width(
 
 
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
 def test_cs_postgresql_status_zero_discards_opaque_body_before_storage(
     postgresql_db, standard, entrypoint, auto_commit

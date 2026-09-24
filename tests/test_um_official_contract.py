@@ -26,7 +26,6 @@ from src.importer.importer import (
     validate_um_record,
     verify_um_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.um_parser import UMParser
 from src.realtime.updater import RealtimeUpdater
 from tests.test_um_parser_layout import FIELDS, build_record
@@ -184,19 +183,18 @@ def test_um_official_blank_spans_remain_empty_provider_values(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_um_batch_erase_is_physical_and_provider_ordered(
     tmp_path: Path,
-    importer_class,
+
     auto_commit: bool,
     use_standard: bool,
 ) -> None:
     table_name, schema = _table(use_standard)
-    database = SQLiteDatabase({"path": str(tmp_path / f"{importer_class.__name__}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"{DataImporter.__name__}.db")})
     with database:
         database.execute(schema)
         database.commit()
-        importer = importer_class(database, batch_size=1, use_jravan_schema=use_standard)
+        importer = DataImporter(database, batch_size=1, use_jravan_schema=use_standard)
         stats = importer.import_records(
             iter(
                 [
@@ -376,10 +374,9 @@ def test_um_schema_verifier_rejects_each_unsafe_contract(
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("defect", DEFECTS)
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_um_importer_paths_reject_each_unsafe_contract_before_dml(
     tmp_path: Path,
-    importer_class,
+
     defect: str,
     use_standard: bool,
 ) -> None:
@@ -391,7 +388,7 @@ def test_um_importer_paths_reject_each_unsafe_contract_before_dml(
         database.execute(_defective_schema(defect, use_standard))
         database.commit()
         before = database.fetch_all(f'PRAGMA table_xinfo("{table_name}")')
-        importer = importer_class(database, use_jravan_schema=use_standard)
+        importer = DataImporter(database, use_jravan_schema=use_standard)
         with pytest.raises(SchemaMigrationError):
             importer.import_records(iter([deepcopy(um_record())]))
         with pytest.raises(SchemaMigrationError):
@@ -490,17 +487,16 @@ def postgresql_db():
 
 @pytest.mark.parametrize("use_standard", (False, True), ids=("native", "standard"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_um_postgresql_provider_order_exact_erase_and_operation_statistics(
     postgresql_db,
-    importer_class,
+
     auto_commit: bool,
     use_standard: bool,
 ) -> None:
     table_name, schema = _table(use_standard)
     postgresql_db.execute(schema)
     postgresql_db.commit()
-    stats = importer_class(
+    stats = DataImporter(
         postgresql_db,
         batch_size=1000,
         use_jravan_schema=use_standard,

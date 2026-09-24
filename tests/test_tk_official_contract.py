@@ -18,7 +18,6 @@ from src.database.schema_types import (
 from src.database.sqlite_handler import SQLiteDatabase
 from src.database.table_mappings import JLTSQL_TO_JRAVAN
 from src.importer.importer import DataImporter, ImporterError
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hn_parser import HNParser
 from src.parser.tk_parser import TKParser
 from tests.fixtures.record_factory import make_hn_record
@@ -322,11 +321,10 @@ def test_tk_schemas_mappings_and_metadata_match_the_normalized_contract() -> Non
         )
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
 def test_tk_status_two_replaces_the_entire_snapshot_and_zero_deletes_it(
     tmp_path,
-    importer_class,
+
     standard,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"status-{standard}.db")})
@@ -344,7 +342,7 @@ def test_tk_status_two_replaces_the_entire_snapshot_and_zero_deletes_it(
 
     with database:
         header_table, child_table = _create_current_tables(database, standard=standard)
-        importer = importer_class(database, use_jravan_schema=standard)
+        importer = DataImporter(database, use_jravan_schema=standard)
         update_stats = importer.import_records(iter([first, second]))
         updated_header = database.fetch_one(
             f"SELECT DataKubun, Hondai, TorokuTosu FROM {header_table}"
@@ -372,11 +370,10 @@ def test_tk_status_two_replaces_the_entire_snapshot_and_zero_deletes_it(
     assert final_children == [{"RaceNum": 12, "Bamei": "HORSE001"}]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
 def test_tk_importer_revalidates_private_snapshot_before_any_mutation(
     tmp_path,
-    importer_class,
+
     standard,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"invalid-{standard}.db")})
@@ -390,9 +387,9 @@ def test_tk_importer_revalidates_private_snapshot_before_any_mutation(
 
     with database:
         header_table, child_table = _create_current_tables(database, standard=standard)
-        importer_class(database, use_jravan_schema=standard).import_records(iter([original]))
+        DataImporter(database, use_jravan_schema=standard).import_records(iter([original]))
         with pytest.raises(SchemaMigrationError, match="count"):
-            importer_class(database, use_jravan_schema=standard).import_records(iter([malformed]))
+            DataImporter(database, use_jravan_schema=standard).import_records(iter([malformed]))
 
         header = database.fetch_one(f"SELECT DataKubun, Hondai FROM {header_table}")
         child_count = database.fetch_one(f"SELECT COUNT(*) AS count FROM {child_table}")["count"]
@@ -413,11 +410,9 @@ def test_tk_single_record_path_writes_both_tables_atomically(tmp_path) -> None:
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_TK")["count"] == 2
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_tk_child_write_failure_rolls_back_header_and_stale_child_delete(
     tmp_path,
     monkeypatch,
-    importer_class,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "rollback.db")})
     original = TKParser().parse(build_tk_record(horse_count=2, title="ORIGINAL")[0])
@@ -428,23 +423,17 @@ def test_tk_child_write_failure_rolls_back_header_and_stale_child_delete(
 
     with database:
         _create_current_tables(database, standard=False)
-        importer_class(database).import_records(iter([original]))
-        method_name = (
-            "insert_many_optimized"
-            if importer_class is OptimizedDataImporter
-            and hasattr(database, "insert_many_optimized")
-            else "insert_many"
-        )
-        original_insert = getattr(database, method_name)
+        DataImporter(database).import_records(iter([original]))
+        original_insert = database.insert_many
 
         def fail_child(table_name, rows, *args, **kwargs):
             if table_name == "NL_TK":
                 raise DatabaseError("injected TK child failure")
             return original_insert(table_name, rows, *args, **kwargs)
 
-        monkeypatch.setattr(database, method_name, fail_child)
+        monkeypatch.setattr(database, "insert_many", fail_child)
         with pytest.raises(ImporterError, match="injected TK child failure"):
-            importer_class(database).import_records(iter([replacement]))
+            DataImporter(database).import_records(iter([replacement]))
 
         assert database.fetch_one("SELECT DataKubun, Hondai FROM NL_TK_RACE") == {
             "DataKubun": "1",
@@ -456,11 +445,10 @@ def test_tk_child_write_failure_rolls_back_header_and_stale_child_delete(
         ]
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 @pytest.mark.parametrize("standard", (False, True), ids=("native", "standard"))
 def test_obsolete_tk_storage_fails_closed_without_losing_existing_rows(
     tmp_path,
-    importer_class,
+
     standard,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / f"obsolete-{standard}.db")})
@@ -494,15 +482,13 @@ def test_obsolete_tk_storage_fails_closed_without_losing_existing_rows(
         database.commit()
 
         with pytest.raises(SchemaMigrationError):
-            importer_class(database, use_jravan_schema=standard).import_records(iter([parsed]))
+            DataImporter(database, use_jravan_schema=standard).import_records(iter([parsed]))
 
         assert database.fetch_one(f"SELECT COUNT(*) AS count FROM {child_table}")["count"] == 1
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_obsolete_standard_tk_tables_do_not_block_an_unrelated_standard_import(
     tmp_path,
-    importer_class,
 ) -> None:
     database = SQLiteDatabase({"path": str(tmp_path / "unrelated.db")})
     unrelated = HNParser().parse(make_hn_record(bamei="UNRELATED"))
@@ -514,7 +500,7 @@ def test_obsolete_standard_tk_tables_do_not_block_an_unrelated_standard_import(
         database.execute(JRAVAN_SCHEMAS["HANSYOKU"])
         database.commit()
 
-        stats = importer_class(database, use_jravan_schema=True).import_records(iter([unrelated]))
+        stats = DataImporter(database, use_jravan_schema=True).import_records(iter([unrelated]))
 
         assert stats["records_imported"] == 1
         assert database.fetch_one("SELECT HansyokuNum, Bamei FROM HANSYOKU") == {
@@ -523,10 +509,8 @@ def test_obsolete_standard_tk_tables_do_not_block_an_unrelated_standard_import(
         }
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_tk_postgresql_native_and_standard_preserve_snapshot_semantics(
     postgresql_db,
-    importer_class,
 ) -> None:
     for standard in (False, True):
         _create_current_tables(postgresql_db, standard=standard)
@@ -545,8 +529,8 @@ def test_tk_postgresql_native_and_standard_preserve_snapshot_semantics(
     ]
     assert all(record is not None for record in records)
 
-    native = importer_class(postgresql_db).import_records(iter(records))
-    standard = importer_class(postgresql_db, use_jravan_schema=True).import_records(iter(records))
+    native = DataImporter(postgresql_db).import_records(iter(records))
+    standard = DataImporter(postgresql_db, use_jravan_schema=True).import_records(iter(records))
 
     assert native["records_imported"] == standard["records_imported"] == 4
     assert native["records_failed"] == standard["records_failed"] == 0

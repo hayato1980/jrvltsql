@@ -25,7 +25,6 @@ from src.importer.importer import (
     translate_standard_field_names,
     verify_um_storage_schema,
 )
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.um_parser import UMParser
 from tests.importer_support import import_one
 
@@ -283,15 +282,13 @@ def test_um_standard_translation_covers_every_schema_field():
     assert translated["TorokuRaceSu"] == "042"
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_um_standard_storage_keeps_distinct_keys_and_updates_exact_key(
     tmp_path,
-    importer_class,
 ):
-    database = SQLiteDatabase({"path": str(tmp_path / f"{importer_class.__name__}.db")})
+    database = SQLiteDatabase({"path": str(tmp_path / f"{DataImporter.__name__}.db")})
     with database:
         database.create_table("UMA", JRAVAN_SCHEMAS["UMA"])
-        importer = importer_class(database, use_jravan_schema=True)
+        importer = DataImporter(database, use_jravan_schema=True)
         created = importer.import_records(
             iter(
                 [
@@ -373,10 +370,6 @@ def _import_um_records(database, entrypoint, records, auto_commit, *, standard):
         return DataImporter(database, use_jravan_schema=standard).import_records(
             iter(records), auto_commit=auto_commit
         )
-    if entrypoint == "optimized-batch":
-        return OptimizedDataImporter(database, use_jravan_schema=standard).import_records(
-            iter(records), auto_commit=auto_commit
-        )
     importer = DataImporter(database, use_jravan_schema=standard)
     return [import_one(importer, record, auto_commit=auto_commit) for record in records]
 
@@ -385,7 +378,7 @@ def _import_standard_um_records(database, entrypoint, records, auto_commit):
     return _import_um_records(database, entrypoint, records, auto_commit, standard=True)
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
 def test_um_standard_extra_unique_is_rejected_before_mutation(tmp_path, entrypoint, auto_commit):
     primary = SQLiteDatabase({"path": str(tmp_path / f"unique-{entrypoint}.db")})
@@ -446,7 +439,7 @@ def test_um_standard_dual_rejects_extra_unique_on_either_backend(
         assert secondary.fetch_one("SELECT COUNT(*) AS count FROM UMA")["count"] == 0
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize(
     "invalid_key",
     ("123456789", "12345678901", "ABCDEFGHIJ", "１２３４５６７８９０"),
@@ -501,13 +494,12 @@ def _import_native_um_records(database, entrypoint, records, auto_commit):
     return _import_um_records(database, entrypoint, records, auto_commit, standard=False)
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_um_native_storage_keeps_distinct_keys_and_updates_exact_key(tmp_path, importer_class):
-    database = SQLiteDatabase({"path": str(tmp_path / f"native-{importer_class.__name__}.db")})
+def test_um_native_storage_keeps_distinct_keys_and_updates_exact_key(tmp_path):
+    database = SQLiteDatabase({"path": str(tmp_path / f"native-{DataImporter.__name__}.db")})
     with database:
         database.execute(SCHEMAS["NL_UM"])
         database.commit()
-        importer = importer_class(database)
+        importer = DataImporter(database)
         created = importer.import_records(
             iter(
                 [
@@ -548,7 +540,7 @@ def test_um_native_storage_keeps_distinct_keys_and_updates_exact_key(tmp_path, i
     ]
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
 def test_um_native_extra_unique_is_rejected_before_mutation(tmp_path, entrypoint, auto_commit):
     database = SQLiteDatabase({"path": str(tmp_path / f"native-unique-{entrypoint}.db")})
@@ -602,7 +594,7 @@ def test_um_native_dual_rejects_extra_unique_on_either_backend(tmp_path, unsafe_
         assert secondary.fetch_one("SELECT COUNT(*) AS count FROM NL_UM")["count"] == 0
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 def test_um_native_missing_table_is_rejected_before_mutation(tmp_path, entrypoint):
     database = SQLiteDatabase({"path": str(tmp_path / f"native-missing-{entrypoint}.db")})
     with database:
@@ -616,13 +608,12 @@ def test_um_native_missing_table_is_rejected_before_mutation(tmp_path, entrypoin
         )
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_um_native_missing_table_is_not_cached_as_verified(tmp_path, importer_class):
+def test_um_native_missing_table_is_not_cached_as_verified(tmp_path):
     database = SQLiteDatabase(
-        {"path": str(tmp_path / f"native-cache-{importer_class.__name__}.db")}
+        {"path": str(tmp_path / f"native-cache-{DataImporter.__name__}.db")}
     )
     with database:
-        importer = importer_class(database)
+        importer = DataImporter(database)
         with pytest.raises(SchemaMigrationError, match="Required table does not exist: NL_UM"):
             importer.import_records(iter([parsed_record()]))
         assert importer.get_statistics()["records_imported"] == 0
@@ -636,7 +627,7 @@ def test_um_native_missing_table_is_not_cached_as_verified(tmp_path, importer_cl
         assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_UM")["count"] == 0
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("defect", ("wrong-key", "keyless"))
 def test_um_native_wrong_or_missing_key_is_rejected_before_mutation(tmp_path, entrypoint, defect):
     database = SQLiteDatabase({"path": str(tmp_path / f"native-{defect}-{entrypoint}.db")})
@@ -772,7 +763,7 @@ def test_um_postgresql_constraint_drift_is_rejected_before_mutation(
         ),
     ),
 )
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 @pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller-owned"))
 def test_um_native_postgresql_constraint_drift_is_rejected_before_mutation(
     postgresql_db, entrypoint, auto_commit, replacement, message
@@ -795,7 +786,7 @@ def test_um_native_postgresql_constraint_drift_is_rejected_before_mutation(
     assert postgresql_db.fetch_one('SELECT COUNT(*) AS "count" FROM nl_um')["count"] == 0
 
 
-@pytest.mark.parametrize("entrypoint", ("data-batch", "optimized-batch", "single"))
+@pytest.mark.parametrize("entrypoint", ("data-batch", "single"))
 def test_um_native_postgresql_missing_table_is_rejected_before_mutation(postgresql_db, entrypoint):
     with pytest.raises(SchemaMigrationError, match="Required table does not exist: NL_UM"):
         _import_native_um_records(postgresql_db, entrypoint, [parsed_record()], True)
@@ -803,11 +794,10 @@ def test_um_native_postgresql_missing_table_is_rejected_before_mutation(postgres
     assert postgresql_db.fetch_one("SELECT to_regclass('nl_um') AS oid")["oid"] is None
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_um_native_postgresql_key_roundtrip(postgresql_db, importer_class):
+def test_um_native_postgresql_key_roundtrip(postgresql_db):
     postgresql_db.execute(SCHEMAS["NL_UM"])
     postgresql_db.commit()
-    importer = importer_class(postgresql_db)
+    importer = DataImporter(postgresql_db)
 
     created = importer.import_records(
         iter(
@@ -874,9 +864,8 @@ def test_um_native_mixed_dual_rejects_unsafe_target_before_either_mutates(
         assert postgresql_db.fetch_one('SELECT COUNT(*) AS "count" FROM nl_um')["count"] == 0
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_um_standard_wrong_key_is_rejected_before_any_mutation(tmp_path, importer_class):
-    database = SQLiteDatabase({"path": str(tmp_path / f"legacy-{importer_class.__name__}.db")})
+def test_um_standard_wrong_key_is_rejected_before_any_mutation(tmp_path):
+    database = SQLiteDatabase({"path": str(tmp_path / f"legacy-{DataImporter.__name__}.db")})
     with database:
         database.execute(OBSOLETE_STANDARD_UMA_SCHEMA)
         database.execute(
@@ -888,7 +877,7 @@ def test_um_standard_wrong_key_is_rejected_before_any_mutation(tmp_path, importe
         before_rows = database.fetch_all("SELECT * FROM UMA")
 
         with pytest.raises(SchemaMigrationError, match="primary key"):
-            importer_class(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
+            DataImporter(database, use_jravan_schema=True).import_records(iter([parsed_record()]))
 
         assert database.fetch_all("PRAGMA table_info(UMA)") == before_columns
         assert database.fetch_all("SELECT * FROM UMA") == before_rows
@@ -921,14 +910,12 @@ def test_um_standard_single_record_respects_the_caller_transaction(tmp_path):
         }
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
 def test_um_postgresql_standard_key_roundtrip_and_legacy_preflight(
     postgresql_db,
-    importer_class,
 ):
     postgresql_db.execute(JRAVAN_SCHEMAS["UMA"])
     postgresql_db.commit()
-    importer = importer_class(postgresql_db, use_jravan_schema=True)
+    importer = DataImporter(postgresql_db, use_jravan_schema=True)
 
     created = importer.import_records(
         iter(
@@ -992,7 +979,7 @@ def test_um_postgresql_standard_key_roundtrip_and_legacy_preflight(
     before_rows = postgresql_db.fetch_all("SELECT * FROM uma")
 
     with pytest.raises(SchemaMigrationError, match="primary key"):
-        importer_class(postgresql_db, use_jravan_schema=True).import_records(
+        DataImporter(postgresql_db, use_jravan_schema=True).import_records(
             iter([parsed_record()])
         )
 

@@ -14,7 +14,6 @@ from src.database.schema_types import (
 from src.database.sqlite_handler import SQLiteDatabase
 from src.database.table_mappings import JLTSQL_TO_JRAVAN, JRAVAN_TO_JLTSQL
 from src.importer.importer import DataImporter
-from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.sk_parser import SKParser
 
 ZENKAKU_SPACE = b"\x81\x40"
@@ -178,8 +177,7 @@ def test_standard_import_refuses_the_obsolete_keyless_schema(tmp_path):
     assert "MMMNum" not in columns
 
 
-@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
-def test_standard_import_refuses_a_legacy_alias_only_database(tmp_path, importer_class):
+def test_standard_import_refuses_a_legacy_alias_only_database(tmp_path):
     legacy_schema = SCHEMAS["NL_SK"].replace("NL_SK", "HANSYOKU_UMA", 1)
     database = SQLiteDatabase({"path": str(tmp_path / "legacy-alias-only.db")})
     with database:
@@ -188,7 +186,7 @@ def test_standard_import_refuses_a_legacy_alias_only_database(tmp_path, importer
             SchemaMigrationError,
             match=r"HANSYOKU_UMA.*SANKU|SANKU.*HANSYOKU_UMA",
         ):
-            importer_class(database, use_jravan_schema=True).import_records(
+            DataImporter(database, use_jravan_schema=True).import_records(
                 iter([SKParser().parse(build_current_record())])
             )
         row_count = database.fetch_one("SELECT COUNT(*) AS count FROM HANSYOKU_UMA")
@@ -209,21 +207,18 @@ def test_reconstruction_helper_discovers_every_current_sk_field():
 
 
 @pytest.mark.parametrize(
-    ("importer_class", "table_name", "use_jravan_schema"),
+    ("table_name", "use_jravan_schema"),
     [
         pytest.param(
-            importer_class,
             table_name,
             use_jravan_schema,
-            id=f"{importer_class.__name__}-{table_name}",
+            id=table_name,
         )
-        for importer_class in (DataImporter, OptimizedDataImporter)
         for table_name, use_jravan_schema in (("NL_SK", False), ("SANKU", True))
     ],
 )
 def test_current_record_round_trips_through_supported_storage(
     tmp_path,
-    importer_class,
     table_name,
     use_jravan_schema,
 ):
@@ -232,7 +227,7 @@ def test_current_record_round_trips_through_supported_storage(
     with database:
         database.create_table(table_name, schema)
         record = SKParser().parse(build_current_record())
-        stats = importer_class(
+        stats = DataImporter(
             database,
             use_jravan_schema=use_jravan_schema,
         ).import_records(iter([record]))
