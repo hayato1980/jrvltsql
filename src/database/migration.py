@@ -1059,3 +1059,60 @@ def verify_table_schema(
         raise SchemaMigrationError(
             f"Schema verification failed for {table_name}: " + "; ".join(problems)
         )
+
+
+# Primary-key changes that need an operator. They are documented, never run
+# automatically: production collectors write these tables and the change
+# takes a table lock. Startup tolerates the legacy key so the other feeds keep
+# running; every writer of the table calls ``require_current_primary_key`` and
+# fails closed until the operator has migrated it.
+OPERATOR_PRIMARY_KEY_MIGRATIONS: Dict[str, Dict[str, tuple[str, ...] | str]] = {
+    # jltsql 2.3.0: one RT_WH row per 0B11 announcement (HappyoTime in the key).
+    "RT_WH": {
+        "legacy": ("Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum", "Umaban"),
+        "procedure": "docs/record_contracts.md#wh and RELEASE_NOTES.md (2.3.0)",
+    },
+}
+
+
+def _expected_primary_key(table_name: str) -> List[str]:
+    from src.database.schema import SCHEMAS
+
+    return _extract_primary_key_columns(SCHEMAS[unqualified_table_name(table_name).upper()]) or []
+
+
+def _lower(columns: List[str]) -> List[str]:
+    return [column.lower() for column in columns]
+
+
+def is_pending_operator_key_migration(db: BaseDatabase, table_name: str) -> bool:
+    """Whether any target still has the registered legacy key of this table."""
+    entry = OPERATOR_PRIMARY_KEY_MIGRATIONS.get(unqualified_table_name(table_name).upper())
+    if entry is None:
+        return False
+    legacy = _lower(list(entry["legacy"]))
+    for target in _migration_targets(db):
+        if not target.table_exists(table_name):
+            continue
+        if _lower(_get_existing_primary_key_columns(target, table_name)) == legacy:
+            return True
+    return False
+
+
+def require_current_primary_key(db: BaseDatabase, table_name: str) -> None:
+    """Fail closed before writing a table whose key needs an operator migration."""
+    normalized = unqualified_table_name(table_name).upper()
+    entry = OPERATOR_PRIMARY_KEY_MIGRATIONS.get(normalized)
+    if entry is None:
+        return
+    expected = _expected_primary_key(normalized)
+    for target in _migration_targets(db):
+        if not target.table_exists(table_name):
+            raise SchemaMigrationError(f"Required table does not exist: {table_name}")
+        existing = _get_existing_primary_key_columns(target, table_name)
+        if _lower(existing) != _lower(expected):
+            raise SchemaMigrationError(
+                f"{normalized} primary key existing={existing}, expected={expected}; "
+                f"writes are refused until the operator migration in {entry['procedure']} "
+                "is applied (back up first; it is not run automatically)"
+            )

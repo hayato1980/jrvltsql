@@ -25,10 +25,13 @@ from src.fetcher.summary import (
     write_summary_json,
 )
 from src.importer.batch import BatchProcessor
+from src.realtime.capture_log import begin_capture
 from src.utils.config import load_config
 from src.utils.logger import get_logger, setup_logging
 
 logger = get_logger(__name__)
+
+SUMMARY_GENERATOR = "jltsql scripts/daily_update.py"
 
 UPDATE_SPECS = [
     ("TOKU", 2),
@@ -47,6 +50,10 @@ UPDATE_SPECS = [
     # (前向きにのみ蓄積される)。
     ("MING", 1),
     # Speed-report specs fetched via JVRTOpen with a date key (option unused).
+    # 0B11: 速報馬体重 (WH)。発走約 1 時間前から発表ごとにレコード追加・更新
+    # (JV-Data 4.9.0.1 提供タイミング)。RT_WH は発表時刻 (HappyoTime) を
+    # PRIMARY KEY に含むので発表ごとに 1 行。1 週間保存なので過去分 backfill は不可。
+    ("0B11", 1),
     # 0B12: 速報レース情報・払戻 (RA/SE/HR 成績確定後), 0B15: 速報レース情報
     # (RA/SE/HR 出走馬名表～)。RT_* テーブルは PRIMARY KEY + INSERT OR REPLACE
     # なので再実行しても重複しない（冪等）。
@@ -57,6 +64,8 @@ UPDATE_SPECS = [
     # 速報専用レコードで、RT_WE を埋める唯一の経路。RT_* は PRIMARY KEY +
     # INSERT OR REPLACE で冪等。レース当日発表のため過去分 backfill は不可
     # (前向きにのみ蓄積)。過去の馬場状態は RA レコード側(field50/51)が供給する。
+    # RT_* は取得ごとの日付単位全置換 (現在状態)。いつ何を受け取ったかは
+    # 0B11 と同じく取得ログ RT_CAPTURE_* に追記する (docs/capture_log.md)。
     ("0B14", 1),
     # 0B16 is event-keyed (JVWatchEvent), not YYYYMMDD-keyed.
     ("0B51", 1),
@@ -112,7 +121,9 @@ def _sync_realtime_spec(
 
     Mirrors RealtimeMonitor._drain_key (open -> drain -> close per key) but
     runs once per daily sync instead of looping. Imports are idempotent
-    because RealtimeUpdater uses INSERT OR REPLACE on primary keys.
+    because RealtimeUpdater uses INSERT OR REPLACE on primary keys. For
+    0B11/0B14 every open and every buffer is also appended to the capture
+    log (src.realtime.capture_log) in the same transaction.
 
     Args:
         database: Open database handler.
@@ -130,11 +141,16 @@ def _sync_realtime_spec(
 
     from src.jvlink.bridge import JVLinkBridgeError
     from src.jvlink.wrapper import JVLinkError
+    from src.database.migration import require_current_primary_key
     from src.database.schema import create_all_tables
     from src.realtime.updater import RealtimeUpdater, summarize_update_result
 
     if ensure_tables:
         create_all_tables(database)
+    if spec == "0B11":
+        # Fail before JVRTOpen: a legacy RT_WH key would overwrite earlier
+        # announcements, and its migration is an operator step.
+        require_current_primary_key(database, "RT_WH")
 
     database.begin_transaction()
 
@@ -166,6 +182,7 @@ def _sync_realtime_spec(
         if owns_jvlink:
             jvlink.jv_init()
         for key in _iter_date_keys(from_date, to_date):
+            capture = begin_capture(database, spec, key, producer=SUMMARY_GENERATOR)
             try:
                 ret, _count = jvlink.jv_rt_open(spec, key)
             except (JVLinkError, JVLinkBridgeError) as exc:
@@ -175,9 +192,15 @@ def _sync_realtime_spec(
                     print(f"[daily-sync] {spec} not subscribed, skipping spec")
                     break
                 raise
-            record_open(jvrtopen_entry(key=key, jvrtopen_code=ret))
+            fetch_id = None
+            if capture is not None and ret >= -1:
+                capture.opened(ret)
+                fetch_id = capture.fetch_id
+            record_open(jvrtopen_entry(key=key, jvrtopen_code=ret, fetch_id=fetch_id))
             if ret == -1:
                 # No data published for this date key (normal).
+                if capture is not None:
+                    capture.complete()
                 continue
             if ret < -1:
                 raise RuntimeError(f"{spec} {key} JVRTOpen failed: {ret}")
@@ -196,6 +219,8 @@ def _sync_realtime_spec(
                     if not buff:
                         raise RuntimeError(f"{spec} {key} JVRead returned no buffer")
                     stats["records_fetched"] += 1
+                    if capture is not None:
+                        capture.append(buff)
                     try:
                         result = updater.process_record(buff)
                     except Exception as exc:  # noqa: BLE001 - drain, then fail closed
@@ -209,6 +234,8 @@ def _sync_realtime_spec(
                     stats["records_parsed"] += len(successful) + failed
                     stats["records_imported"] += len(successful)
                     stats["records_failed"] += failed
+                if capture is not None:
+                    capture.complete()
             finally:
                 try:
                     jvlink.jv_close()
@@ -448,6 +475,8 @@ def _sync_jvrtopen_spec(
     stats: dict = {}
     error: Exception | None = None
     skipped_code: int | None = None
+    # An exception means _sync_realtime_spec rolled the spec back.
+    committed = True
     try:
         _sync_realtime_spec(
             database=database,
@@ -460,6 +489,7 @@ def _sync_jvrtopen_spec(
             stats=stats,
         )
     except Exception as exc:
+        committed = False
         code = _error_code_from_exception(exc)
         if code in ignored_error_codes or code in SUBSCRIPTION_ERROR_CODES:
             print(f"[daily-sync] {spec} skipped: JVOpen code {code} (unsubscribed/ignored)")
@@ -481,6 +511,7 @@ def _sync_jvrtopen_spec(
         error=error,
         skipped=skipped_code is not None,
         skipped_code=skipped_code,
+        committed=committed,
     )
     if error is None and skipped_code is None and stats:
         print(
@@ -515,7 +546,7 @@ def _run_document(
         outcome = "ok"
     return {
         "schema_version": SUMMARY_SCHEMA_VERSION,
-        "generator": "jltsql scripts/daily_update.py",
+        "generator": SUMMARY_GENERATOR,
         "jltsql_version": JLTSQL_VERSION,
         "started_at": started_at.isoformat(timespec="seconds"),
         "finished_at": datetime.now().astimezone().isoformat(timespec="seconds"),

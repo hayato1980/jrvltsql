@@ -73,7 +73,8 @@ Change Information Tables:
 
 Weather and Horse-Weight Tables:
     NL_WE, RT_WE: PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, HappyoTime, HenkoID)
-    NL_WH, RT_WH: PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, Umaban)
+    NL_WH: PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, Umaban)
+    RT_WH: PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, HappyoTime, Umaban)
 
 Pace/Data Mining Tables:
     NL_DM, RT_DM: PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, Umaban)
@@ -2442,13 +2443,13 @@ SCHEMAS = {
             Kaiji INTEGER,
             Nichiji INTEGER,
             RaceNum INTEGER,
-            HappyoTime TEXT,
+            HappyoTime TEXT NOT NULL,
             Umaban INTEGER,
             Bamei TEXT,
             BaTaijyu INTEGER,
             ZogenFugo TEXT,
             ZogenSa INTEGER,
-            PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, Umaban)
+            PRIMARY KEY (Year, MonthDay, JyoCD, Kaiji, Nichiji, RaceNum, HappyoTime, Umaban)
         )
     """,
     "RT_WF": """
@@ -2742,6 +2743,58 @@ for _source_table, _target_table in (
         _source_table,
         _target_table,
     )
+
+
+# Append-only capture log for the 0B11/0B14 speed reports
+# (src/realtime/capture_log.py, docs/capture_log.md). RT_WH/RT_WE/... keep the
+# current state; these tables keep what each JVRTOpen returned and when.
+# jltsql only ever INSERTs into them.
+SCHEMAS.update(
+    {
+        "RT_CAPTURE_FETCH": """
+        CREATE TABLE IF NOT EXISTS RT_CAPTURE_FETCH (
+            FetchId TEXT,
+            DataSpec TEXT,
+            RequestKey TEXT,
+            Status TEXT,
+            JVRTOpenCode INTEGER,
+            RecordCount INTEGER,
+            RequestedAt TEXT,
+            OpenedAt TEXT,
+            CompletedAt TEXT,
+            Producer TEXT,
+            JltsqlVersion TEXT,
+            PRIMARY KEY (FetchId)
+        )
+    """,
+        "RT_CAPTURE_RECORD": """
+        CREATE TABLE IF NOT EXISTS RT_CAPTURE_RECORD (
+            FetchId TEXT,
+            Seq INTEGER,
+            CollectedAt TEXT,
+            DataSpec TEXT,
+            RequestKey TEXT,
+            RecordSpec TEXT,
+            DataKubun TEXT,
+            MakeDate TEXT,
+            Year TEXT,
+            MonthDay TEXT,
+            JyoCD TEXT,
+            Kaiji TEXT,
+            Nichiji TEXT,
+            RaceNum TEXT,
+            HappyoTime TEXT,
+            HenkoID TEXT,
+            Umaban TEXT,
+            RawEncoding TEXT,
+            RawRecord TEXT,
+            RawSha256 TEXT,
+            RowsJson TEXT,
+            PRIMARY KEY (FetchId, Seq)
+        )
+    """,
+    }
+)
 
 
 SCHEMAS.update(
@@ -3047,6 +3100,9 @@ class SchemaManager:
         for table_name, schema_sql in SCHEMAS.items():
             try:
                 self.db.execute(schema_sql)
+                if _skip_pending_operator_migration(self.db, table_name):
+                    results[table_name] = False
+                    continue
                 verify_table_schema(self.db, table_name, schema_sql)
                 if table_name in STRICT_SE_STORAGE_TABLES:
                     from src.importer.importer import verify_se_storage_schema
@@ -3420,6 +3476,27 @@ class SchemaManager:
         return results
 
 
+def _skip_pending_operator_migration(db: BaseDatabase, table_name: str) -> bool:
+    """Leave a table with a documented operator-only key migration as it is.
+
+    Startup must not stop every feed because one table still has its legacy
+    key; that table's writers refuse instead (require_current_primary_key).
+    """
+    from src.database.migration import (
+        OPERATOR_PRIMARY_KEY_MIGRATIONS,
+        is_pending_operator_key_migration,
+    )
+
+    if not is_pending_operator_key_migration(db, table_name):
+        return False
+    logger.warning(
+        f"{table_name} still has its legacy primary key; writes to it are refused until "
+        f"the operator migration in "
+        f"{OPERATOR_PRIMARY_KEY_MIGRATIONS[table_name.upper()]['procedure']} is applied"
+    )
+    return True
+
+
 def create_all_tables(db: BaseDatabase) -> None:
     """Additively migrate and create all tables defined in SCHEMAS.
 
@@ -3448,6 +3525,8 @@ def create_all_tables(db: BaseDatabase) -> None:
     for table_name, schema_sql in SCHEMAS.items():
         try:
             db.execute(schema_sql)
+            if _skip_pending_operator_migration(db, table_name):
+                continue
             verify_table_schema(db, table_name, schema_sql)
             if table_name in STRICT_SE_STORAGE_TABLES:
                 from src.importer.importer import verify_se_storage_schema

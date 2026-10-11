@@ -7,6 +7,34 @@
 
 ## [Unreleased]
 
+### 移行（2.2.0 から上げる場合）
+
+- **`RT_WH` の主キーに `HappyoTime` が入った（`NOT NULL`）**。2.2.0 で作った DB の
+  移行は**自動では行わない**（オペレーター手順: `docs/record_contracts.md#wh`）。未移行の
+  あいだ起動とほかの spec は動き、`0B11` の取得は JVRTOpen の前に、RT_WH への書き込みは
+  `jltsql realtime start` を含めて `SchemaMigrationError` で止まる（`--no-ensure-tables` でも
+  同じ）。PostgreSQL の移行は `ACCESS EXCLUSIVE` lock を取る。
+- 2.2.0 への rollback: 2.2.0 は移行済みの RT_WH を主キー不一致として `create_all_tables`
+  ごと拒否する（実測）。RT_WH を旧主キーに戻すか backup を restore してから戻す。
+- `RT_WH` は発表ごとに行が残るので、「馬ごとに 1 行」を前提にした読み手は
+  レースごとの最大 `HappyoTime` で絞る必要がある。
+- 新しい表 `RT_CAPTURE_FETCH` / `RT_CAPTURE_RECORD` を作る（追加のみ）。
+
+### Added
+
+- `scripts/daily_update.py` の既定 spec に `0B11`（速報馬体重）を追加（`--specs 0B11` /
+  `--require-records 0B11` も可）。
+- 0B11 / 0B14 の追記型取得ログ `RT_CAPTURE_FETCH`（JVRTOpen 1 回ごと）/
+  `RT_CAPTURE_RECORD`（JVRead のバッファごと。UTC の取得時刻・生レコード・SHA-256・
+  公式位置のキー項目・パース結果）。RT_* への取込と同じ transaction で書く。契約は
+  `docs/capture_log.md`。`src.realtime.capture_log.begin_capture` は runtime からも使える。
+- `--summary-json` の jvrtopen `opens[]` に `fetch_id`（取得ログとの突き合わせ用）。
+
+### Changed
+
+- `RT_WH` の主キーを (レース識別子, `HappyoTime`, 馬番) に変更し、0B11 の発表ごとに行を
+  残す。`NL_WH` は変更なし。0B14 の日付単位全置換（現在状態）は変更なし。
+
 ## [2.2.0] - 2026-10-11
 
 ### 移行（2.1.2 から上げる場合）
