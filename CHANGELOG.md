@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-11
+
+0B11/0B14 の取得ログと単発の速報取得（#275, #276）。**RT_WH の主キー移行はオペレーター作業**
+（下記と `RELEASE_NOTES.md`）。
+
 ### 移行（2.2.0 から上げる場合）
 
 - **`RT_WH` の主キーに `HappyoTime` が入った（`NOT NULL`）**。2.2.0 で作った DB の
@@ -16,8 +21,9 @@
   同じ）。PostgreSQL の移行は `ACCESS EXCLUSIVE` lock を取る。
 - 2.2.0 への rollback: 2.2.0 は移行済みの RT_WH を主キー不一致として `create_all_tables`
   ごと拒否する（実測）。RT_WH を旧主キーに戻すか backup を restore してから戻す。
-- `RT_WH` は発表ごとに行が残るので、「馬ごとに 1 行」を前提にした読み手は
-  レースごとの最大 `HappyoTime` で絞る必要がある。
+- `RT_WH` は発表ごとに行が残る（同じレース・馬に複数行）。「馬ごとに 1 行」を前提にした
+  読み手（KPS の `sync_engine` の `rt_wh` 取込、kps-ingestion-runtime の `rt_wh` 参照など）は
+  レースごとに `HappyoTime` が最大の行で絞る必要がある。移行と同時かそれより前に直す。
 - 新しい表 `RT_CAPTURE_FETCH` / `RT_CAPTURE_RECORD` を作る（追加のみ）。
 
 ### Added
@@ -34,6 +40,12 @@
   （schema 1）、exit 0/1/2/3。常駐ループの `realtime start` を collector の「1 リクエスト
   1 コマンド」で使えなかったため。速報取得の本体は `src.realtime.oneshot` に移し、
   daily_update と共有する。
+
+### Fixed
+
+- 速報取得で JVRTOpen が `-1` を返した日付キーを JVClose せずに次のキーへ進んでいた
+  （IF p.54: `-1` でも要求は開いている）。複数日の窓で次のキーが `-202` になっていた。
+  daily_update と `realtime fetch` の共有コードで修正（#276）。
 
 ### Changed
 
@@ -732,7 +744,8 @@
 - quickstart.py 対話形式セットアップウィザード
 - CLI コマンド（fetch, status, monitor, init）
 
-[Unreleased]: https://github.com/miyamamoto/jrvltsql/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/miyamamoto/jrvltsql/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/miyamamoto/jrvltsql/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/miyamamoto/jrvltsql/compare/v2.1.2...v2.2.0
 [2.1.2]: https://github.com/miyamamoto/jrvltsql/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/miyamamoto/jrvltsql/compare/v2.1.0...v2.1.1
