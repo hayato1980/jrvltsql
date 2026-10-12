@@ -24,6 +24,23 @@ err_console = Console(stderr=True, legacy_windows=True)
 logger = get_logger(__name__)
 
 
+def _progress_line_end() -> str:
+    """End an in-place progress print: stay on the line only on a real TTY.
+
+    rich drops a leading carriage return, so on piped output a print ending in
+    "" is joined to whatever prints next. Collectors parse that output line by
+    line, so piped progress gets its own line. The stream itself is asked,
+    not ``console.is_terminal``, which FORCE_COLOR / TTY_COMPATIBLE turn on
+    for a pipe as well.
+    """
+    isatty = getattr(console.file, "isatty", None)
+    try:
+        on_tty = bool(isatty is not None and isatty())
+    except (OSError, ValueError):
+        on_tty = False
+    return "" if on_tty else "\n"
+
+
 FETCH_NOTE_SETUP_MODE = "セットアップモード - 全データ取得（ダイアログが表示されます）"
 FETCH_NOTE_OPTION2_RANGE = (
     "option=2（今週データ）でも --from は JVOpen の fromtime に渡され、"
@@ -661,10 +678,13 @@ def database_maintenance():
 )
 @click.pass_context
 def migrate_sokuho_capture_identity(ctx, database_type, table_names, schema_name, apply):
-    """Report or explicitly migrate legacy TS_SOKUHO primary keys.
+    """Report or explicitly widen 2.0-2.3 TS_SOKUHO primary keys.
 
-    Dry run is the default. Stop all collectors before using --apply.
-    SQLite is intentionally refused and requires backup plus table rebuild.
+    Those releases keyed a速報 row by HassoTime, which folds every later poll
+    of a race into its first capture. --apply adds CollectedAt back to the key
+    and deletes no row. Dry run is the default. Stop all collectors before
+    using --apply. SQLite is intentionally refused and requires backup plus
+    table rebuild.
     """
     from src.database import create_database_from_config, DatabaseError
     from src.database.migration import (
@@ -718,11 +738,10 @@ def migrate_sokuho_capture_identity(ctx, database_type, table_names, schema_name
         click.echo(f"  Status: {report.status}")
         click.echo(f"  Current primary key: {primary_key}")
         click.echo(f"  Total rows: {report.total_rows}")
-        click.echo("  Distinct publication groups: " f"{report.distinct_publication_groups}")
-        click.echo(f"  Rows that would be deleted: {report.rows_to_delete}")
+        click.echo("  Rows that would be deleted: 0")
         click.echo(
-            "  Groups whose CollectedAt would be rewritten to earliest non-NULL: "
-            f"{report.collected_at_rewrite_groups}"
+            "  Rows with NULL CollectedAt (apply refuses when nonzero): "
+            f"{report.null_collected_at}"
         )
     if apply:
         click.echo("Migration apply completed.")
@@ -2215,7 +2234,7 @@ def timeseries(
                             f"errors={progress.get('error_keys', 0):,} "
                             f"records={progress.get('total_records', 0):,} "
                             f"last={progress.get('key') or '-'}:{status}",
-                            end="",
+                            end=_progress_line_end(),
                             soft_wrap=True,
                         )
 
@@ -2248,7 +2267,10 @@ def timeseries(
 
                         # Progress indicator
                         if record_count % 100 == 0:
-                            console.print(f"\r  Processed: {record_count:,} records", end="")
+                            console.print(
+                                f"\r  Processed: {record_count:,} records",
+                                end=_progress_line_end(),
+                            )
 
                     flush_batch(records_batch)
                     window_requested = (
