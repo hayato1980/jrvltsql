@@ -439,6 +439,10 @@ class OptimizedDataImporter:
         verified_ch_result_tables: Dict[str, str] = {}
         verified_ks_result_tables: Dict[str, str] = {}
         last_expanded_record_fingerprint = None
+        # The O1-O6 snapshot most recently applied in this call. Its follower
+        # rows are already stored; a follower of any other snapshot (a call
+        # that starts mid-snapshot, or a lone row) applies its whole snapshot.
+        last_odds_snapshot = None
 
         try:
             for record in records:
@@ -624,7 +628,10 @@ class OptimizedDataImporter:
                     last_expanded_record_fingerprint = None
                     continue
 
-                if _is_odds_snapshot_follower(record, table_name):
+                odds_follower = _is_odds_snapshot_follower(record, table_name)
+                if odds_follower and (
+                    _odds_native_snapshot_rows(record, table_name) is last_odds_snapshot
+                ):
                     continue
 
                 if _is_mining_snapshot_follower(record, table_name):
@@ -680,7 +687,9 @@ class OptimizedDataImporter:
                     except Exception:
                         self.database.rollback()
                         raise
-                    self._records_imported += rows
+                    last_odds_snapshot = odds_snapshot_rows
+                    # Rows are counted once, on the leading row, as before.
+                    self._records_imported += 0 if odds_follower else rows
                     self._batches_processed += 1
                     continue
 

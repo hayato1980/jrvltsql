@@ -737,17 +737,7 @@ def test_blank_official_values_stay_blank_instead_of_null(
             assert stored <= {None, "", *(" " * width for width in range(1, 8))}, field_name
 
 
-FOLLOWER_ROW_GAP = (
-    "import_records stores nothing and reports no failure when handed a lone "
-    "follower row for O2-O6. The removed import_single_record reconstructed the "
-    "whole snapshot here, so this case was only ever covered through an entry "
-    "point production never called: the gap in import_records is pre-existing, "
-    "not introduced by that removal."
-)
-
-
 @pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
-@pytest.mark.xfail(strict=True, reason=FOLLOWER_ROW_GAP)
 def test_single_record_follower_row_alone_still_stores_the_whole_snapshot(
     tmp_path: Path,
     record_type: str,
@@ -762,6 +752,38 @@ def test_single_record_follower_row_alone_still_stores_the_whole_snapshot(
         assert import_one(DataImporter(database), rows[-1])
         assert _stored_combinations(database, table_name) == _expected_combinations(
             record_type, 3
+        )
+
+
+@pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
+@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
+@pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
+def test_batch_starting_mid_snapshot_still_stores_the_whole_snapshot(
+    tmp_path: Path,
+    importer_class,
+    record_type: str,
+    auto_commit: bool,
+) -> None:
+    """先頭行を含まない追従行の並びでも、snapshot 全体を1回だけ適用する。"""
+
+    table_name = _native_table(record_type)
+    database = SQLiteDatabase(
+        {"path": str(tmp_path / f"mid-{record_type}-{importer_class.__name__}.db")}
+    )
+    with database:
+        _create(database, (table_name,))
+        importer = importer_class(database, batch_size=10)
+        assert importer.import_records(iter(_rows(record_type, filled=3)))[
+            "records_failed"
+        ] == 0
+        followers = _rows(record_type, filled=2)[1:]
+        stats = importer.import_records(iter(followers), auto_commit=auto_commit)
+        if not auto_commit:
+            database.commit()
+        assert stats["records_failed"] == 0
+        assert stats["batches_processed"] == 1
+        assert _stored_combinations(database, table_name) == _expected_combinations(
+            record_type, 2
         )
 
 
@@ -799,6 +821,44 @@ def test_postgresql_snapshot_replacement_removes_withdrawn_combinations(
             row["kumi"]
             for row in postgresql_db.fetch_all(f'SELECT Kumi AS kumi FROM {table_name}')
         ] == [TOTAL_COMBINATION]
+    finally:
+        postgresql_db.execute(f"DROP TABLE IF EXISTS {table_name}")
+        postgresql_db.commit()
+
+
+@pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
+@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
+@pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
+def test_postgresql_batch_starting_mid_snapshot_stores_the_whole_snapshot(
+    postgresql_db,
+    importer_class,
+    record_type: str,
+    auto_commit: bool,
+) -> None:
+    """PostgreSQL でも追従行だけの並びが snapshot 全体を置換する。"""
+
+    table_name = _native_table(record_type)
+    postgresql_db.execute(f"DROP TABLE IF EXISTS {table_name}")
+    postgresql_db.execute(SCHEMAS[table_name])
+    postgresql_db.commit()
+    try:
+        importer = importer_class(postgresql_db, batch_size=10)
+        assert importer.import_records(iter(_rows(record_type, filled=3)))[
+            "records_failed"
+        ] == 0
+        stats = importer.import_records(
+            iter(_rows(record_type, filled=2)[1:]), auto_commit=auto_commit
+        )
+        if not auto_commit:
+            postgresql_db.commit()
+        assert stats["records_failed"] == 0
+        assert stats["batches_processed"] == 1
+        assert [
+            row["kumi"]
+            for row in postgresql_db.fetch_all(
+                f"SELECT Kumi AS kumi FROM {table_name} ORDER BY Kumi"
+            )
+        ] == _expected_combinations(record_type, 2)
     finally:
         postgresql_db.execute(f"DROP TABLE IF EXISTS {table_name}")
         postgresql_db.commit()
