@@ -788,6 +788,65 @@ def test_batch_starting_mid_snapshot_still_stores_the_whole_snapshot(
 
 
 @pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
+@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
+@pytest.mark.parametrize("auto_commit", (True, False), ids=("owned", "caller"))
+def test_follower_after_a_delete_reapplies_its_snapshot(
+    tmp_path: Path,
+    importer_class,
+    record_type: str,
+    auto_commit: bool,
+) -> None:
+    """先頭行の後に削除が入れば、続く追従行は snapshot 全体を適用し直す。"""
+
+    table_name = _native_table(record_type)
+    database = SQLiteDatabase(
+        {"path": str(tmp_path / f"delete-{record_type}-{importer_class.__name__}.db")}
+    )
+    with database:
+        _create(database, (table_name,))
+        rows = _rows(record_type, filled=3)
+        delete = _rows(record_type, data_kubun="0", filled=0, sale_flag=b"1")
+        importer = importer_class(database, batch_size=10)
+        stats = importer.import_records(
+            iter([rows[0], *delete, *rows[1:]]), auto_commit=auto_commit
+        )
+        if not auto_commit:
+            database.commit()
+        assert stats["records_failed"] == 0
+        assert _stored_combinations(database, table_name) == _expected_combinations(
+            record_type, 3
+        )
+
+
+@pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
+@pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))
+def test_followers_after_a_rolled_back_leader_store_the_snapshot(
+    tmp_path: Path,
+    importer_class,
+    record_type: str,
+) -> None:
+    """呼び出し側が先頭行を rollback したら、次の呼び出しの追従行が snapshot を適用する。"""
+
+    table_name = _native_table(record_type)
+    database = SQLiteDatabase(
+        {"path": str(tmp_path / f"rollback-{record_type}-{importer_class.__name__}.db")}
+    )
+    with database:
+        _create(database, (table_name,))
+        rows = _rows(record_type, filled=3)
+        importer = importer_class(database, batch_size=10)
+        assert importer.import_records(iter(rows[:1]), auto_commit=False)[
+            "records_failed"
+        ] == 0
+        database.rollback()
+        assert _stored_combinations(database, table_name) == []
+        assert importer.import_records(iter(rows[1:]))["records_failed"] == 0
+        assert _stored_combinations(database, table_name) == _expected_combinations(
+            record_type, 3
+        )
+
+
+@pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
 def test_postgresql_snapshot_replacement_removes_withdrawn_combinations(
     postgresql_db,
     record_type: str,

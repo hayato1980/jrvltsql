@@ -361,6 +361,8 @@ def test_dm_single_record_import_replaces_the_complete_native_snapshot(tmp_path)
         assert first is not None and corrected is not None
 
         assert import_one(importer, first[-1]) is True
+        # A follower row alone still stores its whole snapshot.
+        assert database.fetch_one("SELECT COUNT(*) AS count FROM NL_DM")["count"] == len(first)
         assert import_one(importer, corrected[0]) is True
         rows = database.fetch_all("SELECT Umaban, MakeHM FROM NL_DM ORDER BY Umaban")
 
