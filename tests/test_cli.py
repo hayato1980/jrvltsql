@@ -786,6 +786,140 @@ class TestRealtimeTimeseriesCommand(unittest.TestCase):
         self.assertEqual(result.exit_code, TIMESERIES_EXIT_KEY_ERRORS, result.output)
         self.assertIn("Failed keys:    0B42=184", result.output)
 
+    def test_timeseries_jvread_failure_inside_a_key_exits_4_end_to_end(self):
+        """A JVRead -403 part-way through a key (2025-05-03, race 9) ends in exit 4.
+
+        Runs the real RealtimeFetcher, its real JVRead loop and -403 handling over
+        an SQLite NL_RA with two races; only the JV-Link transport is faked. Race 8
+        reads one O2 record and completes; race 9 reads one O2 record and then
+        JVRead returns -403. Race 8 is saved, race 9's partial rows are discarded,
+        it is a failed key and the command exits 4.
+        """
+        import sqlite3
+        from contextlib import closing
+
+        from src.cli.main import TIMESERIES_EXIT_KEY_ERRORS
+
+        def o2_record(race: bytes) -> bytes:
+            header = (
+                b"O2"
+                + b"4"
+                + b"20250503"
+                + b"2025"
+                + b"0503"
+                + b"05"
+                + b"02"
+                + b"03"
+                + race
+                + b"05031549"
+                + b"18"
+                + b"18"
+                + b"7"
+            )
+            combos = b"0102000123010" + b"0103000456020" + b"0" * (151 * 13)
+            return header + combos + b"00000000999\r\n"
+
+        class FakeJVLink:
+            def __init__(self, *_args, **_kwargs):
+                self.reads = []
+                self.deleted = []
+
+            def jv_init(self):
+                return 0
+
+            def jv_rt_open(self, data_spec, key):
+                name = f"0B420000000000{key}.jvd"
+                record = o2_record(key[-2:].encode())
+                end = (0, b"", "") if key.endswith("08") else (-403, b"", name)
+                self.reads = [(len(record), record, name), end]
+                return 0, 1
+
+            def jv_read(self):
+                # past the scripted reads the stream reports completion, so a
+                # swallowed -403 would end race 9 as a success
+                return self.reads.pop(0) if self.reads else (0, b"", "")
+
+            def jv_file_delete(self, filename):
+                self.deleted.append(filename)
+                return 0
+
+            def jv_close(self):
+                pass
+
+        database = MagicMock()
+        database.__enter__.return_value = database
+        database.__exit__.return_value = None
+        updater = MagicMock()
+        updater.process_parsed_records_batch.side_effect = lambda batch, **_k: {
+            "success": True,
+            "inserted": len(batch),
+            "errors": 0,
+        }
+        # The real fetcher logs through module-level structlog proxies. Do not let
+        # this test cache them on the current configuration's processor list:
+        # later tests reconfigure structlog and capture logs on a new list.
+        import structlog
+
+        cache_was = structlog.get_config()["cache_logger_on_first_use"]
+        structlog.configure(cache_logger_on_first_use=False)
+        self.addCleanup(structlog.configure, cache_logger_on_first_use=cache_was)
+        with self.runner.isolated_filesystem():
+            config_path = Path("config.yaml")
+            config_path.write_text(
+                "database:\n  type: sqlite\ndatabases:\n  sqlite:\n    enabled: true\n"
+                "jvlink:\n  sid: TEST\nauto_update_check: false\n"
+            )
+            db_path = Path("keiba.db").resolve()
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.execute(
+                    "CREATE TABLE NL_RA (Year INTEGER, MonthDay INTEGER, JyoCD TEXT,"
+                    " Kaiji INTEGER, Nichiji INTEGER, RaceNum INTEGER)"
+                )
+                conn.executemany(
+                    "INSERT INTO NL_RA VALUES (?, ?, ?, ?, ?, ?)",
+                    [(2025, 503, "05", 2, 3, 8), (2025, 503, "05", 2, 3, 9)],
+                )
+                conn.commit()
+            with (
+                patch("src.database.create_database_from_config", return_value=database),
+                patch("src.jvlink.bridge.find_bridge_executable", return_value=None),
+                patch("src.fetcher.base.JVLinkWrapper", FakeJVLink),
+                # no log file in the temporary directory, no handler on its streams
+                patch("src.cli.main.setup_logging_from_config"),
+                patch("src.realtime.updater.RealtimeUpdater", return_value=updater),
+            ):
+                result = self.runner.invoke(
+                    cli,
+                    [
+                        "--config",
+                        str(config_path),
+                        "realtime",
+                        "timeseries",
+                        "--spec",
+                        "0B42",
+                        "--from",
+                        "20250503",
+                        "--to",
+                        "20250503",
+                        "--db",
+                        "sqlite",
+                        "--db-path",
+                        str(db_path),
+                    ],
+                )
+
+        self.assertEqual(result.exit_code, TIMESERIES_EXIT_KEY_ERRORS, result.output)
+        self.assertIn("Failed keys:    0B42=1", result.output)
+        self.assertIn("ok=1 nonempty=1 no_data=0 errors=1", result.output)
+        saved = [
+            row
+            for call in updater.process_parsed_records_batch.call_args_list
+            for row in call.args[0]
+        ]
+        # race 8's two quinella rows are saved; race 9's partial rows are not
+        self.assertEqual({str(row.get("RaceNum")) for row in saved}, {"08"})
+        self.assertEqual(len(saved), 2)
+
     def test_timeseries_no_data_keys_alone_still_succeed(self):
         """A key without data (e.g. a cancelled race) is not a fetch error."""
 
