@@ -26,8 +26,8 @@ from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hr_parser import HRParser
 from src.parser.status_domain import CURRENT_ACCUMULATED_DATA_KUBUN
 from src.realtime.updater import RealtimeUpdater
-from tests.test_hr_parser_full_payouts import build_record
 from tests.importer_support import import_each, import_one
+from tests.test_hr_parser_full_payouts import build_record
 
 FIXTURES = Path(__file__).parent / "fixtures" / "official_layout"
 CONTRACT = json.loads((FIXTURES / "hr_contract_4901.json").read_text(encoding="utf-8"))

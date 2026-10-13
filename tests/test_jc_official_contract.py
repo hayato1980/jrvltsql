@@ -172,9 +172,7 @@ def import_records(database, entrypoint, records, *, standard, auto_commit, batc
         assert result["records_failed"] == 0
     else:
         importer = DataImporter(database, use_jravan_schema=standard)
-        assert all(
-            import_one(importer, record, auto_commit=auto_commit) for record in records
-        )
+        assert all(import_one(importer, record, auto_commit=auto_commit) for record in records)
     if not auto_commit:
         database.commit()
 

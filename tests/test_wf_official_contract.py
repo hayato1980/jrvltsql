@@ -1587,10 +1587,7 @@ def test_wf_single_record_owned_transaction_rolls_back_on_validation_failure(
         assert baseline_stats["records_imported"] == 1
         assert baseline_stats["records_failed"] == 0
 
-        assert (
-            import_one(importer, parsed_record(month_day="0817"), auto_commit=False)
-            is True
-        )
+        assert import_one(importer, parsed_record(month_day="0817"), auto_commit=False) is True
         invalid = parsed_record(month_day="0818")
         invalid["PayoutsJson"] = "[]"
         with pytest.raises(SchemaMigrationError):
@@ -1605,10 +1602,7 @@ def test_wf_single_record_owned_transaction_rolls_back_on_validation_failure(
         if standard:
             assert _count(database, "JYUSYOSIKI") == 243
 
-        assert (
-            import_one(importer, parsed_record(month_day="0817"), auto_commit=False)
-            is True
-        )
+        assert import_one(importer, parsed_record(month_day="0817"), auto_commit=False) is True
         database.commit()
         assert _count(database, target) == 2
         if standard:
@@ -1628,10 +1622,7 @@ def test_wf_single_record_owned_transaction_rolls_back_on_validation_failure(
         if standard:
             assert _count(database, "JYUSYOSIKI") == 486
 
-        assert (
-            import_one(importer, parsed_record(month_day="0819"), auto_commit=False)
-            is True
-        )
+        assert import_one(importer, parsed_record(month_day="0819"), auto_commit=False) is True
         database.commit()
         assert _count(database, target) == 3
         if standard:
@@ -2165,18 +2156,17 @@ def test_wf_postgresql_auto_commit_false_validation_failure_rolls_back(
         import_one(single, invalid, auto_commit=False)
     assert postgresql_db.is_transaction_active() is False
     assert _count(postgresql_db, target) == 1
-    assert single.get_statistics() == baseline_stats
+    # `import_records` resets its counters on entry, so statistics describe one
+    # call, not the run (the removed `import_single_record` accumulated them).
+    # What survives a failure is the durable state - the rolled-back
+    # transaction and the row counts - and that is what is pinned here, as in
+    # test_wf_single_record_owned_transaction_rolls_back_on_validation_failure.
     if standard:
         assert _count(postgresql_db, "JYUSYOSIKI") == 243
 
     assert import_one(single, parsed_record(month_day="0817"), auto_commit=False) is True
     postgresql_db.commit()
     assert _count(postgresql_db, target) == 2
-    expected_stats = dict(baseline_stats)
-    expected_stats["records_imported"] += 1
-    if standard:
-        expected_stats["batches_processed"] += 1
-    assert single.get_statistics() == expected_stats
     if standard:
         assert _count(postgresql_db, "JYUSYOSIKI") == 486
 
@@ -2187,18 +2177,14 @@ def test_wf_postgresql_auto_commit_false_validation_failure_rolls_back(
         import_one(single, invalid, auto_commit=False)
     assert postgresql_db.is_transaction_active() is False
     assert _count(postgresql_db, target) == 2
-    assert single.get_statistics() == expected_stats
     if standard:
         assert _count(postgresql_db, "JYUSYOSIKI") == 486
 
     assert import_one(single, parsed_record(month_day="0819"), auto_commit=False) is True
     postgresql_db.commit()
     assert _count(postgresql_db, target) == 3
-    expected_stats["records_imported"] += 1
     if standard:
-        expected_stats["batches_processed"] += 1
         assert _count(postgresql_db, "JYUSYOSIKI") == 729
-    assert single.get_statistics() == expected_stats
 
 
 @pytest.mark.parametrize("importer_class", (DataImporter, OptimizedDataImporter))

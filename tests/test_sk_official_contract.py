@@ -21,8 +21,8 @@ from src.importer.importer import (
 from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.sk_parser import SKParser
 from src.realtime.updater import RealtimeUpdater
-from tests.test_sk_parser_layout import PEDIGREE_FIELDS, build_current_record
 from tests.importer_support import import_each, import_one
+from tests.test_sk_parser_layout import PEDIGREE_FIELDS, build_current_record
 
 KETTO_NUM = "2024100001"
 OTHER_KETTO_NUM = "2024100002"

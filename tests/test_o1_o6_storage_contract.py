@@ -28,6 +28,7 @@ from src.importer.importer import (
 from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.odds_domain import SNAPSHOT_ROWS_KEY, TOTAL_COMBINATION
 from src.realtime.updater import RealtimeUpdater
+from tests.importer_support import import_one
 from tests.test_o1_o6_official_contract import (
     ALL_RECORD_TYPES,
     IMPORTERS,
@@ -38,7 +39,6 @@ from tests.test_o1_o6_official_contract import (
     _o1_raw,
     _o1_rows,
 )
-from tests.importer_support import import_one
 
 RECORD_TYPES = ("O1", *ALL_RECORD_TYPES)
 

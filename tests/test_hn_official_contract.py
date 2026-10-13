@@ -23,8 +23,8 @@ from src.importer.importer import (
 )
 from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.hn_parser import HNParser
-from tests.test_hn_parser_layout import build_record
 from tests.importer_support import import_each, import_one
+from tests.test_hn_parser_layout import build_record
 
 
 def hn_record(
@@ -209,9 +209,7 @@ def test_hn_blank_reserved_spans_survive_every_sqlite_import_path(
         database.execute(schema)
         database.commit()
         if entrypoint == "single":
-            assert import_one(
-                DataImporter(database, use_jravan_schema=use_standard), record
-            )
+            assert import_one(DataImporter(database, use_jravan_schema=use_standard), record)
         else:
             importer_class = (
                 OptimizedDataImporter if entrypoint == "optimized-batch" else DataImporter

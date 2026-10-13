@@ -19,6 +19,7 @@ from src.database.schema import SCHEMAS
 from src.database.sqlite_handler import SQLiteDatabase
 from src.importer.importer import DataImporter
 from src.parser.rc_parser import RCParser
+from tests.importer_support import import_one
 from tests.test_av_official_contract import parsed_av
 from tests.test_cc_official_contract import parsed_cc
 from tests.test_cs_official_contract import parsed_record as parsed_cs
@@ -34,7 +35,6 @@ from tests.test_sk_official_contract import sk_record
 from tests.test_tc_official_contract import parsed_tc
 from tests.test_wc_official_contract import parsed_record as parsed_wc
 from tests.test_we_official_contract import parsed_we
-from tests.importer_support import import_one
 from tests.test_wf_official_contract import parsed_record as parsed_wf
 
 

@@ -29,8 +29,8 @@ from src.importer.importer import (
 from src.importer.importer_optimized import OptimizedDataImporter
 from src.parser.um_parser import UMParser
 from src.realtime.updater import RealtimeUpdater
-from tests.test_um_parser_layout import FIELDS, build_record
 from tests.importer_support import import_each, import_one
+from tests.test_um_parser_layout import FIELDS, build_record
 
 KETTO_NUM = "2019900001"
 OTHER_KETTO_NUM = "2019900002"
