@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Union
 
 from src.database.base import BaseDatabase
-from src.database.migration import SchemaMigrationError
+from src.database.migration import SchemaMigrationError, require_current_primary_key
 from src.database.schema_types import get_table_primary_key_columns
 from src.importer.importer import (
     CANCELLATION_STATE_RECORD_TYPES,
@@ -216,6 +216,7 @@ class RealtimeUpdater:
         self._verified_cc_tables: set[str] = set()
         self._verified_jc_tables: set[str] = set()
         self._verified_wf_tables: set[str] = set()
+        self._verified_wh_tables: set[str] = set()
 
         logger.info("RealtimeUpdater initialized")
 
@@ -232,6 +233,9 @@ class RealtimeUpdater:
             "RT_CC",
             "RT_JC",
             "RT_WF",
+            # Key check only: a legacy RT_WH (no HappyoTime in the key) would
+            # silently overwrite earlier 0B11 announcements.
+            "RT_WH",
         }
     )
 
@@ -316,6 +320,10 @@ class RealtimeUpdater:
                 if table_name not in self._verified_cc_tables:
                     if verify_cc_storage_schema(self.database, table_name):
                         self._verified_cc_tables.add(table_name)
+            elif table_name == "RT_WH":
+                if table_name not in self._verified_wh_tables:
+                    require_current_primary_key(self.database, table_name)
+                    self._verified_wh_tables.add(table_name)
             elif table_name == "RT_JC":
                 if table_name not in self._verified_jc_tables:
                     if verify_jc_storage_schema(self.database, table_name):
@@ -1501,27 +1509,27 @@ class RealtimeUpdater:
             "TS_O6": ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum", "Kumi", "HassoTime"],
             "TS_SOKUHO_O1": [
                 "Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji",
-                "RaceNum", "Umaban", "Kumi", "HassoTime", "SourceSpec",
+                "RaceNum", "Umaban", "Kumi", "HassoTime", "SourceSpec", "CollectedAt",
             ],
             "TS_SOKUHO_O2": [
                 "Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji",
-                "RaceNum", "Kumi", "HassoTime", "SourceSpec",
+                "RaceNum", "Kumi", "HassoTime", "SourceSpec", "CollectedAt",
             ],
             "TS_SOKUHO_O3": [
                 "Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji",
-                "RaceNum", "Kumi", "HassoTime", "SourceSpec",
+                "RaceNum", "Kumi", "HassoTime", "SourceSpec", "CollectedAt",
             ],
             "TS_SOKUHO_O4": [
                 "Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji",
-                "RaceNum", "Kumi", "HassoTime", "SourceSpec",
+                "RaceNum", "Kumi", "HassoTime", "SourceSpec", "CollectedAt",
             ],
             "TS_SOKUHO_O5": [
                 "Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji",
-                "RaceNum", "Kumi", "HassoTime", "SourceSpec",
+                "RaceNum", "Kumi", "HassoTime", "SourceSpec", "CollectedAt",
             ],
             "TS_SOKUHO_O6": [
                 "Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji",
-                "RaceNum", "Kumi", "HassoTime", "SourceSpec",
+                "RaceNum", "Kumi", "HassoTime", "SourceSpec", "CollectedAt",
             ],
 
             # Weather and horse-weight tables
@@ -1529,7 +1537,12 @@ class RealtimeUpdater:
                 "Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji",
                 "HappyoTime", "HenkoID",
             ],
-            "RT_WH": ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum", "Umaban"],
+            # One row per announcement: 0B11 adds a record each time weights
+            # are announced, and HappyoTime tells the announcements apart.
+            "RT_WH": [
+                "Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji",
+                "RaceNum", "HappyoTime", "Umaban",
+            ],
 
             # Other realtime tables
             "RT_DM": ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum", "Umaban"],
@@ -1542,6 +1555,10 @@ class RealtimeUpdater:
             "RT_TC": ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum"],
             "RT_CC": ["Year", "MonthDay", "JyoCD", "Kaiji", "Nichiji", "RaceNum"],
             "RT_WF": ["Year", "MonthDay"],
+
+            # Append-only capture log, written by src.realtime.capture_log.
+            "RT_CAPTURE_FETCH": ["FetchId"],
+            "RT_CAPTURE_RECORD": ["FetchId", "Seq"],
         }
 
         return PRIMARY_KEY_MAP.get(lookup_name, [])

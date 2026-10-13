@@ -1,3 +1,269 @@
+# jrvltsql v2.3.2 Release Notes
+
+`2.3.2` is a fix release: the time-series odds commands no longer report an
+incomplete fetch as a success (#283). Parser byte layouts and table schemas are
+unchanged; no database migration.
+
+## Fixes
+
+- **Lost race keys make the time-series commands exit 4** (#283).
+  `realtime timeseries`, `realtime odds-timeseries` and
+  `realtime odds-sokuho-timeseries` (the latter two run the same code) now end
+  with exit code **4** when the fetch failed for at least one race key:
+  a negative JVRTOpen return (e.g. `-413` server error), a JVRead failure in the
+  middle of a key (e.g. `-403`), or a bridge timeout. Up to 2.3.1 the summary's
+  `Errors:` counted only persistence failures, so such a run printed
+  `Errors: 0` and exited 0 while races were missing.
+  - Every spec is still fetched, and the rows of every key that was fetched
+    completely are saved and committed before the command exits. A key that
+    failed part-way keeps none of its rows (they are discarded, as in 2.3.1);
+    re-fetch it. Only the verdict changes.
+  - The summary gains a `Failed keys:` line: `0` when every key was fetched,
+    otherwise the failed key count per spec, e.g. `Failed keys:    0B42=184`.
+    It is a separate line so that callers which parse `Errors:` keep reading
+    the persistence count.
+  - A key that returns no data (e.g. a cancelled race, counted as `no_data`
+    in the `Keys:` line) is not a failure.
+  - A spec listed twice (`--spec 0B42,0B42`) accumulates its failures; a clean
+    second pass does not hide the first.
+
+| Exit code | Meaning (time-series commands, 2.3.2) |
+| --- | --- |
+| 0 | every key fetched (or returned no data) and every row saved |
+| 1 | error (persistence failure, setup failure, …) |
+| 2 | usage error |
+| 4 | some race keys could not be fetched; the rows of the completely fetched keys are saved |
+
+## Upgrade to 2.3.2
+
+- No database migration; tables and keys are those of 2.3.1.
+- **Exit codes change.** A caller that treats any non-zero exit as a failure
+  will now see a failure where 2.3.1 reported success:
+  - A caller that fetches date ranges in sequence and stops at the first
+    non-zero exit will stop at the range with a lost key instead of
+    continuing. Decide how those dates are re-fetched (for example, re-run the
+    same range; the upsert keeps the rows already saved).
+  - A caller that checked only `Errors:` or the `[OK] <spec>` line for success
+    still passes those checks; read the exit code or the `Failed keys:` line
+    to see the lost keys.
+  - Exit 4 is distinct from 1 so that a caller can schedule a re-fetch rather
+    than raise an alarm for a broken setup.
+- Callers that pin an exact release (tag or commit) are unaffected until they
+  move the pin to 2.3.2; review the points above before moving it.
+
+# jrvltsql v2.3.1 Release Notes
+
+`2.3.1` is a fix release for the JRA decision-time odds (#278, #279). Parser
+byte layouts are unchanged.
+
+## Fixes
+
+- **TS_SOKUHO keeps every poll again** (#278). 2.0-2.3.0 keyed
+  `TS_SOKUHO_O1`-`O6` by `HassoTime` and kept only the first capture, but the
+  `HassoTime` of a 0B30-0B36 record does not advance while the odds move, so
+  every later poll of a race was folded into its first row. The key is again
+  `(…, Kumi, HassoTime, SourceSpec, CollectedAt)` -- exactly the 1.x key,
+  column order included. `TS_O1` / `TS_O2` (0B41/0B42) are unchanged.
+- **Piped time-series progress no longer glues onto the terminal Keys line**
+  (#279). rich drops a leading carriage return, so the in-place
+  `Keys: … last=…` / `Processed: …` progress (printed without a newline) was
+  joined to the terminal `Keys:` summary on piped stdout, and
+  jrvltsql-wine-runtime's prospective 0B41/0B42 evidence check (exactly one
+  terminal Keys line) failed for every run with a due race. Progress now ends
+  with a newline unless the output stream is a TTY.
+
+## Upgrade to 2.3.1 (TS_SOKUHO)
+
+- **Tables created by 1.x** (key ending in `CollectedAt`): current; nothing to
+  do. **Do not run the 2.0-2.3.0 `migrate-sokuho-capture-identity --apply`
+  on them** -- that version collapsed them to one row per publication and
+  deleted rows.
+- **Tables created by 2.0-2.3.0** (no `CollectedAt` in the key): startup and
+  writes fail closed. Run the dry run, stop every collector, then `--apply`:
+
+  ```bash
+  jltsql db migrate-sokuho-capture-identity --db postgresql
+  jltsql db migrate-sokuho-capture-identity --db postgresql --apply
+  ```
+
+  The apply only adds `CollectedAt` to the key under an `ACCESS EXCLUSIVE`
+  lock; it deletes and rewrites no row, refuses when any `CollectedAt` is NULL,
+  and rolls every table back on failure. Polls already folded by 2.x are not
+  recovered. SQLite: back up and rebuild the table.
+- The other upgrade steps from older releases (RT_WH key from 2.2.0, NL_HR /
+  RT_HR flag types from 2.1.2) are unchanged; see below.
+
+# jrvltsql v2.3.0 Release Notes
+
+`2.3.0` releases #275 and #276 (merged on `master` since `2.2.0`): the
+race-day speed reports 0B11/0B14 become reconstructible as of a time, and a
+one-shot speed-report fetch replaces the resident loop for collectors.
+Parser byte layouts are unchanged. One primary key changes and **needs an
+operator migration** (see Upgrade); it is not applied automatically.
+
+## Highlights
+
+- **0B11 in daily_update** (#275): `scripts/daily_update.py` collects 0B11
+  (速報馬体重, WH) by default; `--specs 0B11` / `--require-records 0B11` work,
+  and the summary lists it as `kind: "jvrtopen"`.
+- **Append-only capture log** (#275): `RT_CAPTURE_FETCH` (one row per
+  JVRTOpen: dataspec, request key, return code, record count, UTC
+  requested/opened/completed times, producer, version) and
+  `RT_CAPTURE_RECORD` (one row per JVRead buffer: UTC collected time, raw
+  record, SHA-256, key fields cut from the official byte positions of
+  JV-Data 4.9.0.1 formats 101-106, parser output) for 0B11 and 0B14
+  (WH/WE/AV/JC/TC/CC). Written in the same transaction as the RT_* import;
+  only INSERTs. The 0B14 per-date replacement of RT_WE/RT_AV/RT_JC/RT_TC/RT_CC
+  (JV-Data ※1) is unchanged: RT_* is the current state, the log is the
+  history. `--summary-json` `opens[]` carry `fetch_id`. Contract and as-of
+  queries: `docs/capture_log.md`.
+- **RT_WH keeps every announcement** (#275): the key is race + `HappyoTime`
+  + horse (`HappyoTime NOT NULL`), because 0B11 adds a record per
+  announcement. `NL_WH` is unchanged.
+- **`jltsql realtime fetch`** (#276): opens each `YYYYMMDD` key of the
+  date-keyed speed-report specs (0B11/0B12/0B13/0B14/0B15/0B17/0B51) once,
+  imports, writes the capture log and the schema-1 summary
+  (`generator: "jltsql realtime fetch"`), and exits 0/1/2/3. The fetch body
+  moved to `src.realtime.oneshot` and is shared with daily_update.
+- **JVRTOpen `-1` is closed before the next key** (#276): a date key with no
+  data still leaves the request open (IF 4.9.0.1 p.54); without `JVClose` the
+  next key of a multi-day window failed with `-202`. This also fixes
+  `scripts/daily_update.py`, which shares the code.
+
+## Upgrade from 2.2.0 (operator migration for RT_WH)
+
+New tables `RT_CAPTURE_FETCH` / `RT_CAPTURE_RECORD` are created by the normal
+`create_all_tables` (additive).
+
+`RT_WH` gains `HappyoTime` in its primary key. A database created by 2.2.0 is
+**not migrated automatically**: startup and every other spec keep working,
+while 0B11 (`daily_update`, `realtime fetch`) stops before JVRTOpen and any
+WH write (including `realtime start`) is refused with `SchemaMigrationError:
+RT_WH primary key …`, whether or not table creation is skipped (`daily_update --no-ensure-tables`, `realtime fetch --no-ensure-tables`).
+
+1. Stop every collector writing the database and back up `rt_wh`.
+2. `SELECT COUNT(*) FROM rt_wh WHERE happyotime IS NULL;` must return 0.
+3. PostgreSQL (check the constraint name with
+   `SELECT conname FROM pg_constraint WHERE conrelid = 'rt_wh'::regclass AND contype = 'p';`,
+   default `rt_wh_pkey`):
+
+   ```sql
+   BEGIN;
+   LOCK TABLE rt_wh IN ACCESS EXCLUSIVE MODE;
+   ALTER TABLE rt_wh DROP CONSTRAINT rt_wh_pkey, ADD PRIMARY KEY
+     (year, monthday, jyocd, kaiji, nichiji, racenum, happyotime, umaban);
+   COMMIT;
+   ```
+
+   `ACCESS EXCLUSIVE` blocks reads and writes of `rt_wh` while the key index
+   is rebuilt.
+4. SQLite cannot change a key in place: rename, create the 2.3.0 table, copy,
+   drop (full statements in `docs/record_contracts.md#wh`), then
+   `jltsql create-indexes`.
+5. Check the row count is unchanged, then restart collection.
+
+Both procedures are executed by `tests/test_realtime_capture_log.py`
+(PostgreSQL 17 and SQLite).
+
+**Readers of `RT_WH` must change.** After the migration `RT_WH` holds one row
+per announcement (race + `HappyoTime` + horse), so a race and horse can have
+several rows. Code that assumes one row per race and horse (for example the
+KPS `sync_engine` copy of `rt_wh`, and anything in kps-ingestion-runtime that
+reads `rt_wh`) must select, per race, the rows of the largest `HappyoTime`
+(the latest announcement), e.g.
+`... WHERE (year, monthday, jyocd, kaiji, nichiji, racenum, happyotime) IN
+(SELECT year, monthday, jyocd, kaiji, nichiji, racenum, MAX(happyotime) FROM rt_wh
+GROUP BY 1, 2, 3, 4, 5, 6)`. Update those readers before or together with the
+migration. For "what was known at time T" use the capture log instead
+(`docs/capture_log.md`).
+
+## Rollback
+
+- Not migrated: re-adopt `v2.2.0`; the capture tables are ignored.
+- Migrated: 2.2.0 rejects the migrated `RT_WH` in `create_all_tables`
+  (measured: `SchemaMigrationError`), which with daily_update's default
+  `--ensure-tables` stops every spec. Restore the `rt_wh` backup, or keep only
+  the latest `HappyoTime` per race and horse and put the old key back (this
+  drops the announcement history), before re-adopting `v2.2.0`.
+
+## Validation and known constraints
+
+- Full suite incl. PostgreSQL integration on a disposable PostgreSQL 17
+  (`JLTSQL_RUN_POSTGRESQL_INTEGRATION=1`): see the release PR; CI
+  lint/test/windows-batch-syntax.
+- Not measured: a live JV-Link run of 0B11 and of `realtime fetch`, and its
+  duration. Before production use, on a race day after the RT_WH migration:
+  `jltsql realtime fetch --specs 0B11,0B14 --date <today> --summary-json /tmp/rt.json`
+  and read `rt.json`, `rt_capture_fetch` and `rt_wh`.
+- `jltsql realtime start` (RealtimeMonitor) does not write the capture log.
+- The capture log is never pruned by jltsql; retention is the user's.
+
+## Source and artifacts
+
+- tag: `v2.3.0` (full SHA filled in at release)
+- rollback tag: `v2.2.0` (`9779342f692a9640311064a1aa0bb63e2c5c7a8f`)
+
+# jrvltsql v2.2.0 Release Notes
+
+`2.2.0` releases everything merged on `master` since `2.1.2` (#263-#266,
+#268-#270, #272). Parser byte layouts and provider-registration contracts are
+unchanged. One storage type changes (see Upgrade).
+
+## Highlights
+
+- fetch observability (#272): `scripts/daily_update.py --summary-json PATH`
+  writes, per dataspec, the fromtime sent and the JVOpen return code,
+  `readcount`, `downloadcount` and `lastfiletimestamp` (JV-Link IF 4.9.0.1
+  p.19, p.54), plus read/parsed/imported/out-of-range counts. It is written on
+  normal completion, exceptions, argument errors and interrupts; `--help`
+  writes nothing. `--require-records SPEC[,SPEC]` exits 3 when a listed spec
+  returns nothing; `--log-file PATH` gives daily_update a file log. JVOpen `-1`
+  is recorded, never treated as proof of an empty server (p.54 also returns it
+  when a newer JV-Link was offered and chosen). Contract:
+  `docs/fetch_summary.md`. Without the new flags behaviour is unchanged, except
+  that `--ignore-jvopen-error-codes -2` now takes effect.
+- `fetch --to` is optional (#270); failed records are stored content-addressed
+  and the spec fails closed (#264); JVInit once per process and one setup
+  dialog for multi-spec fetch (#266); PostgreSQL `insert_many` fast path
+  (#265); provider values in reserved fields are kept (#263); the 2.1.2
+  lifecycle overlay is forward-ported (#268); unused `src/utils/db_helpers.py`
+  removed (#269).
+
+## Upgrade from 2.1.2 (migration required)
+
+`NL_HR` and `RT_HR` columns `FuseirituFlag6`, `TokubaraiFlag6` and
+`HenkanFlag6` change from `INTEGER` to `TEXT` (#263). On a database created by
+2.1.2 the pre-import column contract check rejects HR imports (fail closed;
+nothing is written wrongly). Back up the database first, then on PostgreSQL:
+
+```sql
+ALTER TABLE nl_hr ALTER COLUMN fuseirituflag6 TYPE TEXT USING fuseirituflag6::text,
+                  ALTER COLUMN tokubaraiflag6 TYPE TEXT USING tokubaraiflag6::text,
+                  ALTER COLUMN henkanflag6    TYPE TEXT USING henkanflag6::text;
+-- same three columns on rt_hr; HARAI was already VARCHAR
+```
+
+SQLite cannot change a column type in place: create a new database and
+re-import. Verified on a disposable PostgreSQL 15: the 2.1.2-shaped tables are
+rejected by the HR storage check and pass after the ALTER.
+
+## Rollback
+
+Re-adopt the immutable `v2.1.2` tag/wheel and restore the backup taken before
+the ALTER. Do not assume code-only rollback works on a migrated database.
+
+## Validation and known constraints
+
+- `pytest tests --ignore=tests/integration --ignore=tests/e2e -m "not slow"`:
+  5023 passed, 516 skipped (coverage 82%); CI lint/test/windows-batch-syntax
+  passed.
+- Not measured for this release: a live JV-Link provider run of the changed
+  fetch path (#266 JVInit lifecycle, #272 summary). This must be done in the
+  adopting runtime before production use, e.g. one `daily_update.py --specs RACE
+  --summary-json ... --require-records RACE` run and a multi-spec setup.
+
+See `CHANGELOG.md` for details.
+
 # jrvltsql v2.1.2 Release Notes
 
 `2.1.2` is an emergency correctness hotfix on top of `2.1.1` for prospective

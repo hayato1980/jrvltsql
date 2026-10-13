@@ -158,7 +158,11 @@ availability 表ではありません。速報では、この base domain から
 
 - `0B14` は指定日の完全な開催変更 snapshot なので、正常終了を確認した
   同一 transaction 内で当該日の `RT_WE` / `RT_AV` / `RT_JC` / `RT_TC` /
-  `RT_CC` を置換し、後続 snapshot から消えた変更を除去します。
+  `RT_CC` を置換し、後続 snapshot から消えた変更を除去します。これらの表は
+  「最後に取得した時点の現在状態」です。
+- 過去のある時点で何が発表されていたかは、`scripts/daily_update.py` が
+  追記する [取得ログ](capture_log.md)（`RT_CAPTURE_FETCH` /
+  `RT_CAPTURE_RECORD`）から取得ごとの snapshot として復元します。
 - `0B16` は指定イベントの更新であり、この日単位置換とは別です。
 - レコード別の補足は [WE](#we)、[AV](#av)、[JC](#jc)、[CC](#cc) の
   各節に書きます。
@@ -215,10 +219,19 @@ cache の変更に入る前に、対応する現行種別名を示して停止�
 
 **identity（主キー）:**
 
-- native `NL_WH` / `RT_WH` は 18 頭配列を馬ごとの行へ展開し、レース識別子と
-  馬番を主キーにします。
-- `HappyoTime` は訂正発表の時刻として保存しますが、同一レース・同一馬の
+- native `NL_WH` / `RT_WH` は 18 頭配列を馬ごとの行へ展開します。
+- 蓄積系 `NL_WH` の主キーはレース識別子＋馬番です。同一レース・同一馬の
   新しい発表は最新値として置き換わります。
+- 速報 `RT_WH`（2.3.0 以降）の主キーはレース識別子＋`HappyoTime`＋馬番です。
+  0B11 は「馬体重が発表される毎にレコード追加・更新」（JV-Data 4.9.0.1
+  データ提供タイミング）なので、発表ごとに別の行として残ります。同じ発表時刻の
+  再取得は同じ行を置き換えます（冪等）。公式のキー項目（○）はレース識別子までで、
+  `HappyoTime` をキーに含めるのは発表履歴を残すための保存上の選択です。
+  **現在値はレースごとに `HappyoTime` が最大の発表の行**です。旧 `RT_WH` の
+  ように「馬ごとに 1 行」を前提にした読み手は、最大 `HappyoTime` で絞って
+  ください。
+- いつ何を受け取ったか（取得時刻）は `RT_WH` には無く、
+  [取得ログ](capture_log.md) に残ります。
 
 **保存先:**
 
@@ -247,6 +260,57 @@ cache の変更に入る前に、対応する現行種別名を示して停止�
   保持期間内に再取得します。
 - 旧 `NL_WH` / `RT_WH` の行は公式 WH ではないため、馬体重履歴として
   移植しないでください。
+- 2.2.0 以前の公式 WH 形の `RT_WH`（主キーがレース識別子＋馬番）は、2.3.0 では
+  **自動移行しません**（本番の収集が書いている表で、表ロックを取るため）。未移行の
+  あいだ、起動とほかの spec はそのまま動き、`0B11` の取得（JVRTOpen の前）と
+  RT_WH への書き込み（`jltsql realtime start` を含む）だけが停止します。
+  主キーが広がるだけなので、移行で行は削除・変更されません。手順（オペレーター）:
+
+  1. RT_WH を書く収集（daily_update / collector / `realtime start`）を止め、DB を
+     backup する。
+  2. `SELECT COUNT(*) FROM rt_wh WHERE happyotime IS NULL;` が 0 であること
+     （0 でなければ中止。その行は発表で区別できないので、削除か修復を判断する）。
+  3. PostgreSQL（主キー制約名は
+     `SELECT conname FROM pg_constraint WHERE conrelid = 'rt_wh'::regclass AND contype = 'p';`
+     で確認。既定は `rt_wh_pkey`）:
+
+     ```sql
+     BEGIN;
+     LOCK TABLE rt_wh IN ACCESS EXCLUSIVE MODE;
+     ALTER TABLE rt_wh DROP CONSTRAINT rt_wh_pkey, ADD PRIMARY KEY
+       (year, monthday, jyocd, kaiji, nichiji, racenum, happyotime, umaban);
+     COMMIT;
+     ```
+
+     `ACCESS EXCLUSIVE` の間は RT_WH の読み書きが待たされます（主キー index の作り直し
+     の時間。行数に比例）。
+  4. SQLite（主キーを変えられないので作り直す。RT_WH を参照する view / trigger が
+     あれば先に退避する）:
+
+     ```sql
+     BEGIN IMMEDIATE;
+     ALTER TABLE RT_WH RENAME TO RT_WH_legacy_2_2;
+     -- 2.3.0 の RT_WH の CREATE TABLE（src/database/schema.py の SCHEMAS["RT_WH"]）
+     INSERT INTO RT_WH (RecordSpec, DataKubun, MakeDate, Year, MonthDay, JyoCD, Kaiji,
+       Nichiji, RaceNum, HappyoTime, Umaban, Bamei, BaTaijyu, ZogenFugo, ZogenSa)
+       SELECT RecordSpec, DataKubun, MakeDate, Year, MonthDay, JyoCD, Kaiji, Nichiji,
+       RaceNum, HappyoTime, Umaban, Bamei, BaTaijyu, ZogenFugo, ZogenSa
+       FROM RT_WH_legacy_2_2;
+     DROP TABLE RT_WH_legacy_2_2;
+     COMMIT;
+     ```
+
+     その後 `jltsql create-indexes` で index を作り直す。
+  5. 行数が移行前と同じことを確かめてから収集を再開する。
+
+  rollback: 2.2.0 は移行後の RT_WH を主キー不一致として `create_all_tables` ごと
+  拒否する（実測: `SchemaMigrationError`）。daily_update の既定 `--ensure-tables` では
+  **すべての spec が止まる**ので、2.2.0 に戻すときは RT_WH を旧主キーに戻してから
+  戻す。2.3.0 で発表ごとの行が増えた後は旧主キー（レース＋馬番）では一意にならない
+  ため、backup の restore か、レース・馬ごとに `HappyoTime` 最大の行だけを残してから
+  旧主キーを付け直す必要がある（後者は発表の履歴を捨てる）。
+  この手順は PostgreSQL 17 / SQLite でテスト
+  （`tests/test_realtime_capture_log.py` の documented procedure）しています。
 
 #### WE（天候・馬場状態変更）
 
@@ -531,6 +595,10 @@ cache の変更に入る前に、対応する現行種別名を示して停止�
 - 欠けた旧払戻を既存行から復元できないため、自動 ALTER で完全扱いにせず、
   DB をバックアップして `NL_HR` / `RT_HR` / `HARAI` を現行 DDL で再作成し、
   保持範囲に合う `RACE` source を再取込してください。
+- 2.1.2 で作った DB で、違いが 3 つの flag 配列 6 件目の列型（INTEGER）だけの
+  場合は、値が `0` だけなので PostgreSQL の
+  `ALTER COLUMN ... TYPE TEXT USING <列>::text` で失わずに移行できます（2.2.0 の
+  RELEASE_NOTES.md「Upgrade from 2.1.2」）。SQLite は列型を変えられないため再作成します。
 
 #### SE（馬毎レース情報）
 

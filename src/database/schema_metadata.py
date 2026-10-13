@@ -1483,7 +1483,7 @@ TABLE_METADATA: Dict[str, TableMetadata] = {
         "table_name": "RT_WH",
         "record_type": "WH",
         "description": "馬体重情報（速報）",
-        "purpose": "リアルタイムの18頭馬体重配列を馬ごとの最新行として格納（NL_WHと同構造）",
+        "purpose": "0B11の馬体重を発表ごと・馬ごとの行として格納（発表月日時分を主キーに含む。最新は発表月日時分の最大）",
         "columns": [
             {"name": "レコード種別ID", "type": "TEXT", "description": "レコード種別識別子（'WH'）", "example": "WH", "nullable": False},
             {"name": "開催年", "type": "INTEGER", "description": "レース開催年", "example": "2024", "nullable": False},
@@ -1499,7 +1499,7 @@ TABLE_METADATA: Dict[str, TableMetadata] = {
             {"name": "増減符号", "type": "TEXT", "description": "増加+、減少-、その他は空白", "example": "+", "nullable": True},
             {"name": "増減差", "type": "INTEGER", "description": "増減kg（000=前差なし、999=計量不能）", "example": "5", "nullable": True}
         ],
-        "primary_key": ["開催年", "開催月日", "競馬場コード", "開催回", "開催日目", "レース番号", "馬番"],
+        "primary_key": ["開催年", "開催月日", "競馬場コード", "開催回", "開催日目", "レース番号", "発表月日時分", "馬番"],
         "indexes": ["開催年", "開催月日", "競馬場コード", "レース番号", "発表月日時分"]
     },
     "RT_RC": {
@@ -1730,7 +1730,8 @@ for _source_table, _target_table in (
     _metadata["description"] = _metadata["description"].replace("（時系列）", "（速報時系列）")
     _metadata["purpose"] = (
         _metadata["purpose"].replace("時間推移を記録する", "開催週速報オッズの時間推移を記録する")
-        + "。SourceSpecをキーに含め、0B30と0B31-0B36の上書きを避ける"
+        + "。SourceSpecをキーに含め、0B30と0B31-0B36の上書きを避ける。"
+        "CollectedAtもキーに含め、poll ごとに1行を残す（HassoTime は発表時刻として更新されない）"
     )
     _metadata["columns"].insert(
         1,
@@ -1742,7 +1743,7 @@ for _source_table, _target_table in (
             "nullable": False,
         },
     )
-    _metadata["primary_key"] = [*_metadata["primary_key"], "SourceSpec"]
+    _metadata["primary_key"] = [*_metadata["primary_key"], "SourceSpec", "CollectedAt"]
     TABLE_METADATA[_target_table] = _metadata
 
 

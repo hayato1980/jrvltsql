@@ -84,6 +84,31 @@ jltsql realtime specs
 | 0B41 | 時系列オッズ（単複枠、1年） |
 | 0B42 | 時系列オッズ（馬連、1年） |
 
+### 単発取得（`realtime fetch`、2.3.0 以降）
+
+`realtime start` は常駐ループです。collector のように「1 リクエストで 1 コマンドを
+走らせて終わる」使い方には `realtime fetch` を使います。指定した開催日キー
+（`YYYYMMDD`）ごとに、指定 spec を 1 回ずつ JVRTOpen して取り込み、終了します。
+
+```bash
+jltsql realtime fetch --specs 0B11,0B14 --date 20261011 \
+  --require-records 0B14 --summary-json /tmp/rt_summary.json
+jltsql realtime fetch --specs 0B14 --from-date 20261010 --to-date 20261011
+```
+
+| オプション | 意味 |
+| --- | --- |
+| `--specs` | 開催日キーで開く速報 spec: `0B11` `0B12` `0B13` `0B14` `0B15` `0B17` `0B51`。`0B16`（イベントキー）とオッズ（`0B20`/`0B3x`/`0B4x`、レースキー）は対象外 |
+| `--date` / `--from-date` `--to-date` | 取得する開催日（両端を含む）。どちらか一方が必須 |
+| `--require-records SPEC[,SPEC]` | 列挙した spec が 1 件も読めなければ exit 3 |
+| `--summary-json PATH` | [取得サマリ JSON](fetch_summary.md)（schema 1、`generator: "jltsql realtime fetch"`）。コマンドに入った後の全終了経路で書く（`--specs` 無し・不正な `--db` などの引数エラーも `usage_error` で書く）。設定ファイルの読込失敗など、`realtime fetch` に入る前に jltsql 本体が止めた場合は書かれない書けなかったときは、ほかに失敗が無くても exit 1 |
+| `--db` / `--no-ensure-tables` | DB 種別 / 表の作成を省く |
+
+exit code: 0 正常、1 エラー（その spec は rollback、後続 spec は走らない）、2 引数エラー
+（JV-Link・DB に触れる前）、3 `--require-records` 不足、130 中断（Ctrl-C。実行中の spec は rollback、summary は `outcome: "error"`）。spec ごとに 1 transaction で、
+`0B11` / `0B14` は [取得ログ](capture_log.md) に追記します（`Producer` は
+`jltsql realtime fetch`）。
+
 ## 過去時系列オッズ
 
 公式1年保持の単複枠・馬連時系列オッズは `odds-timeseries` で取得します。
@@ -112,12 +137,17 @@ jltsql realtime odds-sokuho-timeseries --from 20260418 --to 20260419 --db sqlite
 
 ## TS_SOKUHO 主キーの明示移行
 
-旧版で作成した `TS_SOKUHO_O1`〜`TS_SOKUHO_O6` の主キー末尾に
-`CollectedAt` が残っている場合、通常の起動・テーブル準備・時系列オッズ書き込みは
-自動移行せず停止します。PostgreSQL のエラーには対象テーブルと、最初に実行する
-読み取り専用 dry run の exact command が表示されます。この command に `--apply` は
-含まれず、データを変更しません。SQLite のエラーは in-place 移行コマンドを案内せず、
-backup と現行 schema での table 再構築を指示します。
+`TS_SOKUHO_O1`〜`TS_SOKUHO_O6` の主キーは
+`(…, Kumi, HassoTime, SourceSpec, CollectedAt)` で、poll ごとに 1 行を残します。
+0B30〜0B36 のレコードの `HassoTime` はオッズが動いても朝の値のまま変わらないため、
+`HassoTime` 単位の主キーでは同じレースの後の poll がすべて最初の 1 行に潰れます
+（`docs/timeseries_odds.md`）。1.x で作った表はこの主キーのままで、移行は要りません。
+
+2.0〜2.3 で作った表は主キーに `CollectedAt` が無く（発表単位の主キー）、通常の起動・
+テーブル準備・時系列オッズ書き込みは自動移行せず停止します。PostgreSQL のエラーには
+対象テーブルと、最初に実行する読み取り専用 dry run の exact command が表示されます。
+この command に `--apply` は含まれず、データを変更しません。SQLite のエラーは in-place
+移行コマンドを案内せず、backup と現行 schema での table 再構築を指示します。
 
 既定は読み取り専用の dry run です。全テーブルを検査する場合:
 
@@ -125,10 +155,9 @@ backup と現行 schema での table 再構築を指示します。
 jltsql db migrate-sokuho-capture-identity --db postgresql
 ```
 
-対象を限定するには `--table` を繰り返します。dry run は各テーブルについて、現在の
-主キー、総行数、発表単位の distinct group 数、削除予定行数、保持行の
-`CollectedAt` を最古の非 NULL 値へ書き換える group 数を表示します。読み取り専用
-transaction を使い、`ACCESS EXCLUSIVE` lock は取得しません。
+対象を限定するには `--table` を繰り返します。dry run は各テーブルについて、状態
+（`current` / `publication` / `missing`）、現在の主キー、総行数、`CollectedAt` が NULL の
+行数を表示します。読み取り専用 transaction を使い、`ACCESS EXCLUSIVE` lock は取得しません。
 
 ```bat
 jltsql db migrate-sokuho-capture-identity --db postgresql --table TS_SOKUHO_O1 --table TS_SOKUHO_O2
@@ -148,10 +177,11 @@ jltsql db migrate-sokuho-capture-identity --db postgresql --schema archive --tab
 jltsql db migrate-sokuho-capture-identity --db postgresql --schema archive --table TS_SOKUHO_O2 --apply
 ```
 
-apply は指定した legacy table を1 transaction で処理し、grouping snapshot より前に
-`ACCESS EXCLUSIVE` lock を取得します。同じ発表の行は、最新 poll の列値と最古の
-非 NULL `CollectedAt` を持つ1行へ統合します。時刻検証、保持行数検証、DDL の
-いずれかが失敗すると全テーブルを rollback し、nonzero で終了します。
+apply は指定した発表単位の表を1 transaction で処理し、最初に `ACCESS EXCLUSIVE` lock を
+取得します。主キーに `CollectedAt` を足すだけで、行は削除も書き換えもしません。
+`CollectedAt` が NULL の行が 1 行でもあれば何も変更せず nonzero で終了します。
+DDL や行数検証が失敗すると全テーブルを rollback し、nonzero で終了します。
+2.0〜2.3 が潰した過去の poll は戻りません。
 
 SQLite に同じコマンドを実行しても database connection を開かず、in-place 移行は
 行わず nonzero で拒否します。

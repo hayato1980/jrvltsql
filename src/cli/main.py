@@ -24,6 +24,23 @@ err_console = Console(stderr=True, legacy_windows=True)
 logger = get_logger(__name__)
 
 
+def _progress_line_end() -> str:
+    """End an in-place progress print: stay on the line only on a real TTY.
+
+    rich drops a leading carriage return, so on piped output a print ending in
+    "" is joined to whatever prints next. Collectors parse that output line by
+    line, so piped progress gets its own line. The stream itself is asked,
+    not ``console.is_terminal``, which FORCE_COLOR / TTY_COMPATIBLE turn on
+    for a pipe as well.
+    """
+    isatty = getattr(console.file, "isatty", None)
+    try:
+        on_tty = bool(isatty is not None and isatty())
+    except (OSError, ValueError):
+        on_tty = False
+    return "" if on_tty else "\n"
+
+
 FETCH_NOTE_SETUP_MODE = "セットアップモード - 全データ取得（ダイアログが表示されます）"
 FETCH_NOTE_OPTION2_RANGE = (
     "option=2（今週データ）でも --from は JVOpen の fromtime に渡され、"
@@ -661,10 +678,13 @@ def database_maintenance():
 )
 @click.pass_context
 def migrate_sokuho_capture_identity(ctx, database_type, table_names, schema_name, apply):
-    """Report or explicitly migrate legacy TS_SOKUHO primary keys.
+    """Report or explicitly widen 2.0-2.3 TS_SOKUHO primary keys.
 
-    Dry run is the default. Stop all collectors before using --apply.
-    SQLite is intentionally refused and requires backup plus table rebuild.
+    Those releases keyed a速報 row by HassoTime, which folds every later poll
+    of a race into its first capture. --apply adds CollectedAt back to the key
+    and deletes no row. Dry run is the default. Stop all collectors before
+    using --apply. SQLite is intentionally refused and requires backup plus
+    table rebuild.
     """
     from src.database import create_database_from_config, DatabaseError
     from src.database.migration import (
@@ -718,11 +738,10 @@ def migrate_sokuho_capture_identity(ctx, database_type, table_names, schema_name
         click.echo(f"  Status: {report.status}")
         click.echo(f"  Current primary key: {primary_key}")
         click.echo(f"  Total rows: {report.total_rows}")
-        click.echo("  Distinct publication groups: " f"{report.distinct_publication_groups}")
-        click.echo(f"  Rows that would be deleted: {report.rows_to_delete}")
+        click.echo("  Rows that would be deleted: 0")
         click.echo(
-            "  Groups whose CollectedAt would be rewritten to earliest non-NULL: "
-            f"{report.collected_at_rewrite_groups}"
+            "  Rows with NULL CollectedAt (apply refuses when nonzero): "
+            f"{report.null_collected_at}"
         )
     if apply:
         click.echo("Migration apply completed.")
@@ -1750,6 +1769,13 @@ def realtime():
 # They cover O1(単複枠) and O2(馬連). 0B30 is a one-week速報 all-bets snapshot
 # source and is kept for current-week/future accumulation.
 HISTORICAL_TIMESERIES_ODDS_SPECS = "0B41,0B42"
+# Exit of the time-series commands when the fetch failed for some race keys
+# (a negative JVRTOpen such as -413, a JVRead failure inside a key such as -403,
+# or a bridge timeout). Every spec is still fetched and its rows saved, but the
+# fetch is incomplete: "Errors:" counts only persistence failures, so without
+# this the command printed "Errors: 0" and exited 0 for a fetch that lost keys.
+# Distinct from 1 (error) and 2 (usage) so callers can re-fetch instead of alarm.
+TIMESERIES_EXIT_KEY_ERRORS = 4
 SOKUHO_TIMESERIES_ODDS_SPECS = "0B30"
 OFFICIAL_HISTORICAL_TIMESERIES_ODDS_SPECS = frozenset(HISTORICAL_TIMESERIES_ODDS_SPECS.split(","))
 
@@ -2028,6 +2054,7 @@ def timeseries(
     from src.realtime.updater import RealtimeUpdater
 
     config = ctx.obj.get("config")
+    failed_keys = {}
 
     # Determine database type and path
     if db:
@@ -2142,6 +2169,7 @@ def timeseries(
             total_records = 0
             total_success = 0
             total_errors = 0
+            key_errors_by_spec = {}
             default_save_batch_size = 100 if db_type in ("postgresql", "dual") else 5000
             save_batch_size = int(
                 os.getenv("JRVLTSQL_TS_SAVE_BATCH_SIZE", str(default_save_batch_size))
@@ -2215,7 +2243,7 @@ def timeseries(
                             f"errors={progress.get('error_keys', 0):,} "
                             f"records={progress.get('total_records', 0):,} "
                             f"last={progress.get('key') or '-'}:{status}",
-                            end="",
+                            end=_progress_line_end(),
                             soft_wrap=True,
                         )
 
@@ -2248,7 +2276,10 @@ def timeseries(
 
                         # Progress indicator
                         if record_count % 100 == 0:
-                            console.print(f"\r  Processed: {record_count:,} records", end="")
+                            console.print(
+                                f"\r  Processed: {record_count:,} records",
+                                end=_progress_line_end(),
+                            )
 
                     flush_batch(records_batch)
                     window_requested = (
@@ -2270,6 +2301,10 @@ def timeseries(
                             f"records={key_progress['total_records']:,}",
                             soft_wrap=True,
                         )
+                    # accumulate: a spec listed twice must not hide its earlier lost keys
+                    key_errors_by_spec[spec_code] = key_errors_by_spec.get(spec_code, 0) + int(
+                        key_progress["error_keys"]
+                    )
                     console.print(
                         f"  [green][OK][/green] {spec_code}: {record_count:,} records processed"
                     )
@@ -2284,11 +2319,29 @@ def timeseries(
             console.print(f"  Total records:  {total_records:,}")
             console.print(f"  Saved:          {total_success:,}")
             console.print(f"  Errors:         {total_errors:,}")
+            failed_keys = {spec: n for spec, n in key_errors_by_spec.items() if n}
+            # "Failed keys:" is a contract line like Keys: (0 when every key was fetched);
+            # it avoids "Errors:", which callers already parse as the persistence count.
+            console.print(
+                "  Failed keys:    "
+                + (" ".join(f"{spec}={n:,}" for spec, n in failed_keys.items()) or "0"),
+                soft_wrap=True,
+            )
 
     except Exception as e:
         console.print(f"\n[red]Error:[/red] {e}", style="bold")
         logger.error("Failed to fetch time series data", error=str(e), exc_info=True)
         sys.exit(1)
+
+    # After the database context closed normally: the saved rows are committed.
+    if failed_keys:
+        console.print(
+            "[red]Incomplete:[/red] the fetch (JVRTOpen/JVRead) failed for "
+            + ", ".join(f"{n:,} {spec} keys" for spec, n in failed_keys.items())
+            + "; re-fetch those dates"
+        )
+        logger.error("Time-series fetch lost keys", key_errors=failed_keys)
+        sys.exit(TIMESERIES_EXIT_KEY_ERRORS)
 
 
 @realtime.command("odds-timeseries")
@@ -2413,6 +2466,128 @@ def odds_sokuho_timeseries(ctx, from_date, to_date, db, db_path):
         db=db,
         db_path=db_path,
     )
+
+
+@realtime.command("fetch")
+@click.option(
+    "--specs",
+    default=None,
+    help="Required. Comma-separated date-keyed speed-report specs "
+    "(0B11,0B12,0B13,0B14,0B15,0B17,0B51)",
+)
+@click.option("--date", "date_key", default=None, help="One race date YYYYMMDD")
+@click.option("--from-date", default=None, help="First race date YYYYMMDD (with --to-date)")
+@click.option("--to-date", default=None, help="Last race date YYYYMMDD (inclusive)")
+@click.option("--db", default=None, help="Database type: sqlite or postgresql (default: from config)")
+@click.option(
+    "--require-records",
+    default=None,
+    metavar="SPEC[,SPEC]",
+    help="Exit 3 when a listed spec read no record",
+)
+@click.option(
+    "--summary-json",
+    default=None,
+    metavar="PATH",
+    help="Write the schema-1 fetch summary (docs/fetch_summary.md); written on failure too",
+)
+@click.option("--no-ensure-tables", is_flag=True, help="Skip table creation before fetching")
+@click.pass_context
+def realtime_fetch(
+    ctx, specs, date_key, from_date, to_date, db, require_records, summary_json, no_ensure_tables
+):
+    """Fetch date-keyed speed-report specs once and exit.
+
+    \b
+    Unlike 'realtime start' (a resident loop), this opens each date key of
+    each spec once (JVRTOpen key YYYYMMDD), imports, appends 0B11/0B14 to the
+    capture log (docs/capture_log.md) and exits.
+    Exit: 0 ok, 1 error, 2 usage, 3 a --require-records spec read nothing.
+
+    \b
+    Examples:
+      jltsql realtime fetch --specs 0B11,0B14 --date 20261011 \\
+          --require-records 0B14 --summary-json /tmp/rt.json
+    """
+    from datetime import datetime
+
+    from src.database import create_database_from_config
+    from src.fetcher.summary import write_summary_json
+    from src.realtime import oneshot
+
+    started_at = datetime.now().astimezone()
+    window: tuple[str | None, str | None] = (None, None)
+    required: list[str] = []
+    summaries: list[dict] = []
+    failures: list[dict] = []
+    error: BaseException | None = None
+    exit_code = oneshot.EXIT_OK
+    try:
+        try:
+            window = oneshot.resolve_window(date_key, from_date, to_date)
+            selected = oneshot.resolve_specs(specs or "")
+            required = oneshot.resolve_required(require_records, selected)
+            db = oneshot.resolve_db(db)
+        except oneshot.FetchUsageError as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            exit_code = oneshot.EXIT_USAGE
+            selected = []
+        config = ctx.obj.get("config")
+        db_type = db or (config.get("database.type", "sqlite") if config else "sqlite")
+        sid = config.get("jvlink.sid", "JLTSQL") if config else "JLTSQL"
+        database = (
+            create_database_from_config(config, db_type_override=db_type) if selected else None
+        )
+        if database is not None:
+            with database:
+                failures = oneshot.run_realtime_fetch(
+                    database,
+                    selected,
+                    *window,
+                    required_specs=required,
+                    sid=sid,
+                    ensure_tables=not no_ensure_tables,
+                    summaries=summaries,
+                )
+        for failure in failures:
+            console.print(
+                f"[red]Error:[/red] required spec {failure['dataspec']} read no record "
+                f"(status={failure['status']})"
+            )
+        if failures:
+            exit_code = oneshot.EXIT_REQUIRED_RECORDS_MISSING
+    except Exception as exc:  # noqa: BLE001 - reported, summarized, exit 1
+        error = exc
+        exit_code = oneshot.EXIT_ERROR
+        console.print(f"[red]Error:[/red] {type(exc).__name__}: {exc}")
+        logger.error("realtime fetch failed", error=f"{type(exc).__name__}: {exc}")
+    except KeyboardInterrupt as exc:
+        # The open spec was rolled back by the database context; exit 130.
+        error = exc
+        exit_code = oneshot.EXIT_INTERRUPTED
+        console.print("[yellow]Interrupted[/yellow]")
+    finally:
+        if summary_json:
+            try:
+                write_summary_json(
+                    summary_json,
+                    oneshot.build_document(
+                        started_at=started_at,
+                        from_date=window[0],
+                        to_date=window[1],
+                        required_specs=required,
+                        specs=summaries,
+                        failures=failures,
+                        exit_code=exit_code,
+                        error=error,
+                    ),
+                )
+            except OSError as exc:
+                console.print(f"[red]Error:[/red] could not write --summary-json: {exc}")
+                # The caller asked for the summary; do not report success without it.
+                exit_code = exit_code or oneshot.EXIT_ERROR
+    if exit_code:
+        sys.exit(exit_code)
 
 
 @realtime.command()

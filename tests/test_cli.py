@@ -80,12 +80,10 @@ class TestDatabaseMaintenanceCommand(unittest.TestCase):
         database.__exit__.return_value = None
         report = SokuhoCaptureIdentityMigrationReport(
             table_name="TS_SOKUHO_O3",
-            status="legacy",
-            primary_key=("year", "collectedat"),
+            status="publication",
+            primary_key=("year", "sourcespec"),
             total_rows=7,
-            distinct_publication_groups=3,
-            rows_to_delete=4,
-            collected_at_rewrite_groups=2,
+            null_collected_at=2,
         )
 
         with self.runner.isolated_filesystem():
@@ -121,10 +119,9 @@ class TestDatabaseMaintenanceCommand(unittest.TestCase):
         apply_migration.assert_not_called()
         self.assertIn("DRY RUN", result.output)
         self.assertIn("Total rows: 7", result.output)
-        self.assertIn("Distinct publication groups: 3", result.output)
-        self.assertIn("Rows that would be deleted: 4", result.output)
+        self.assertIn("Rows that would be deleted: 0", result.output)
         self.assertIn(
-            "Groups whose CollectedAt would be rewritten to earliest non-NULL: 2",
+            "Rows with NULL CollectedAt (apply refuses when nonzero): 2",
             result.output,
         )
         self.assertIn("no changes were applied", result.output)
@@ -138,11 +135,9 @@ class TestDatabaseMaintenanceCommand(unittest.TestCase):
         report = SokuhoCaptureIdentityMigrationReport(
             table_name="TS_SOKUHO_O2",
             status="migrated",
-            primary_key=("year", "collectedat"),
+            primary_key=("year", "sourcespec"),
             total_rows=2,
-            distinct_publication_groups=1,
-            rows_to_delete=1,
-            collected_at_rewrite_groups=1,
+            null_collected_at=0,
             applied=True,
         )
 
@@ -687,6 +682,252 @@ class TestRealtimeTimeseriesCommand(unittest.TestCase):
         self.prepare_table = self.prepare_table_patcher.start()
         self.addCleanup(self.prepare_table_patcher.stop)
 
+    def _run_with_key_progress(self, progress_by_spec, spec_option=None):
+        """Run 'realtime timeseries' for the given specs; each spec ends with the given counters.
+
+        A spec whose value is a list answers its successive fetches in order.
+        """
+
+        database = MagicMock()
+        database.__enter__.return_value = database
+        database.__exit__.return_value = None
+        fetcher = MagicMock()
+
+        answers = {
+            spec: iter(value if isinstance(value, list) else [value] * 10)
+            for spec, value in progress_by_spec.items()
+        }
+
+        def fetch_rows(**kwargs):
+            counters = next(answers[kwargs["data_spec"]])
+            total = sum(counters.values())
+            kwargs["progress_callback"](
+                {
+                    "status": "success",
+                    "key": "202505040501",
+                    "processed_keys": total,
+                    "total_keys": total,
+                    "success_keys": counters["ok"],
+                    "nonempty_keys": counters["ok"],
+                    "no_data_keys": counters["no_data"],
+                    "error_keys": counters["errors"],
+                    "total_records": counters["ok"],
+                }
+            )
+            return iter(())
+
+        fetcher.fetch_time_series_batch_from_db.side_effect = fetch_rows
+        with self.runner.isolated_filesystem():
+            config_path = Path("config.yaml")
+            config_path.write_text(
+                "database:\n  type: postgresql\ndatabases:\n  postgresql:\n    enabled: true\n"
+                "jvlink:\n  sid: TEST\nauto_update_check: false\n"
+            )
+            with (
+                patch("src.database.create_database_from_config", return_value=database),
+                patch("src.fetcher.realtime.RealtimeFetcher", return_value=fetcher),
+                patch("src.realtime.updater.RealtimeUpdater", return_value=MagicMock()),
+            ):
+                result = self.runner.invoke(
+                    cli,
+                    [
+                        "--config",
+                        str(config_path),
+                        "realtime",
+                        "timeseries",
+                        "--spec",
+                        spec_option or ",".join(progress_by_spec),
+                        "--from",
+                        "20250501",
+                        "--to",
+                        "20250531",
+                        "--db",
+                        "postgresql",
+                    ],
+                )
+        return result, fetcher
+
+    def test_timeseries_key_errors_are_not_a_successful_exit(self):
+        """JVRTOpen failures on keys (2025-05 0B42: -413 on 184 keys) must not exit 0.
+
+        "Errors:" counts only persistence failures, so a fetch that lost keys used
+        to print "Errors: 0" and exit 0. Every spec is still fetched and saved;
+        the command then exits with TIMESERIES_EXIT_KEY_ERRORS and names the specs.
+        """
+        from src.cli.main import TIMESERIES_EXIT_KEY_ERRORS
+
+        result, fetcher = self._run_with_key_progress(
+            {
+                "0B41": {"ok": 312, "no_data": 0, "errors": 0},
+                "0B42": {"ok": 128, "no_data": 0, "errors": 184},
+            }
+        )
+
+        self.assertEqual(result.exit_code, TIMESERIES_EXIT_KEY_ERRORS, result.output)
+        self.assertNotIn(TIMESERIES_EXIT_KEY_ERRORS, (0, 1, 2))
+        self.assertEqual(fetcher.fetch_time_series_batch_from_db.call_count, 2)
+        self.assertIn("Failed keys:    0B42=184", result.output)
+
+    def test_timeseries_key_errors_of_a_repeated_spec_are_not_overwritten(self):
+        """--spec 0B42,0B42: a clean second pass must not hide the first pass's lost keys."""
+        from src.cli.main import TIMESERIES_EXIT_KEY_ERRORS
+
+        result, fetcher = self._run_with_key_progress(
+            {
+                "0B42": [
+                    {"ok": 128, "no_data": 0, "errors": 184},
+                    {"ok": 0, "no_data": 312, "errors": 0},
+                ]
+            },
+            spec_option="0B42,0B42",
+        )
+
+        self.assertEqual(fetcher.fetch_time_series_batch_from_db.call_count, 2)
+        self.assertEqual(result.exit_code, TIMESERIES_EXIT_KEY_ERRORS, result.output)
+        self.assertIn("Failed keys:    0B42=184", result.output)
+
+    def test_timeseries_jvread_failure_inside_a_key_exits_4_end_to_end(self):
+        """A JVRead -403 part-way through a key (2025-05-03, race 9) ends in exit 4.
+
+        Runs the real RealtimeFetcher, its real JVRead loop and -403 handling over
+        an SQLite NL_RA with two races; only the JV-Link transport is faked. Race 8
+        reads one O2 record and completes; race 9 reads one O2 record and then
+        JVRead returns -403. Race 8 is saved, race 9's partial rows are discarded,
+        it is a failed key and the command exits 4.
+        """
+        import sqlite3
+        from contextlib import closing
+
+        from src.cli.main import TIMESERIES_EXIT_KEY_ERRORS
+
+        def o2_record(race: bytes) -> bytes:
+            header = (
+                b"O2"
+                + b"4"
+                + b"20250503"
+                + b"2025"
+                + b"0503"
+                + b"05"
+                + b"02"
+                + b"03"
+                + race
+                + b"05031549"
+                + b"18"
+                + b"18"
+                + b"7"
+            )
+            combos = b"0102000123010" + b"0103000456020" + b"0" * (151 * 13)
+            return header + combos + b"00000000999\r\n"
+
+        class FakeJVLink:
+            def __init__(self, *_args, **_kwargs):
+                self.reads = []
+                self.deleted = []
+
+            def jv_init(self):
+                return 0
+
+            def jv_rt_open(self, data_spec, key):
+                name = f"0B420000000000{key}.jvd"
+                record = o2_record(key[-2:].encode())
+                end = (0, b"", "") if key.endswith("08") else (-403, b"", name)
+                self.reads = [(len(record), record, name), end]
+                return 0, 1
+
+            def jv_read(self):
+                # past the scripted reads the stream reports completion, so a
+                # swallowed -403 would end race 9 as a success
+                return self.reads.pop(0) if self.reads else (0, b"", "")
+
+            def jv_file_delete(self, filename):
+                self.deleted.append(filename)
+                return 0
+
+            def jv_close(self):
+                pass
+
+        database = MagicMock()
+        database.__enter__.return_value = database
+        database.__exit__.return_value = None
+        updater = MagicMock()
+        updater.process_parsed_records_batch.side_effect = lambda batch, **_k: {
+            "success": True,
+            "inserted": len(batch),
+            "errors": 0,
+        }
+        # The real fetcher logs through module-level structlog proxies. Do not let
+        # this test cache them on the current configuration's processor list:
+        # later tests reconfigure structlog and capture logs on a new list.
+        import structlog
+
+        cache_was = structlog.get_config()["cache_logger_on_first_use"]
+        structlog.configure(cache_logger_on_first_use=False)
+        self.addCleanup(structlog.configure, cache_logger_on_first_use=cache_was)
+        with self.runner.isolated_filesystem():
+            config_path = Path("config.yaml")
+            config_path.write_text(
+                "database:\n  type: sqlite\ndatabases:\n  sqlite:\n    enabled: true\n"
+                "jvlink:\n  sid: TEST\nauto_update_check: false\n"
+            )
+            db_path = Path("keiba.db").resolve()
+            with closing(sqlite3.connect(db_path)) as conn:
+                conn.execute(
+                    "CREATE TABLE NL_RA (Year INTEGER, MonthDay INTEGER, JyoCD TEXT,"
+                    " Kaiji INTEGER, Nichiji INTEGER, RaceNum INTEGER)"
+                )
+                conn.executemany(
+                    "INSERT INTO NL_RA VALUES (?, ?, ?, ?, ?, ?)",
+                    [(2025, 503, "05", 2, 3, 8), (2025, 503, "05", 2, 3, 9)],
+                )
+                conn.commit()
+            with (
+                patch("src.database.create_database_from_config", return_value=database),
+                patch("src.jvlink.bridge.find_bridge_executable", return_value=None),
+                patch("src.fetcher.base.JVLinkWrapper", FakeJVLink),
+                # no log file in the temporary directory, no handler on its streams
+                patch("src.cli.main.setup_logging_from_config"),
+                patch("src.realtime.updater.RealtimeUpdater", return_value=updater),
+            ):
+                result = self.runner.invoke(
+                    cli,
+                    [
+                        "--config",
+                        str(config_path),
+                        "realtime",
+                        "timeseries",
+                        "--spec",
+                        "0B42",
+                        "--from",
+                        "20250503",
+                        "--to",
+                        "20250503",
+                        "--db",
+                        "sqlite",
+                        "--db-path",
+                        str(db_path),
+                    ],
+                )
+
+        self.assertEqual(result.exit_code, TIMESERIES_EXIT_KEY_ERRORS, result.output)
+        self.assertIn("Failed keys:    0B42=1", result.output)
+        self.assertIn("ok=1 nonempty=1 no_data=0 errors=1", result.output)
+        saved = [
+            row
+            for call in updater.process_parsed_records_batch.call_args_list
+            for row in call.args[0]
+        ]
+        # race 8's two quinella rows are saved; race 9's partial rows are not
+        self.assertEqual({str(row.get("RaceNum")) for row in saved}, {"08"})
+        self.assertEqual(len(saved), 2)
+
+    def test_timeseries_no_data_keys_alone_still_succeed(self):
+        """A key without data (e.g. a cancelled race) is not a fetch error."""
+
+        result, _ = self._run_with_key_progress({"0B41": {"ok": 288, "no_data": 12, "errors": 0}})
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Failed keys:    0", result.output)
+
     def test_timeseries_commits_table_setup_and_fails_closed_on_batch_error(self):
         database = MagicMock()
         database.__enter__.return_value = database
@@ -900,6 +1141,156 @@ auto_update_check: false
         # Keys行も同様にparseされる: ok(成功キー)と実レコードを返した
         # nonemptyキーを区別し、token順を固定する。
         self.assertIn("ok=1 nonempty=1 no_data=0", result.output)
+
+    def test_timeseries_piped_output_keeps_terminal_keys_line_on_its_own_line(self):
+        """Piped output: progress must not glue onto the terminal Keys line.
+
+        The Wine collector reads the captured stdout line by line and requires
+        exactly one line that is the whole terminal Keys summary. rich drops
+        the leading carriage return, so a progress print ending without a
+        newline used to be joined to the summary that followed it.
+        """
+        import re
+
+        database = MagicMock()
+        database.__enter__.return_value = database
+        database.__exit__.return_value = None
+        fetcher = MagicMock()
+
+        def fetch_rows(**kwargs):
+            callback = kwargs["progress_callback"]
+            callback(
+                {
+                    "status": "window_filter",
+                    "key": None,
+                    "processed_keys": 0,
+                    "total_keys": 1,
+                    "considered_keys": 1,
+                    "window_candidate_keys": 1,
+                    "window_kept_keys": 1,
+                    "omitted_canceled_keys": 0,
+                    "dropped_too_far_future": 0,
+                    "dropped_too_far_past": 0,
+                    "skipped_out_of_window_by_date": 0,
+                    "success_keys": 0,
+                    "nonempty_keys": 0,
+                    "no_data_keys": 0,
+                    "error_keys": 0,
+                    "total_records": 0,
+                }
+            )
+            # 120 records trip the "Processed:" progress print at 100.
+            for _ in range(120):
+                yield {"RecordSpec": "O1"}
+            callback(
+                {
+                    "status": "success",
+                    "key": "202609010501",
+                    "processed_keys": 1,
+                    "total_keys": 1,
+                    "success_keys": 1,
+                    "nonempty_keys": 1,
+                    "no_data_keys": 0,
+                    "error_keys": 0,
+                    "records_for_key": 120,
+                    "total_records": 120,
+                }
+            )
+
+        fetcher.fetch_time_series_batch_from_db.side_effect = fetch_rows
+        updater = MagicMock()
+        updater.process_parsed_records_batch.side_effect = lambda records, **_: {
+            "success": True,
+            "inserted": len(records),
+            "errors": 0,
+        }
+
+        with self.runner.isolated_filesystem():
+            config_path = Path("config.yaml")
+            config_path.write_text("""
+database:
+  type: postgresql
+databases:
+  postgresql:
+    enabled: true
+jvlink:
+  sid: TEST
+auto_update_check: false
+""")
+            with (
+                patch("src.database.create_database_from_config", return_value=database),
+                patch("src.fetcher.realtime.RealtimeFetcher", return_value=fetcher),
+                patch("src.realtime.updater.RealtimeUpdater", return_value=updater),
+                patch("src.database.timeseries_capture.prepare_time_series_odds_table"),
+            ):
+                result = self.runner.invoke(
+                    cli,
+                    [
+                        "--config",
+                        str(config_path),
+                        "realtime",
+                        "timeseries",
+                        "--spec",
+                        "0B41",
+                        "--from",
+                        "20260901",
+                        "--to",
+                        "20260901",
+                        "--db",
+                        "postgresql",
+                        "--post-time-within-minutes",
+                        "30",
+                        "--post-time-not-past-minutes",
+                        "2",
+                    ],
+                )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        # The collector's exact line contract (jrvltsql-wine-runtime
+        # scripts/collector_service.py PROSPECTIVE_KEYS_RE / _WINDOW_RE).
+        count = r"(?:0|[1-9][0-9]{0,2}(?:,[0-9]{3})*)"
+        keys_re = re.compile(
+            rf"^\s*Keys: ({count})/({count}) ok=({count}) nonempty=({count}) "
+            rf"no_data=({count}) errors=({count}) records=({count})\s*$"
+        )
+        window_re = re.compile(
+            rf"^\s*Window: considered={count} candidates={count} kept={count} "
+            rf"canceled={count} future={count} past={count} date_excluded={count}\s*$"
+        )
+        lines = result.output.splitlines()
+        terminal = [line for line in lines if keys_re.fullmatch(line)]
+        self.assertEqual(len(terminal), 1, result.output)
+        self.assertEqual(
+            keys_re.fullmatch(terminal[0]).groups(),
+            ("1", "1", "1", "1", "0", "0", "120"),
+        )
+        self.assertEqual(sum(bool(window_re.fullmatch(line)) for line in lines), 1)
+        self.assertIn("  [OK] 0B41: 120 records processed", lines)
+        for line in lines:
+            # No line may hold two progress/summary prints.
+            self.assertLessEqual(line.count("Keys:") + line.count("Processed:"), 1, line)
+
+    def test_progress_line_end_asks_the_stream_not_the_forced_terminal_flag(self):
+        """FORCE_COLOR / TTY_COMPATIBLE make rich report a terminal for a pipe."""
+        from unittest.mock import PropertyMock
+
+        import src.cli.main as cli_main
+
+        class Stream:
+            def __init__(self, tty):
+                self.tty = tty
+
+            def isatty(self):
+                return self.tty
+
+        with patch.object(
+            type(cli_main.console), "is_terminal", new_callable=PropertyMock, return_value=True
+        ):
+            for stream, expected in ((Stream(False), "\n"), (Stream(True), "")):
+                with patch.object(
+                    type(cli_main.console), "file", new_callable=PropertyMock, return_value=stream
+                ):
+                    self.assertEqual(cli_main._progress_line_end(), expected)
 
     def test_timeseries_window_idle_run_emits_zero_keys_summary(self):
         """対象0件のidle実行でもspecごとに終端Keysサマリを1行だけ出す。

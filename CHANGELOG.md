@@ -7,7 +7,132 @@
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-10-13
+
 ### Changed
+
+- **時系列オッズのコマンドが、一部のレースの取得に失敗したら exit 4 で終わる**（#283）。
+  対象は `realtime timeseries` / `odds-timeseries` / `odds-sokuho-timeseries`。
+  - 失敗に数えるのは、レースのキーごとの取得の失敗（JVRTOpen の負の戻り値、キーの途中の JVRead の失敗、bridge の timeout など）。
+  - 取り終えたキー（レース）の行は保存してから終わる。途中で失敗したキーの行は 1 行も残らない（2.3.1 と同じく破棄）。全 spec を取り終えてから判定する。
+  - 要約に `Failed keys:` 行を足した（spec ごとの失敗キー数。失敗がなければ `0`）。
+  - データが無いレース（中止など、`no_data`）は失敗に数えない。
+  - 2.3.1 までは、要約の `Errors:` が保存の失敗しか数えず、取得に失敗したキーがあっても `Errors: 0`・exit 0 だった。同じ spec を 2 回指定しても、先の失敗は消えない。
+
+## [2.3.1] - 2026-10-12
+
+### Fixed
+
+- **`TS_SOKUHO_O1`〜`O6` の主キーに `CollectedAt` を戻した**（poll ごとに 1 行）。2.0〜2.3 は
+  `HassoTime` 単位の主キーで最初の取得だけを残していたが、0B30〜0B36 の `HassoTime` は
+  オッズが動いても変わらないため、同じレースの後の poll がすべて最初の 1 行に潰れていた。
+  公式時系列 `TS_O1` / `TS_O2` の主キーは変えない。
+- `realtime timeseries` / `odds-timeseries` / `odds-sokuho-timeseries` の進捗表示（`Keys: … last=…`
+  と `Processed: …`）を、端末以外（パイプ）では改行で終えるようにした。rich は先頭の `\r` を
+  落とすため、パイプ出力では進捗が直後の終端 `Keys:` 行とつながり、行単位で読む
+  jrvltsql-wine-runtime の prospective 証拠検査（終端 `Keys:` 行がちょうど 1 行）が、対象
+  レースが 1 件以上ある回で必ず失敗していた。端末では従来どおり同じ行を上書きする。
+
+### 移行
+
+- 1.x で作った `TS_SOKUHO_O*`（主キー末尾が `CollectedAt`）は**そのまま使える**。2.0〜2.3 の
+  `migrate-sokuho-capture-identity --apply` は 1.x の表を 1 発表 1 行に潰して行を削除する
+  ものだったが、このコマンドは**主キーに `CollectedAt` を足すだけ**（行は消えない）に変わった。
+- 2.0〜2.3 で作った表は起動と書き込みで fail closed する。`jltsql db
+  migrate-sokuho-capture-identity --db postgresql`（dry run）→ collector 停止 → `--apply`。
+  `CollectedAt` が NULL の行があれば apply は何も変えずに拒否する。潰れた過去の poll は戻らない。
+
+## [2.3.0] - 2026-10-11
+
+0B11/0B14 の取得ログと単発の速報取得（#275, #276）。**RT_WH の主キー移行はオペレーター作業**
+（下記と `RELEASE_NOTES.md`）。
+
+### 移行（2.2.0 から上げる場合）
+
+- **`RT_WH` の主キーに `HappyoTime` が入った（`NOT NULL`）**。2.2.0 で作った DB の
+  移行は**自動では行わない**（オペレーター手順: `docs/record_contracts.md#wh`）。未移行の
+  あいだ起動とほかの spec は動き、`0B11` の取得は JVRTOpen の前に、RT_WH への書き込みは
+  `jltsql realtime start` を含めて `SchemaMigrationError` で止まる（`--no-ensure-tables` でも
+  同じ）。PostgreSQL の移行は `ACCESS EXCLUSIVE` lock を取る。
+- 2.2.0 への rollback: 2.2.0 は移行済みの RT_WH を主キー不一致として `create_all_tables`
+  ごと拒否する（実測）。RT_WH を旧主キーに戻すか backup を restore してから戻す。
+- `RT_WH` は発表ごとに行が残る（同じレース・馬に複数行）。「馬ごとに 1 行」を前提にした
+  読み手（KPS の `sync_engine` の `rt_wh` 取込、kps-ingestion-runtime の `rt_wh` 参照など）は
+  レースごとに `HappyoTime` が最大の行で絞る必要がある。移行と同時かそれより前に直す。
+- 新しい表 `RT_CAPTURE_FETCH` / `RT_CAPTURE_RECORD` を作る（追加のみ）。
+
+### Added
+
+- `scripts/daily_update.py` の既定 spec に `0B11`（速報馬体重）を追加（`--specs 0B11` /
+  `--require-records 0B11` も可）。
+- 0B11 / 0B14 の追記型取得ログ `RT_CAPTURE_FETCH`（JVRTOpen 1 回ごと）/
+  `RT_CAPTURE_RECORD`（JVRead のバッファごと。UTC の取得時刻・生レコード・SHA-256・
+  公式位置のキー項目・パース結果）。RT_* への取込と同じ transaction で書く。契約は
+  `docs/capture_log.md`。`src.realtime.capture_log.begin_capture` は runtime からも使える。
+- `--summary-json` の jvrtopen `opens[]` に `fetch_id`（取得ログとの突き合わせ用）。
+- `jltsql realtime fetch`: 開催日キーの速報 spec（0B11/0B12/0B13/0B14/0B15/0B17/0B51）を
+  指定の日付窓で 1 回ずつ取得して終わる単発コマンド。`--require-records` / `--summary-json`
+  （schema 1）、exit 0/1/2/3。常駐ループの `realtime start` を collector の「1 リクエスト
+  1 コマンド」で使えなかったため。速報取得の本体は `src.realtime.oneshot` に移し、
+  daily_update と共有する。
+
+### Fixed
+
+- 速報取得で JVRTOpen が `-1` を返した日付キーを JVClose せずに次のキーへ進んでいた
+  （IF p.54: `-1` でも要求は開いている）。複数日の窓で次のキーが `-202` になっていた。
+  daily_update と `realtime fetch` の共有コードで修正（#276）。
+
+### Changed
+
+- `RT_WH` の主キーを (レース識別子, `HappyoTime`, 馬番) に変更し、0B11 の発表ごとに行を
+  残す。`NL_WH` は変更なし。0B14 の日付単位全置換（現在状態）は変更なし。
+
+## [2.2.0] - 2026-10-11
+
+### 移行（2.1.2 から上げる場合）
+
+- **HR の予備フラグ 3 列の型が INTEGER → TEXT に変わった**（#263）。対象は `NL_HR`・`RT_HR` の `FuseirituFlag6`・`TokubaraiFlag6`・`HenkanFlag6`。2.1.2 で作った DB のままでは
+  取込前の列契約検査が型不一致で HR の取込を止める（fail closed、黙って壊れることは無い）。
+  上げる前に DB を backup し、PostgreSQL は次で列型を変える。SQLite は列型を変えられないので
+  新しい DB を作って取り直す。
+  ```sql
+  ALTER TABLE nl_hr ALTER COLUMN fuseirituflag6 TYPE TEXT USING fuseirituflag6::text,
+                    ALTER COLUMN tokubaraiflag6 TYPE TEXT USING tokubaraiflag6::text,
+                    ALTER COLUMN henkanflag6    TYPE TEXT USING henkanflag6::text;
+  -- rt_hr も同じ 3 列（HARAI は元から VARCHAR で対象外）
+  ```
+- この SQL は使い捨て PostgreSQL 15 で確認済み（2.1.2 形の表は検査で拒否、ALTER 後に通過）。
+- rollback: 2.1.2 の不変 tag/wheel を再採用し、上の変更前に取った backup を restore する。
+
+### Added
+
+- `scripts/daily_update.py --summary-json PATH`: dataspec ごとに送った fromtime と JVOpen の
+  戻り値・`readcount`・`downloadcount`・`lastfiletimestamp`（JV-Link IF 4.9.0.1 p.19, p.54）、
+  読込・パース・取込・`to_date` で落とした件数、所要時間を JSON で書く。例外・引数エラーで終わっても書く（`--help` は書かない）。
+  契約は `docs/fetch_summary.md`
+- `--require-records SPEC[,SPEC]`: 列挙した spec が何も返さなければ exit 3（既定は従来どおり
+  0 件でも exit 0）
+- `--log-file PATH`。daily_update が構造化ログをファイルに出すようになった（従来は
+  import 時の console-only/ERROR 設定のままで、JVOpen の戻り値がどこにも残らなかった）
+- `HistoricalFetcher.get_jvopen_results()` / `BaseFetcher.get_records_out_of_range()`
+- パースに失敗したレコードを、ファイル名・通し番号・spec・エラー・全バイト（content-addressed）
+  で保存し、その spec を fail closed にする（#264）
+
+### Changed
+
+- JVInit を fetch ごとではなく process（fetcher 構築時）に 1 回にした。複数 dataspec の
+  セットアップでもダイアログは 1 回。bridge process が途中で死んだ場合だけ JVOpen/JVRTOpen
+  前に session を張り直す（#266）
+- PostgreSQL `insert_many` を単一行 template + `executemany` にした（psycopg の再 parse を
+  解消、pg8000 の原子性は維持、戻り値は従来どおり）（#265）
+- HN `reserved`・`DelKubun`、WF `Yobi1`/`Yobi2`、HR の予備フラグ（各配列 6 件目）に
+  固定値を要求するのをやめ、値をそのまま保持する（#263、上の移行を参照）
+- 参照の無い `src/utils/db_helpers.py` を削除（#269）
+- 何も返さなかった spec はログに WARNING で残す（stdout / stderr は変えない）。JVOpen `-1` は
+  p.54 で「最新バージョンの DL を選択した」場合も含むため、空の証明としては扱わない
+- JVOpen `-2` の例外文言に `(code: -2)` を付けた。`--ignore-jvopen-error-codes -2` が
+  初めて効くようになる（従来は文言にコードが無く、指定しても無視されていた）
+- ログファイルに ANSI 色コードを書かない（console は従来どおり）
 
 - `fetch` の `--to` を省略可能にする。省くとclient-side dateフィルタをかけず、`JVOpen` へ
   終了時刻も渡さず（暦年で刻まず開始のみ 1 回）、NL cacheも使わない
@@ -654,7 +779,11 @@
 - quickstart.py 対話形式セットアップウィザード
 - CLI コマンド（fetch, status, monitor, init）
 
-[Unreleased]: https://github.com/miyamamoto/jrvltsql/compare/v2.1.2...HEAD
+[Unreleased]: https://github.com/miyamamoto/jrvltsql/compare/v2.3.2...HEAD
+[2.3.2]: https://github.com/miyamamoto/jrvltsql/compare/v2.3.1...v2.3.2
+[2.3.1]: https://github.com/miyamamoto/jrvltsql/compare/v2.3.0...v2.3.1
+[2.3.0]: https://github.com/miyamamoto/jrvltsql/compare/v2.2.0...v2.3.0
+[2.2.0]: https://github.com/miyamamoto/jrvltsql/compare/v2.1.2...v2.2.0
 [2.1.2]: https://github.com/miyamamoto/jrvltsql/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/miyamamoto/jrvltsql/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/miyamamoto/jrvltsql/compare/v2.0.0...v2.1.0
