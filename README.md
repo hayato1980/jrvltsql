@@ -197,14 +197,14 @@ Escape で拒否します（承諾はしません）。応答待ちの上限は 
 | `scripts/daily_update.py` | 0 正常、1 エラー、2 引数の誤り、3 `--require-records` の spec が何も返さなかった |
 | `jltsql realtime fetch` | `daily_update.py` と同じ |
 | `jltsql fetch` | 0 正常、1 エラー、2 必須オプションの欠落などの引数の誤り。途中の spec が失敗したら、残りの spec は実行しません。 |
-| `jltsql realtime timeseries` / `odds-timeseries` / `odds-sokuho-timeseries` | 0 正常、1 エラー、2 引数の誤り、4 一部のレースで取得（JVRTOpen）に失敗した（2.3.2 以降） |
+| `jltsql realtime timeseries` / `odds-timeseries` / `odds-sokuho-timeseries` | 0 正常、1 エラー、2 引数の誤り、4 一部のレースで取得（JVRTOpen / JVRead）に失敗した（2.3.2 以降） |
 
 - 0 件でも、`--require-records` を付けなければ exit 0 です。「空なら失敗」にしたい spec を
   `--require-records` に書きます。
 - JVOpen の戻り値 `-1` は「該当データ無し」以外の意味も持つので、空であることの証明にはしません。
 - `--summary-json PATH` を付けると、spec ごとの戻り値と件数を JSON に書きます（失敗時も書きます）。
   形式は [取得サマリ JSON](docs/fetch_summary.md)。
-- 時系列オッズのコマンドは、取得に失敗したレースがあっても全 spec を取り終え、取れた分を保存してから
+- 時系列オッズのコマンドは、取得に失敗したレースがあっても全 spec を取り終え、取り終えたレースの行を保存してから
   exit 4 で終わります。失敗の数は出力の `Failed keys:` 行に spec ごとに `0B42=184` の形で出ます
   （失敗がなければ `0`）。その日付を取り直してください。
 - データが無いレース（中止など）は失敗に数えません。
