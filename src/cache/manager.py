@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import stat
 import struct
 import tempfile
@@ -10,6 +11,8 @@ from collections.abc import Iterable, Iterator
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
+
+_VERSIONED_BIN = re.compile(r"\.v\d+\.bin")
 
 
 class CacheManager:
@@ -31,6 +34,23 @@ class CacheManager:
     # A v2 marker cannot prove that a provider record stamped at 00:00:00 was
     # included, so neither its marker nor its raw file may satisfy a new fetch.
     NL_CACHE_SCHEMA_VERSION = 3
+    # Per-spec bumps. SNPN v4: jltsql <= 2.3.1 dropped CK records whose int
+    # MonthDay (MONTH_DAY "0105" -> 105) failed the to_date filter before they
+    # reached the cache, so a v3 SNPN day could be marked complete with records
+    # missing. No other historical spec carries an int MonthDay.
+    NL_SPEC_SCHEMA_VERSIONS = {"SNPN": 4}
+
+    def _schema_version(self, spec: str) -> int:
+        # A concatenated dataspec request (e.g. "RACESNPN") is keyed as one cache
+        # spec; it takes the highest bump of its 4-character components. A
+        # per-spec bump is a lower bound, never a replacement: a later global
+        # bump past it still invalidates that spec.
+        upper = spec.upper()
+        parts = [upper[i : i + 4] for i in range(0, len(upper), 4)] if len(upper) % 4 == 0 else [upper]
+        return max(
+            self.NL_CACHE_SCHEMA_VERSION,
+            *(self.NL_SPEC_SCHEMA_VERSIONS.get(part, 0) for part in parts),
+        )
 
     def __init__(self, cache_dir: Path):
         self.cache_dir = Path(cache_dir)
@@ -51,7 +71,7 @@ class CacheManager:
 
     def _nl_path(self, spec: str, date_str: str) -> Path:
         return self._nl_dir(spec) / (
-            f"{date_str}.v{self.NL_CACHE_SCHEMA_VERSION}.bin"
+            f"{date_str}.v{self._schema_version(spec)}.bin"
         )
 
     def _index_path(self, spec: str) -> Path:
@@ -93,7 +113,7 @@ class CacheManager:
     def has_nl(self, spec: str, date_str: str) -> bool:
         """Return True if complete NL cache exists for this spec+date."""
         entry = self._load_index(self._index_path(spec)).get(date_str, {})
-        return self._nl_entry_is_complete(entry)
+        return self._nl_entry_is_complete(spec, entry)
 
     def has_nl_range(self, spec: str, from_date: str, to_date: str) -> bool:
         """Return True if ALL dates in range are fully cached."""
@@ -102,17 +122,17 @@ class CacheManager:
         index = self._load_index(self._index_path(spec))
         while d <= end:
             if not self._nl_entry_is_complete(
-                index.get(d.strftime("%Y%m%d"), {})
+                spec, index.get(d.strftime("%Y%m%d"), {})
             ):
                 return False
             d += timedelta(days=1)
         return True
 
-    def _nl_entry_is_complete(self, entry: object) -> bool:
+    def _nl_entry_is_complete(self, spec: str, entry: object) -> bool:
         return (
             isinstance(entry, dict)
             and entry.get("complete") is True
-            and entry.get("schema_version") == self.NL_CACHE_SCHEMA_VERSION
+            and entry.get("schema_version") == self._schema_version(spec)
         )
 
     def write_nl_record(self, spec: str, date_str: str, raw: bytes) -> None:
@@ -163,7 +183,7 @@ class CacheManager:
                 count = self._count_records(bin_path) if bin_path.exists() else 0
                 index[date_str] = {
                     "complete": True,
-                    "schema_version": self.NL_CACHE_SCHEMA_VERSION,
+                    "schema_version": self._schema_version(spec),
                     "count": count,
                     "size": size,
                     "mtime": _now_iso(),
@@ -236,7 +256,7 @@ class CacheManager:
                 dates = sorted(
                     date_str
                     for date_str, entry in idx.items()
-                    if self._nl_entry_is_complete(entry)
+                    if self._nl_entry_is_complete(spec, entry)
                 )
                 bins = list(spec_dir.glob("*.bin"))
                 sz = sum(b.stat().st_size for b in bins)
@@ -275,9 +295,12 @@ class CacheManager:
             if not d.is_dir():
                 continue
             if date_str:
-                cache_files = [
-                    d / f"{date_str}.bin",
-                    d / f"{date_str}.v{self.NL_CACHE_SCHEMA_VERSION}.bin",
+                # Every schema version's file for the date, not only the
+                # current one: a bumped spec leaves older versioned files.
+                cache_files = [d / f"{date_str}.bin"] + [
+                    f
+                    for f in d.glob(f"{date_str}.v*.bin")
+                    if _VERSIONED_BIN.fullmatch(f.name[len(date_str) :])
                 ]
                 for f in cache_files:
                     if f.exists():
