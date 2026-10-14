@@ -80,6 +80,13 @@ logger = get_logger(__name__)
 
 # PIDファイルパス
 PID_FILE = project_root / "data" / "background_updater.pid"
+
+# HTTP APIのリッスン既定アドレス。このAPIには認証が無く、/trigger は JV-Link 取得を
+# 起動するため、既定ではループバックのみに束縛する。LANへ公開するには --api-bind で
+# 明示的にオプトインする。
+DEFAULT_API_BIND_HOST = "127.0.0.1"
+DEFAULT_API_PORT = 8765
+DEFAULT_HISTORICAL_INTERVAL_MINUTES = 60
 SUBSCRIPTION_ERROR_CODES = frozenset({-111, -114, -115})
 
 
@@ -315,6 +322,14 @@ class TriggerAPIHandler(BaseHTTPRequestHandler):
     updater = None
     rate_limiter: Optional["RateLimiter"] = None  # 前方参照
 
+    # 取得を起動するエンドポイント。状態を変えるので POST でのみ受け付ける。
+    TRIGGER_ROUTES = {
+        "/trigger": "all",
+        "/trigger/all": "all",
+        "/trigger/historical": "historical",
+        "/trigger/realtime": "realtime",
+    }
+
     def log_message(self, format, *args):
         """アクセスログを抑制（必要に応じてloggerに出力）"""
         logger.debug(f"API request: {args[0]}")
@@ -323,23 +338,27 @@ class TriggerAPIHandler(BaseHTTPRequestHandler):
         """JSONレスポンスを送信"""
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        # CORS ヘッダは付けない。このAPIはローカル運用向けで、任意のWebページから
+        # 読み書きされる必要がない。以前は Access-Control-Allow-Origin: * を返しており、
+        # 利用者が開いた任意のページが /trigger を起動し /status を読めた。
         self.end_headers()
         response = json.dumps(data, ensure_ascii=False, default=str)
         self.wfile.write(response.encode("utf-8"))
 
     def do_OPTIONS(self):
-        """CORSプリフライトリクエストに対応"""
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        """許可メソッドのみ返す（クロスオリジンでの利用は想定しない）"""
+        self.send_response(204)
+        self.send_header("Allow", "GET, POST, OPTIONS")
         self.end_headers()
 
+    def _send_method_not_allowed(self, path: str, allowed: str):
+        self._send_json_response(405, {
+            "error": "Method Not Allowed",
+            "message": f"{path or '/'} は {allowed} のみ受け付けます",
+        })
+
     def do_GET(self):
-        """GETリクエストを処理"""
+        """GETリクエストを処理（参照のみ。取得の起動は do_POST）"""
         path = self.path.rstrip("/")
 
         if path == "" or path == "/":
@@ -347,25 +366,20 @@ class TriggerAPIHandler(BaseHTTPRequestHandler):
             self._send_json_response(200, {
                 "service": "JLTSQL Background Updater API",
                 "endpoints": {
-                    "/trigger": "全データ強制更新 (all)",
-                    "/trigger/all": "全データ強制更新",
-                    "/trigger/historical": "蓄積系のみ強制更新",
-                    "/trigger/realtime": "速報系のみ強制更新",
-                    "/status": "現在の状態取得",
+                    "POST /trigger": "全データ強制更新 (all)",
+                    "POST /trigger/all": "全データ強制更新",
+                    "POST /trigger/historical": "蓄積系のみ強制更新",
+                    "POST /trigger/realtime": "速報系のみ強制更新",
+                    "GET /status": "現在の状態取得",
                 }
             })
 
-        elif path == "/trigger" or path == "/trigger/all":
-            self._handle_trigger("all")
-
-        elif path == "/trigger/historical":
-            self._handle_trigger("historical")
-
-        elif path == "/trigger/realtime":
-            self._handle_trigger("realtime")
-
         elif path == "/status":
             self._handle_status()
+
+        elif path in self.TRIGGER_ROUTES:
+            # GET は安全であるべきなので、取得の起動は受け付けない
+            self._send_method_not_allowed(path, "POST")
 
         else:
             self._send_json_response(404, {
@@ -374,8 +388,21 @@ class TriggerAPIHandler(BaseHTTPRequestHandler):
             })
 
     def do_POST(self):
-        """POSTリクエストを処理（GETと同じ）"""
-        self.do_GET()
+        """POSTリクエストを処理（取得の起動）"""
+        path = self.path.rstrip("/")
+
+        mode = self.TRIGGER_ROUTES.get(path)
+        if mode is not None:
+            self._handle_trigger(mode)
+
+        elif path in ("", "/", "/status"):
+            self._send_method_not_allowed(path, "GET")
+
+        else:
+            self._send_json_response(404, {
+                "error": "Not Found",
+                "message": f"Unknown endpoint: {path}"
+            })
 
     def _handle_trigger(self, mode: str):
         """トリガーリクエストを処理"""
@@ -664,19 +691,24 @@ class TriggerAPIServer:
         port: int = 8765,
         enable_rate_limit: bool = True,
         rate_limit_short_term: int = 5,
-        rate_limit_long_term: int = 30
+        rate_limit_long_term: int = 30,
+        bind_host: str = DEFAULT_API_BIND_HOST,
     ):
         """初期化
 
         Args:
             updater: BackgroundUpdaterインスタンス
             port: リッスンポート
+            bind_host: リッスンするアドレス。既定はループバックのみ。
+                このAPIに認証は無く、/trigger は JV-Link 取得を起動するため、
+                LANへ公開する場合は利用者が明示的に選ぶ必要がある。
             enable_rate_limit: レート制限を有効にするか
             rate_limit_short_term: 短期制限（回/分）
             rate_limit_long_term: 長期制限（回/時）
         """
         self.updater = updater
         self.port = port
+        self.bind_host = bind_host
         self.enable_rate_limit = enable_rate_limit
         self.rate_limit_short_term = rate_limit_short_term
         self.rate_limit_long_term = rate_limit_long_term
@@ -705,13 +737,18 @@ class TriggerAPIServer:
             TriggerAPIHandler.rate_limiter = self.rate_limiter
 
             # サーバー作成
-            self.server = ThreadedHTTPServer(("0.0.0.0", self.port), TriggerAPIHandler)
+            self.server = ThreadedHTTPServer((self.bind_host, self.port), TriggerAPIHandler)
 
             # 別スレッドで起動
             self._thread = threading.Thread(target=self.server.serve_forever, daemon=True)
             self._thread.start()
 
-            logger.info(f"API server started on port {self.port}")
+            logger.info(f"API server started on {self.bind_host}:{self.port}")
+            if self.bind_host not in ("127.0.0.1", "localhost", "::1"):
+                logger.warning(
+                    f"API server is reachable from other hosts ({self.bind_host}) "
+                    "and has no authentication"
+                )
             return True
 
         except OSError as e:
@@ -729,7 +766,14 @@ class TriggerAPIServer:
         """サーバーを停止"""
         if self.server:
             self.server.shutdown()
+            # shutdown() は serve_forever のループを抜けるだけで、リッスンソケットは
+            # 開いたまま残る。閉じないとポートが解放されず、再起動が
+            # "Address already in use" で失敗する。
+            self.server.server_close()
             self.server = None
+            if self._thread is not None:
+                self._thread.join(timeout=5)
+                self._thread = None
             logger.info("API server stopped")
 
 
@@ -944,6 +988,7 @@ class BackgroundUpdater:
         historical_interval_minutes: int = 60,
         enable_api: bool = True,
         api_port: int = 8765,
+        api_bind_host: str = DEFAULT_API_BIND_HOST,
         enable_rate_limit: bool = True,
         rate_limit_short_term: int = 5,
         rate_limit_long_term: int = 30,
@@ -957,6 +1002,7 @@ class BackgroundUpdater:
             historical_interval_minutes: 蓄積系更新の間隔（分）
             enable_api: HTTP APIサーバーを有効にするか
             api_port: APIサーバーのポート番号
+            api_bind_host: APIサーバーのリッスンアドレス（既定はループバックのみ）
             enable_rate_limit: レート制限を有効にするか
             rate_limit_short_term: 短期制限（回/分）
             rate_limit_long_term: 長期制限（回/時）
@@ -967,6 +1013,7 @@ class BackgroundUpdater:
         self.historical_interval_minutes = historical_interval_minutes
         self.enable_api = enable_api
         self.api_port = api_port
+        self.api_bind_host = api_bind_host
         self.enable_rate_limit = enable_rate_limit
         self.rate_limit_short_term = rate_limit_short_term
         self.rate_limit_long_term = rate_limit_long_term
@@ -1137,10 +1184,11 @@ class BackgroundUpdater:
                 self.api_port,
                 enable_rate_limit=self.enable_rate_limit,
                 rate_limit_short_term=self.rate_limit_short_term,
-                rate_limit_long_term=self.rate_limit_long_term
+                rate_limit_long_term=self.rate_limit_long_term,
+                bind_host=self.api_bind_host,
             )
             if self._api_server.start():
-                api_status = f"http://localhost:{self.api_port}"
+                api_status = f"http://{self.api_bind_host}:{self.api_port}"
             else:
                 api_status = "起動失敗"
 
@@ -1747,7 +1795,8 @@ class BackgroundUpdater:
         return success_count
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """CLI パーサーを構築する（既定値の検査をテストから行えるように分離）。"""
     parser = argparse.ArgumentParser(
         description="JLTSQL バックグラウンド更新サービス",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1759,11 +1808,14 @@ def main():
   非開催日: 速報系更新なし
   蓄積系: 60分毎（開催日/非開催日とも）
 
-HTTP API エンドポイント (デフォルト: http://localhost:8765):
-  GET /trigger              全データ強制更新
-  GET /trigger/historical   蓄積系のみ強制更新
-  GET /trigger/realtime     速報系のみ強制更新
-  GET /status               現在の状態取得
+HTTP API エンドポイント (デフォルト: http://127.0.0.1:8765 — ループバックのみ):
+  POST /trigger              全データ強制更新
+  POST /trigger/historical   蓄積系のみ強制更新
+  POST /trigger/realtime     速報系のみ強制更新
+  GET  /status               現在の状態取得
+
+  このAPIに認証はありません。--api-bind で公開範囲を広げる場合は、
+  ネットワーク側でアクセスを制限してください。
 
 使用例:
   python scripts/background_updater.py              # フォアグラウンドで起動
@@ -1772,16 +1824,16 @@ HTTP API エンドポイント (デフォルト: http://localhost:8765):
   python scripts/background_updater.py --status     # サービス状態を確認
   python scripts/background_updater.py --trigger    # 全データ強制更新
 
-外部からのAPI呼び出し例:
-  curl http://localhost:8765/trigger              # 全データ更新
-  curl http://localhost:8765/trigger/realtime     # 速報系のみ
-  curl http://localhost:8765/status               # 状態確認
+API呼び出し例（同一ホストから）:
+  curl -X POST http://127.0.0.1:8765/trigger           # 全データ更新
+  curl -X POST http://127.0.0.1:8765/trigger/realtime  # 速報系のみ
+  curl http://127.0.0.1:8765/status                    # 状態確認
         """
     )
 
     parser.add_argument(
-        "--interval", type=int, default=60,
-        help="蓄積系データの更新間隔（分、デフォルト: 60）"
+        "--interval", type=int, default=DEFAULT_HISTORICAL_INTERVAL_MINUTES,
+        help=f"蓄積系データの更新間隔（分、デフォルト: {DEFAULT_HISTORICAL_INTERVAL_MINUTES}）"
     )
     parser.add_argument(
         "--no-historical", action="store_true",
@@ -1792,8 +1844,16 @@ HTTP API エンドポイント (デフォルト: http://localhost:8765):
         help="速報系データの監視を無効化"
     )
     parser.add_argument(
-        "--api-port", type=int, default=8765,
-        help="HTTP APIサーバーのポート番号（デフォルト: 8765）"
+        "--api-port", type=int, default=DEFAULT_API_PORT,
+        help=f"HTTP APIサーバーのポート番号（デフォルト: {DEFAULT_API_PORT}）"
+    )
+    parser.add_argument(
+        "--api-bind", default=DEFAULT_API_BIND_HOST,
+        help=(
+            "HTTP APIサーバーのリッスンアドレス"
+            f"（デフォルト: {DEFAULT_API_BIND_HOST}。このAPIに認証は無いので、"
+            "0.0.0.0 を指定すると同一ネットワークの誰でも取得を起動できる）"
+        )
     )
     parser.add_argument(
         "--no-api", action="store_true",
@@ -1837,6 +1897,42 @@ HTTP API エンドポイント (デフォルト: http://localhost:8765):
         help=argparse.SUPPRESS  # 内部用（バックグラウンドから起動された場合）
     )
 
+    return parser
+
+
+def build_forward_args(args: argparse.Namespace) -> list:
+    """--background で再起動する子プロセスへ引き継ぐ引数を組み立てる。
+
+    既定値と異なるものだけを転送する。比較する既定値は build_parser() が
+    使うものと同じ定数を参照すること（かつて --interval だけが別の値と
+    比較されており、明示指定しても転送されなかった）。
+    """
+    defaults = build_parser().parse_args([])
+
+    forward_args = []
+    if args.no_historical:
+        forward_args.append("--no-historical")
+    if args.no_realtime:
+        forward_args.append("--no-realtime")
+    if args.interval != defaults.interval:
+        forward_args.extend(["--interval", str(args.interval)])
+    if args.api_port != defaults.api_port:
+        forward_args.extend(["--api-port", str(args.api_port)])
+    if args.api_bind != defaults.api_bind:
+        forward_args.extend(["--api-bind", args.api_bind])
+    if args.no_api:
+        forward_args.append("--no-api")
+    if args.no_rate_limit:
+        forward_args.append("--no-rate-limit")
+    if args.rate_limit_short != defaults.rate_limit_short:
+        forward_args.extend(["--rate-limit-short", str(args.rate_limit_short)])
+    if args.rate_limit_long != defaults.rate_limit_long:
+        forward_args.extend(["--rate-limit-long", str(args.rate_limit_long)])
+    return forward_args
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     # 停止モード
@@ -1866,26 +1962,7 @@ HTTP API エンドポイント (デフォルト: http://localhost:8765):
 
     # バックグラウンド起動モード
     if args.background:
-        # 他の引数を収集（--backgroundと--daemon以外）
-        forward_args = []
-        if args.no_historical:
-            forward_args.append("--no-historical")
-        if args.no_realtime:
-            forward_args.append("--no-realtime")
-        if args.interval != 30:
-            forward_args.extend(["--interval", str(args.interval)])
-        if args.api_port != 8765:
-            forward_args.extend(["--api-port", str(args.api_port)])
-        if args.no_api:
-            forward_args.append("--no-api")
-        if args.no_rate_limit:
-            forward_args.append("--no-rate-limit")
-        if args.rate_limit_short != 5:
-            forward_args.extend(["--rate-limit-short", str(args.rate_limit_short)])
-        if args.rate_limit_long != 30:
-            forward_args.extend(["--rate-limit-long", str(args.rate_limit_long)])
-
-        success = start_background_service(forward_args)
+        success = start_background_service(build_forward_args(args))
         sys.exit(0 if success else 1)
 
     # 通常のサービス起動（フォアグラウンドまたはデーモンモード）
@@ -1903,6 +1980,7 @@ HTTP API エンドポイント (デフォルト: http://localhost:8765):
                     historical_interval_minutes=args.interval,
                     enable_api=not args.no_api,
                     api_port=args.api_port,
+                    api_bind_host=args.api_bind,
                     enable_rate_limit=not args.no_rate_limit,
                     rate_limit_short_term=args.rate_limit_short,
                     rate_limit_long_term=args.rate_limit_long,

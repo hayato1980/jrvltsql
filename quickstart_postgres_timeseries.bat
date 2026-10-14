@@ -86,7 +86,21 @@ if not defined PYTHON_CMD (
 )
 
 echo Using Python: %PYTHON_CMD%
-%PYTHON_CMD% scripts/quickstart.py --mode update --yes --db-type postgresql --pg-host "%POSTGRES_HOST%" --pg-port "%POSTGRES_PORT%" --pg-database "%POSTGRES_DATABASE%" --pg-user "%POSTGRES_USER%" --pg-password "%POSTGRES_PASSWORD%" --from-date "%FROM_DATE%" --to-date "%TO_DATE%" --include-timeseries --timeseries-from-date "%FROM_DATE%" --timeseries-to-date "%TO_DATE%"
+
+REM Keep the password out of the process command line. Windows exposes a
+REM process command line to other processes in the same session (tasklist /v,
+REM Win32_Process.CommandLine, Sysmon event ID 1). Follow the same rule as
+REM daily_sync.bat and hand the password over through PGPASSWORD instead.
+REM Disable delayed expansion while copying it so a literal "!" is preserved.
+setlocal DisableDelayedExpansion
+if not defined POSTGRES_PASSWORD (
+    echo [ERROR] POSTGRES_PASSWORD is required for the PostgreSQL quickstart.
+    exit /b 1
+)
+set "PGPASSWORD=%POSTGRES_PASSWORD%"
+setlocal EnableDelayedExpansion
+
+%PYTHON_CMD% scripts/quickstart.py --mode update --yes --db-type postgresql --pg-host "%POSTGRES_HOST%" --pg-port "%POSTGRES_PORT%" --pg-database "%POSTGRES_DATABASE%" --pg-user "%POSTGRES_USER%" --from-date "%FROM_DATE%" --to-date "%TO_DATE%" --include-timeseries --timeseries-from-date "%FROM_DATE%" --timeseries-to-date "%TO_DATE%"
 set "SCRIPT_EXIT_CODE=!errorlevel!"
 
 :check_result
