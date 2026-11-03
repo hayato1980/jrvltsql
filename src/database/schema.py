@@ -3573,6 +3573,14 @@ def create_all_tables(db: BaseDatabase) -> None:
                 from src.importer.importer import verify_h1_storage_schema
 
                 verify_h1_storage_schema(db, table_name)
+            if table_name in STRICT_H6_STORAGE_TABLES:
+                from src.importer.importer import verify_h6_storage_schema
+
+                verify_h6_storage_schema(db, table_name)
+            if table_name in STRICT_ODDS_STORAGE_TABLES:
+                from src.importer.importer import verify_odds_storage_schema
+
+                verify_odds_storage_schema(db, table_name)
             if table_name in STRICT_TC_STORAGE_TABLES:
                 from src.importer.importer import verify_tc_storage_schema
 
